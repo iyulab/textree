@@ -16,7 +16,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
-        // 워처 스레드와 write_note 커맨드가 같은 레지스트리를 공유하도록 Arc로 관리.
+        // Managed via Arc so the watcher thread and the write_note command share one registry.
         .manage(Arc::new(SelfWrites::default()))
         .manage(WatcherHandle::default())
         .manage(Arc::new(IndexHandle::default()))

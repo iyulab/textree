@@ -9,38 +9,38 @@ use std::sync::Arc;
 use tauri::{AppHandle, Manager, State};
 use tempfile::NamedTempFile;
 
-/// 원자적 파일 쓰기: 같은 디렉터리의 임시 파일에 쓴 뒤 대상 경로로 rename.
-/// 쓰기 도중 크래시/전원차단이 나도 대상 파일이 truncate되지 않는다("FS가 진실").
+/// Atomic file write: write to a temp file in the same directory, then rename to the target path.
+/// Even if a crash/power loss happens mid-write, the target file is not truncated ("the FS is the truth").
 fn atomic_write(path: &Path, content: &str) -> io::Result<()> {
     let dir = path.parent().ok_or_else(|| {
-        io::Error::new(io::ErrorKind::InvalidInput, "대상 경로에 부모 디렉터리가 없습니다")
+        io::Error::new(io::ErrorKind::InvalidInput, "target path has no parent directory")
     })?;
     let mut tmp = NamedTempFile::new_in(dir)?;
     tmp.write_all(content.as_bytes())?;
-    // OS 버퍼가 아닌 물리 저장소까지 내려쓴다(fsync). 그래야 rename 후
-    // 전원차단이 나도 내용이 보장된다 — persist만으로는 durability가 없다.
+    // Flush down to physical storage, not just the OS buffer (fsync). Only then is the
+    // content guaranteed after the rename even under power loss — persist alone has no durability.
     tmp.as_file().sync_all()?;
-    // persist는 동일 볼륨 내 rename이라 원자적이며 기존 파일을 대체한다.
+    // persist is a rename within the same volume, so it is atomic and replaces the existing file.
     tmp.persist(path).map_err(|e| e.error)?;
     Ok(())
 }
 
-/// `.textree/<rel>` 사이드카 경로를 구성한다. `rel`은 `.textree/` 하위로 강제되며
-/// `Component::Normal` 외(상위참조·절대경로·`.`)는 거부한다 → traversal 불가.
+/// Builds the `.textree/<rel>` sidecar path. `rel` is confined under `.textree/`, and
+/// anything other than `Component::Normal` (parent refs, absolute paths, `.`) is rejected → no traversal.
 fn sidecar_path(root: &Path, rel: &str) -> Result<PathBuf, String> {
     if rel.is_empty() {
-        return Err("사이드카 경로가 비었습니다".into());
+        return Err("sidecar path is empty".into());
     }
     let rel_path = Path::new(rel);
     for comp in rel_path.components() {
         if !matches!(comp, Component::Normal(_)) {
-            return Err("사이드카 경로가 잘못되었습니다(.textree 밖)".into());
+            return Err("invalid sidecar path (outside .textree)".into());
         }
     }
     Ok(root.join(".textree").join(rel_path))
 }
 
-/// `.textree/<rel>` 사이드카를 읽는다. 부재 시 `None`(정상 흐름).
+/// Reads the `.textree/<rel>` sidecar. Returns `None` if absent (normal flow).
 #[tauri::command]
 pub fn read_sidecar(root: String, rel: String) -> Result<Option<String>, String> {
     let path = sidecar_path(Path::new(&root), &rel)?;
@@ -51,8 +51,8 @@ pub fn read_sidecar(root: String, rel: String) -> Result<Option<String>, String>
     }
 }
 
-/// `.textree/<rel>` 사이드카를 원자적으로 쓴다(부모 디렉터리 자동 생성).
-/// `.textree/`는 워처가 무시(watcher::is_ignored)하므로 self-write 등록이 불필요하다.
+/// Atomically writes the `.textree/<rel>` sidecar (auto-creates the parent directory).
+/// `.textree/` is ignored by the watcher (watcher::is_ignored), so self-write registration is unnecessary.
 #[tauri::command]
 pub fn write_sidecar(root: String, rel: String, content: String) -> Result<(), String> {
     let path = sidecar_path(Path::new(&root), &rel)?;
@@ -72,7 +72,7 @@ pub fn read_note(root: String, path: String) -> Result<String, String> {
     let root = PathBuf::from(root);
     let path = PathBuf::from(path);
     if !is_within(&root, &path) {
-        return Err("경로가 볼트 밖입니다".into());
+        return Err("path is outside the vault".into());
     }
     std::fs::read_to_string(&path).map_err(|e| e.to_string())
 }
@@ -88,23 +88,23 @@ pub fn write_note(
     let root = PathBuf::from(root);
     let path = PathBuf::from(path);
     if !is_within(&root, &path) {
-        return Err("경로가 볼트 밖입니다".into());
+        return Err("path is outside the vault".into());
     }
-    // 쓰기 "직전" 등록해야 한다: write가 디스크에 닿은 직후 워처가 record보다
-    // 먼저 이벤트를 받으면 에코 루프가 생기기 때문(설계 §4.1).
+    // Must register "just before" writing: if the watcher receives the event before
+    // record runs right after the write hits disk, an echo loop forms (design §4.1).
     self_writes.record(&path, &content);
     match atomic_write(&path, &content) {
         Ok(()) => {
-            // 워처는 self-write를 억제하므로 앱내 편집은 여기서 인덱스를 갱신한다.
-            // 색인 실패는 저장을 실패시키지 않는다(인덱스=파생캐시, graceful).
+            // The watcher suppresses self-writes, so in-app edits update the index here.
+            // An index failure does not fail the save (index = derived cache, graceful).
             if let Some(state) = index.0.lock().unwrap_or_else(|e| e.into_inner()).as_mut() {
                 let _ = state.index_note(&root, &path, &content);
             }
             Ok(())
         }
         Err(e) => {
-            // 쓰기 실패 시 디스크는 안 바뀌었으므로 stale 등록을 제거해
-            // 레지스트리가 실제 디스크 상태와 어긋나지 않게 한다.
+            // On write failure the disk did not change, so remove the stale registration
+            // to keep the registry from diverging from the actual disk state.
             self_writes.forget(&path);
             Err(e.to_string())
         }
@@ -122,8 +122,8 @@ pub fn open_vault(
     let root_path = PathBuf::from(&root);
     let tree = vault::build_tree(&root_path).map_err(|e| e.to_string())?;
 
-    // 인덱스 설치(앱 데이터 디렉터리, 볼트별 해시). 실패해도 검색만 비활성 —
-    // graceful degradation(편집·트리·파일검색은 인덱스 없이 온전).
+    // Install the index (app data directory, per-vault hash). On failure only search is disabled —
+    // graceful degradation (editing, tree, and file search remain intact without the index).
     let app_data = app.path().app_data_dir().map_err(|e| e.to_string())?;
     let dir = crate::search::index_dir(&app_data, &root_path);
     match IndexState::open_or_create(&dir) {
@@ -131,7 +131,7 @@ pub fn open_vault(
             let was_empty = state.is_empty().unwrap_or(true);
             *index.0.lock().unwrap_or_else(|e| e.into_inner()) = Some(state);
             if was_empty {
-                // 백그라운드 전체 빌드(UI 비블로킹).
+                // Full build in the background (non-blocking for the UI).
                 let index_arc = index.inner().clone();
                 let root_for_build = root_path.clone();
                 tauri::async_runtime::spawn_blocking(move || {
@@ -142,13 +142,13 @@ pub fn open_vault(
             }
         }
         Err(e) => {
-            eprintln!("인덱스 열기 실패(검색 비활성): {e}");
+            eprintln!("failed to open index (search disabled): {e}");
             *index.0.lock().unwrap_or_else(|e| e.into_inner()) = None;
         }
     }
 
-    // 새 워처 시작 전에 이전 워처를 명시적으로 드롭(감시 중지)해, 볼트 전환 시
-    // 이전 볼트의 잔여 이벤트가 새 볼트 처리에 섞이는 것을 줄인다.
+    // Explicitly drop the previous watcher (stop watching) before starting the new one, so that
+    // on a vault switch leftover events from the old vault don't bleed into the new vault's processing.
     *watcher_handle.0.lock().unwrap() = None;
     let w = watcher::start(app, &root_path, self_writes.inner().clone(), index.inner().clone())?;
     *watcher_handle.0.lock().unwrap() = Some(w);
@@ -156,7 +156,7 @@ pub fn open_vault(
     Ok(tree)
 }
 
-// ── 구조 편집(M4) — fs_ops 위임 ────────────────────────────────
+// ── Structural edits (M4) — delegated to fs_ops ────────────────────────────────
 
 #[tauri::command]
 pub fn create_note(root: String, parent: String, name: String) -> Result<String, String> {
@@ -207,7 +207,7 @@ pub fn adopt_node(root: String, path: String, leaf: String) -> Result<String, St
     Ok(p.display().to_string())
 }
 
-/// 첨부 이미지 저장. `data`는 base64 인코딩된 바이트. 본문에 삽입할 상대링크 반환.
+/// Saves an attached image. `data` is base64-encoded bytes. Returns the relative link to insert into the body.
 #[tauri::command]
 pub fn save_attachment(
     root: String,
@@ -218,7 +218,7 @@ pub fn save_attachment(
     use base64::Engine;
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(data.as_bytes())
-        .map_err(|e| format!("base64 디코드 실패: {e}"))?;
+        .map_err(|e| format!("base64 decode failed: {e}"))?;
     crate::fs_ops::save_attachment(Path::new(&root), Path::new(&note), &bytes, &ext)
         .map_err(|e| e.to_string())
 }
@@ -232,7 +232,7 @@ pub fn search_content(
     let guard = index.0.lock().unwrap_or_else(|e| e.into_inner());
     match guard.as_ref() {
         Some(state) => state.search(&query, limit).map_err(|e| e.to_string()),
-        None => Ok(Vec::new()), // 인덱스 없음 → 빈 결과(graceful)
+        None => Ok(Vec::new()), // no index → empty results (graceful)
     }
 }
 
@@ -245,7 +245,7 @@ pub fn rebuild_index(
     let mut guard = index.0.lock().unwrap_or_else(|e| e.into_inner());
     match guard.as_mut() {
         Some(state) => state.rebuild(&root_path).map_err(|e| e.to_string()),
-        None => Err("인덱스가 설치되지 않았습니다".into()),
+        None => Err("index is not installed".into()),
     }
 }
 

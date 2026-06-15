@@ -1,11 +1,11 @@
-//! 경로 안전성 검증. 볼트 루트 밖으로의 탈출과 위험한 노드 이름을 막는다.
-//! commands(IPC)와 fs_ops(변형)가 공유한다.
+//! Path safety validation. Prevents escape outside the vault root and dangerous node names.
+//! Shared by commands (IPC) and fs_ops (mutations).
 
 use std::path::Path;
 
-/// 후보 경로가 볼트 루트 안에 있는지 검증(상위 탈출 방지).
-/// canonicalize 기반이라 **이미 존재하는** 경로에만 유효하다 — 새로 만들 경로는
-/// 부모 디렉터리에 대해 호출하고, 새 이름은 [`is_valid_name`]으로 검증한다.
+/// Validates that the candidate path is inside the vault root (prevents parent escape).
+/// Based on canonicalize, so it is only valid for paths that **already exist** — for paths
+/// to be created, call it against the parent directory and validate the new name with [`is_valid_name`].
 pub fn is_within(root: &Path, candidate: &Path) -> bool {
     match (root.canonicalize(), candidate.canonicalize()) {
         (Ok(r), Ok(c)) => c.starts_with(r),
@@ -13,26 +13,26 @@ pub fn is_within(root: &Path, candidate: &Path) -> bool {
     }
 }
 
-/// Windows 예약 장치 이름(확장자 무관하게 예약됨).
+/// Windows reserved device names (reserved regardless of extension).
 const WINDOWS_RESERVED: &[&str] = &[
     "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8",
     "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
 ];
 
-/// 노드(노트/폴더)의 새 이름으로 안전한가. 경로 구분자·상위참조·예약 dot·Windows
-/// 예약 장치명을 거부한다.
+/// Whether the string is safe as a new name for a node (note/folder). Rejects path separators,
+/// parent references, reserved dot names, and Windows reserved device names.
 pub fn is_valid_name(name: &str) -> bool {
     if name.is_empty()
         || name == "."
         || name == ".."
-        || name.starts_with('.') // .textree 등 예약/숨김과 충돌 방지
+        || name.starts_with('.') // avoid collision with reserved/hidden names like .textree
         || name.contains('/')
         || name.contains('\\')
         || name.contains('\0')
     {
         return false;
     }
-    // 확장자 무관하게 예약되므로 첫 '.' 앞 부분을 대문자로 비교(예: CON, CON.md 모두 거부).
+    // Reserved regardless of extension, so compare the part before the first '.' in uppercase (e.g. both CON and CON.md are rejected).
     let base = name.split('.').next().unwrap_or(name).to_ascii_uppercase();
     !WINDOWS_RESERVED.contains(&base.as_str())
 }
@@ -71,12 +71,12 @@ mod tests {
     #[test]
     fn valid_name_rejects_windows_reserved_devices() {
         assert!(!is_valid_name("CON"));
-        assert!(!is_valid_name("con")); // 대소문자 무시
+        assert!(!is_valid_name("con")); // case-insensitive
         assert!(!is_valid_name("NUL"));
         assert!(!is_valid_name("COM1"));
         assert!(!is_valid_name("LPT9"));
-        assert!(!is_valid_name("CON.md")); // 확장자 무관
-        // 예약명을 포함만 한 정상 이름은 허용.
+        assert!(!is_valid_name("CON.md")); // regardless of extension
+        // Normal names that merely contain a reserved name are allowed.
         assert!(is_valid_name("CONTROL"));
         assert!(is_valid_name("회의록-CON"));
     }
@@ -84,7 +84,7 @@ mod tests {
     #[test]
     fn within_is_false_for_nonexistent_path() {
         let tmp = TempDir::new().unwrap();
-        // 아직 없는 경로는 canonicalize 실패 → false(생성은 부모로 검증해야 함).
+        // A path that does not exist yet fails canonicalize -> false (creation must be validated against the parent).
         assert!(!is_within(tmp.path(), &PathBuf::from(tmp.path().join("new.md"))));
     }
 }

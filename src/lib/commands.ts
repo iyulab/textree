@@ -1,17 +1,17 @@
 /*
- * 명령 레지스트리 — 통합 팔레트의 '>' 명령 모드 대상.
- * 컴포넌트가 보유한 액션을 주입받아 명령 목록을 만든다(결합도 최소화).
+ * Command registry — targets the unified palette's '>' command mode.
+ * Builds the command list from injected component-owned actions (minimizing coupling).
  */
 
 export interface Command {
   id: string;
   title: string;
   run: () => void | Promise<void>;
-  /** false면 현재 컨텍스트에서 비활성(목록 제외). 생략 시 항상 활성. */
+  /** If false, inactive in the current context (excluded from the list). Always active if omitted. */
   when?: () => boolean;
 }
 
-/** 팔레트가 호출할 앱 액션 묶음. +page.svelte가 구현해 주입한다. */
+/** Bundle of app actions the palette invokes. +page.svelte implements and injects them. */
 export interface PaletteActions {
   openVault: () => void;
   toggleTheme: () => void;
@@ -46,7 +46,7 @@ export function buildCommands(a: PaletteActions): Command[] {
   ];
 }
 
-/** when()을 평가해 현재 활성 명령만 반환. */
+/** Evaluates when() and returns only currently active commands. */
 export function activeCommands(cmds: Command[]): Command[] {
   return cmds.filter((c) => c.when === undefined || c.when());
 }

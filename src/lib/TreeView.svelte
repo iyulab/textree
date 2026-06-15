@@ -1,9 +1,9 @@
 <script module lang="ts">
-  // 트리 내부 드래그앤드롭 전송 키(단일 출처). OS 파일 드롭과 구분되는 앱 전용 MIME.
+  // Drag-and-drop transfer key within the tree (single source). App-specific MIME distinct from OS file drops.
   export const DRAG_MIME = "application/x-textree-path";
 
-  // 드롭 대상으로 강조된 노드 경로. 재귀 인스턴스 전체가 공유하는 단일 상태 —
-  // 드래그 중 강조는 항상 하나뿐이고, 어느 인스턴스의 dragend로도 확실히 해제된다.
+  // Path of the node highlighted as drop target. A single state shared across all recursive instances —
+  // there is always only one highlight during a drag, and it is reliably cleared by any instance's dragend.
   let dragOverPath = $state<string | null>(null);
 </script>
 
@@ -25,24 +25,24 @@
     top = false,
   }: {
     nodes: TreeNode[];
-    /** 이 노드 목록의 부모 경로(수동 정렬 키). 최상위는 볼트 루트. */
+    /** Parent path of this node list (manual order key). The top level is the vault root. */
     parentPath: string;
     onselect: (node: TreeNode) => void;
-    /** 노드 이동(폴더 간). srcPath를 destDir(컨테이너 디렉터리)로 옮긴다. */
+    /** Move node (between folders). Moves srcPath into destDir (container directory). */
     onmove: (srcPath: string, destDir: string) => void;
-    /** 리프 위에 드롭: leafPath를 컨테이너로 승격하고 srcPath를 그 자식으로 이동. */
+    /** Drop onto a leaf: promote leafPath to a container and move srcPath as its child. */
     onadopt: (srcPath: string, leafPath: string) => void;
-    /** 키보드 F2: 해당 노드를 이름변경. */
+    /** Keyboard F2: rename the node. */
     onrename: (node: TreeNode) => void;
-    /** 키보드 Delete: 해당 노드를 삭제. */
+    /** Keyboard Delete: delete the node. */
     ondelete: (node: TreeNode) => void;
-    /** 현재 선택된 노드 경로(하이라이트용). 모든 하위에 전파. */
+    /** Currently selected node path (for highlighting). Propagated to all descendants. */
     selectedPath?: string | null;
-    /** 최상위 인스턴스 여부(role=tree vs group, 폴백 포커스). */
+    /** Whether this is the top-level instance (role=tree vs group, fallback focus). */
     top?: boolean;
   } = $props();
 
-  /** nav.order[parentPath]에 따라 형제 노드를 정렬한 파생 배열. order 미등재 시 원래 순서. */
+  /** Derived array of sibling nodes ordered by nav.order[parentPath]. Original order if not registered in order. */
   let ordered = $derived(mergeOrder(nodes, nav.order[parentPath] ?? [], (n) => n.path));
 
   function onDragStart(e: DragEvent, node: TreeNode) {
@@ -52,8 +52,8 @@
   }
 
   function onDragOver(e: DragEvent, _node: TreeNode) {
-    // 컨테이너=폴더 간 이동, 리프=adopt(승격 후 자식). 둘 다 드롭 대상.
-    // preventDefault해야 drop이 허용된다. stopPropagation으로 최내곽 노드만 반응.
+    // Container = move between folders, leaf = adopt (child after promotion). Both are drop targets.
+    // preventDefault is required to allow drop. stopPropagation makes only the innermost node react.
     e.preventDefault();
     e.stopPropagation();
     if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
@@ -70,12 +70,12 @@
     dragOverPath = null;
     const src = e.dataTransfer?.getData(DRAG_MIME);
     if (!src) return;
-    if (node.kind === "container") onmove(src, node.path); // 컨테이너 디렉터리로 이동
-    else onadopt(src, node.path); // 리프 → 승격 후 자식으로
+    if (node.kind === "container") onmove(src, node.path); // move into container directory
+    else onadopt(src, node.path); // leaf → child after promotion
   }
 
-  // ── 키보드 네비게이션(WAI-ARIA tree) ──────────────────────────
-  // 이동은 실제 DOM 문서순서(접힌 노드는 렌더 안 됨)로 처리해 평면 모델 불필요.
+  // ── Keyboard navigation (WAI-ARIA tree) ──────────────────────────
+  // Movement is handled by actual DOM document order (collapsed nodes are not rendered), so no flat model is needed.
   function items(from: HTMLElement): HTMLElement[] {
     const root = from.closest('[role="tree"]');
     if (!root) return [];
@@ -105,7 +105,7 @@
 
   function parentItem(el: HTMLElement): HTMLElement | null {
     const ul = el.closest('ul[role="group"]');
-    const parentLi = ul?.parentElement; // group ul 의 부모 = 부모 li
+    const parentLi = ul?.parentElement; // parent of the group ul = parent li
     return (
       parentLi?.querySelector<HTMLElement>(
         ':scope > .row > [role="treeitem"]',
@@ -118,8 +118,8 @@
     const isContainer = node.kind === "container" && node.children.length > 0;
     const open = isContainer && !tree.isCollapsed(node.path);
 
-    // 키보드 이동: Ctrl+X 잘라내기 → 대상서 Ctrl+V(컨테이너=이동, 리프=adopt).
-    // DnD 와 동등한 접근성 경로(WCAG 2.1.1).
+    // Keyboard move: Ctrl+X cut → Ctrl+V at target (container = move, leaf = adopt).
+    // Accessibility path equivalent to DnD (WCAG 2.1.1).
     if (e.ctrlKey && (e.key === "x" || e.key === "X")) {
       e.preventDefault();
       tree.setCut(node.path);
@@ -186,7 +186,7 @@
     }
   }
 
-  /** roving tabindex: 포커스 노드만 0, 미설정 시 최상위 첫 항목이 0. */
+  /** roving tabindex: only the focused node is 0; if unset, the top-level first item is 0. */
   function tabFor(path: string, index: number): number {
     if (tree.focused === path) return 0;
     if (tree.focused === null && top && index === 0) return 0;
@@ -264,7 +264,7 @@
     margin: 0;
     padding-left: var(--sp-3);
   }
-  /* 노드 행: chevron + 노드 버튼. 선택/드롭 강조는 행 전체에. */
+  /* Node row: chevron + node button. Selection/drop highlight covers the whole row. */
   .row {
     display: flex;
     align-items: center;
@@ -277,17 +277,17 @@
   .row.selected {
     background: var(--selection-bg);
   }
-  /* 드롭 대상 — 컨테이너(이동): 실선 테두리 + accent 배경. */
+  /* Drop target — container (move): solid border + accent background. */
   .row.drop-over {
     outline: 2px solid var(--drop-border);
     outline-offset: -2px;
     background: var(--drop-bg);
   }
-  /* 드롭 대상 — 리프(adopt, 승격 후 자식): 점선 테두리로 "이동"과 시각 구분. */
+  /* Drop target — leaf (adopt, child after promotion): dashed border to visually distinguish from "move". */
   .row.drop-leaf {
     outline-style: dashed;
   }
-  /* 키보드로 "잘라낸" 노드: 흐리게 + 점선 테두리(붙여넣기 대기 표시). */
+  /* Node "cut" via keyboard: dimmed + dashed border (indicates awaiting paste). */
   .row.cut {
     opacity: 0.5;
     outline: 1px dashed var(--border-strong);
@@ -332,7 +332,7 @@
     color: var(--text-normal);
     border-radius: var(--radius-s);
   }
-  /* 키보드 포커스 링(마우스 클릭에는 안 뜨도록 focus-visible). */
+  /* Keyboard focus ring (focus-visible so it doesn't appear on mouse click). */
   .node:focus-visible {
     outline: 2px solid var(--accent);
     outline-offset: -2px;
@@ -346,7 +346,7 @@
     white-space: nowrap;
     text-overflow: ellipsis;
   }
-  /* body 없는 컨테이너: 본문은 못 열지만 구조 편집 대상으로 선택은 가능 */
+  /* Container without a body: body can't be opened, but it can still be selected for structure editing */
   .no-body .label {
     color: var(--text-muted);
   }

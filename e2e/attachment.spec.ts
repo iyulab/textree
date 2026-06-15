@@ -11,7 +11,7 @@ import {
 let browser: Browser;
 let page: Page;
 
-// 1x1 투명 PNG.
+// 1x1 transparent PNG.
 const PNG_1x1_BASE64 =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
 
@@ -24,9 +24,10 @@ test.afterAll(async () => {
 });
 
 /**
- * 에디터에 이미지 paste 이벤트를 주입한다. Chromium은 ClipboardEvent 생성자의
- * clipboardData를 무시하므로 Object.defineProperty로 DataTransfer를 단다(앱의
- * handlePaste가 event.clipboardData.items를 읽는 계약과 일치).
+ * Inject an image paste event into the editor. Chromium ignores the
+ * ClipboardEvent constructor's clipboardData, so we attach a DataTransfer via
+ * Object.defineProperty (matching the app's contract where handlePaste reads
+ * event.clipboardData.items).
  */
 async function pasteImage(mime: string, base64: string): Promise<void> {
   await page.evaluate(
@@ -45,7 +46,7 @@ async function pasteImage(mime: string, base64: string): Promise<void> {
   );
 }
 
-test("이미지 붙여넣기 → assets/ 저장 + 본문에 링크 자동삽입", async () => {
+test("paste image → save to assets/ + auto-insert link into body", async () => {
   const vault = createTempVault({ "그림노트.md": "본문\n" });
   try {
     await loadVault(page, vault);
@@ -56,11 +57,11 @@ test("이미지 붙여넣기 → assets/ 저장 + 본문에 링크 자동삽입"
 
     await pasteImage("image/png", PNG_1x1_BASE64);
 
-    // 본문에 마크다운 링크가 삽입되고 자동저장으로 디스크 반영.
+    // Markdown link is inserted into the body and persisted to disk via autosave.
     await expect
       .poll(() => readVaultFile(vault, "그림노트.md"), { timeout: 5000 })
       .toContain("![](assets/");
-    // 노트 옆 assets/에 실제 이미지 파일 저장.
+    // Actual image file saved to assets/ next to the note.
     await expect
       .poll(() => listVaultDir(vault, "assets").filter((f) => f.endsWith(".png")).length, {
         timeout: 5000,
@@ -71,7 +72,7 @@ test("이미지 붙여넣기 → assets/ 저장 + 본문에 링크 자동삽입"
   }
 });
 
-test("미지원 형식(image/tiff) 붙여넣기는 가로채지 않음 — assets 미생성", async () => {
+test("paste of unsupported format (image/tiff) is not intercepted — no assets created", async () => {
   const vault = createTempVault({ "무관노트.md": "본문\n" });
   try {
     await loadVault(page, vault);
@@ -79,10 +80,10 @@ test("미지원 형식(image/tiff) 붙여넣기는 가로채지 않음 — asset
     await expect(page.locator(".cm-content")).toBeVisible();
     await page.locator(".cm-content").click();
 
-    // tiff는 화이트리스트 밖 → handlePaste가 통과시킴(삼킴 방지). 첨부 저장 없음.
+    // tiff is outside the whitelist → handlePaste lets it through (no swallowing). No attachment saved.
     await pasteImage("image/tiff", PNG_1x1_BASE64);
 
-    // 잠시 대기 후에도 assets 미생성·링크 미삽입 확인.
+    // After a brief wait, confirm no assets created and no link inserted.
     await page.waitForTimeout(800);
     expect(listVaultDir(vault, "assets")).toHaveLength(0);
     expect(readVaultFile(vault, "무관노트.md")).not.toContain("![](assets/");

@@ -6,7 +6,7 @@
 
   let { children } = $props();
 
-  // 앱 시작 시 저장된 앱 설정(테마·레이아웃)을 로드. 테마는 OS 선호 변화도 구독.
+  // On app start, load saved app settings (theme, layout). The theme also subscribes to OS preference changes.
   onMount(() => {
     layout.init();
     return theme.init();

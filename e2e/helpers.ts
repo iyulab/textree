@@ -6,21 +6,21 @@ import { tmpdir } from "node:os";
 const CDP_ENDPOINT = "http://localhost:9222";
 const APP_URL_FRAGMENT = "localhost:1420";
 
-/** sample-vault 절대경로(슬래시 정규화 — Tauri 백엔드가 양쪽 구분자 모두 수용). */
+/** Absolute path to sample-vault (slash-normalized — the Tauri backend accepts both separators). */
 export function sampleVaultPath(): string {
   return resolve(process.cwd(), "sample-vault").replace(/\\/g, "/");
 }
 
 /**
- * 실행 중인 Textree WebView2에 CDP로 연결해 앱 페이지를 반환한다.
- * 호출자는 끝나고 browser.close()로 CDP 연결만 끊는다(실제 앱은 유지됨).
+ * Connect to the running Textree WebView2 via CDP and return the app page.
+ * When done, the caller closes only the CDP connection with browser.close() (the real app stays running).
  */
 export async function connectToApp(): Promise<{ browser: Browser; page: Page }> {
   const browser = await chromium.connectOverCDP(CDP_ENDPOINT);
   for (const ctx of browser.contexts()) {
     for (const p of ctx.pages()) {
       if (p.url().includes(APP_URL_FRAGMENT)) {
-        // dev 테스트 브리지가 올라올 때까지 대기(onMount 완료 보장).
+        // Wait until the dev test bridge is up (guarantees onMount completed).
         await p.waitForFunction(
           () => Boolean((window as unknown as { __textreeTest?: unknown }).__textreeTest),
           { timeout: 10_000 },
@@ -36,7 +36,7 @@ export async function connectToApp(): Promise<{ browser: Browser; page: Page }> 
   );
 }
 
-/** 다이얼로그를 우회해 dev 브리지로 볼트를 연다. */
+/** Open a vault via the dev bridge, bypassing the dialog. */
 export async function loadVault(page: Page, vaultPath: string): Promise<void> {
   await page.evaluate(
     (v) =>
@@ -46,9 +46,9 @@ export async function loadVault(page: Page, vaultPath: string): Promise<void> {
 }
 
 /**
- * 격리된 임시 볼트를 만든다. files = { 상대경로: 내용 }.
- * 편집/생성/삭제·동기화 테스트가 sample-vault를 오염시키지 않도록 매 테스트 격리.
- * 반환 경로는 슬래시 정규화(앱 dev 브리지에 그대로 전달 가능).
+ * Create an isolated temporary vault. files = { relativePath: content }.
+ * Isolated per test so edit/create/delete and sync tests don't pollute sample-vault.
+ * The returned path is slash-normalized (can be passed straight to the app dev bridge).
  */
 export function createTempVault(files: Record<string, string>): string {
   const dir = mkdtempSync(join(tmpdir(), "textree-e2e-"));
@@ -64,12 +64,12 @@ export function removeTempVault(vaultPath: string): void {
   rmSync(vaultPath, { recursive: true, force: true });
 }
 
-/** 볼트 내 파일을 디스크에서 직접 읽는다(앱이 기록한 결과 검증용). */
+/** Read a file inside the vault directly from disk (to verify what the app wrote). */
 export function readVaultFile(vaultPath: string, rel: string): string {
   return readFileSync(join(vaultPath, rel), "utf8");
 }
 
-/** 볼트 내 디렉터리 항목 목록(없으면 빈 배열). 첨부 저장 검증용. */
+/** List directory entries inside the vault (empty array if none). For verifying attachment saves. */
 export function listVaultDir(vaultPath: string, rel: string): string[] {
   try {
     return readdirSync(join(vaultPath, rel));
@@ -78,20 +78,20 @@ export function listVaultDir(vaultPath: string, rel: string): string[] {
   }
 }
 
-/** 볼트 내 파일을 디스크에 직접 쓴다(외부 변경 시뮬레이션 — 워처 검증용). */
+/** Write a file inside the vault directly to disk (simulating an external change — for watcher verification). */
 export function writeVaultFile(vaultPath: string, rel: string, content: string): void {
   const abs = join(vaultPath, rel);
   mkdirSync(resolve(abs, ".."), { recursive: true });
   writeFileSync(abs, content, "utf8");
 }
 
-// 트리 DnD 전송 MIME(TreeView.svelte의 DRAG_MIME 단일 출처를 미러링).
+// Tree DnD transfer MIME (mirrors the single source of truth DRAG_MIME in TreeView.svelte).
 const DRAG_MIME = "application/x-textree-path";
 
 /**
- * HTML5 네이티브 DnD 시뮬레이션. Playwright 기본 드래그는 마우스 기반이라
- * dataTransfer를 채우지 못하므로, 동일한 DataTransfer 인스턴스로
- * dragstart→dragover→drop→dragend를 직접 디스패치한다(앱의 setData/getData 계약).
+ * HTML5 native DnD simulation. Playwright's default drag is mouse-based and
+ * doesn't populate dataTransfer, so we dispatch dragstart→dragover→drop→dragend
+ * directly with the same DataTransfer instance (the app's setData/getData contract).
  */
 export async function dragNodeOnto(page: Page, src: Locator, dst: Locator): Promise<void> {
   const srcEl = await src.elementHandle();

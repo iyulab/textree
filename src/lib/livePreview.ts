@@ -1,16 +1,16 @@
 /*
- * 라이브 프리뷰(옵시디언 LP 모델) — CodeMirror 6 인라인 데코레이션.
+ * Live preview (Obsidian LP model) — CodeMirror 6 inline decorations.
  *
- * 별도 프리뷰 패널이 아니라 에디터 위에서 마크다운을 렌더한다:
- *  - 헤딩은 크기를, 강조/코드 등은 스타일을 항상 적용(line/mark 데코).
- *  - 마커(#, **, *, `, ~~)는 **커서가 놓이지 않은 줄에서만** 숨긴다(replace 데코).
- *    커서가 그 줄에 오면 마커가 다시 보여 원본 마크다운을 그대로 편집할 수 있다.
+ * Renders markdown over the editor rather than in a separate preview panel:
+ *  - Headings always apply size; emphasis/code etc. always apply style (line/mark decorations).
+ *  - Markers (#, **, *, `, ~~) are hidden **only on lines without the cursor** (replace decoration).
+ *    When the cursor enters that line, the markers reappear so the original markdown can be edited directly.
  *
- * 성능: 가시 범위(visibleRanges)만 syntaxTree 로 순회하고, 문서·뷰포트·선택 변경
- * 시에만 데코를 재계산한다.
+ * Performance: iterates the syntaxTree over only the visible ranges (visibleRanges), and recomputes
+ * decorations only on document, viewport, or selection changes.
  *
- * 스코프(D4): 헤딩·강조(볼드/이탤릭)·취소선·인라인 코드. 링크·체크박스·인용/구분선·
- * 이미지 인라인은 후속(D4 계속/P4).
+ * Scope (D4): headings, emphasis (bold/italic), strikethrough, inline code. Links, checkboxes,
+ * quotes/horizontal rules, and inline images are follow-ups (D4 continued/P4).
  */
 
 import { syntaxTree } from "@codemirror/language";
@@ -24,7 +24,7 @@ import {
   WidgetType,
 } from "@codemirror/view";
 
-/** task list 체크박스 위젯 — 클릭하면 디스크 원문의 [ ]↔[x]를 토글한다. */
+/** Task list checkbox widget — clicking toggles [ ]↔[x] in the on-disk source. */
 class CheckboxWidget extends WidgetType {
   constructor(
     readonly checked: boolean,
@@ -41,7 +41,7 @@ class CheckboxWidget extends WidgetType {
     box.type = "checkbox";
     box.checked = this.checked;
     box.className = "cm-lp-checkbox";
-    // mousedown 차단: 커서가 줄로 이동해 위젯이 사라지는 것을 막고 토글만 수행.
+    // Block mousedown: prevents the cursor from moving to the line (which would remove the widget) and only performs the toggle.
     box.addEventListener("mousedown", (e) => {
       e.preventDefault();
       view.dispatch({
@@ -55,7 +55,7 @@ class CheckboxWidget extends WidgetType {
   }
 }
 
-/** 구분선(---) 위젯 — 비활성 줄에서 원문 대신 가로줄로 렌더. */
+/** Horizontal rule (---) widget — renders a horizontal line instead of the source on inactive lines. */
 class HrWidget extends WidgetType {
   eq() {
     return true;
@@ -67,7 +67,7 @@ class HrWidget extends WidgetType {
   }
 }
 
-/** 커서/선택이 걸친 줄 번호 집합 — 이 줄들은 마커를 숨기지 않는다(소스 노출). */
+/** Set of line numbers touched by the cursor/selection — these lines do not hide markers (source exposed). */
 function activeLines(view: EditorView): Set<number> {
   const s = new Set<number>();
   const { doc } = view.state;
@@ -79,7 +79,7 @@ function activeLines(view: EditorView): Set<number> {
   return s;
 }
 
-// 줄 단위 헤딩 크기 데코(클래스는 lpTheme 에서 정의).
+// Per-line heading size decorations (classes defined in lpTheme).
 const headingLine = [
   null,
   Decoration.line({ class: "cm-lp-h1" }),
@@ -98,8 +98,8 @@ const linkMark = Decoration.mark({ class: "cm-lp-link" });
 const quoteLine = Decoration.line({ class: "cm-lp-quote" });
 const hideMark = Decoration.replace({});
 
-// 숨김 대상 마커 노드(lezer-markdown). URL 은 인라인 링크일 때만 숨겨야 해서
-// (autolink·bare url 은 URL 이 유일한 가시 콘텐츠) 일반 숨김 집합에 넣지 않는다.
+// Marker nodes to hide (lezer-markdown). URL is excluded from the general hide set
+// because it should be hidden only for inline links (autolink/bare url have the URL as their only visible content).
 const MARKER_NODES = new Set([
   "HeaderMark",
   "EmphasisMark",
@@ -121,7 +121,7 @@ function buildDecorations(view: EditorView): DecorationSet {
       enter: (node) => {
         const name = node.name;
 
-        // 헤딩: 줄 전체에 크기 데코(커서 줄이어도 크기는 유지 — 옵시디언과 동일).
+        // Heading: size decoration over the whole line (size is kept even on the cursor line — same as Obsidian).
         const h = /^ATXHeading([1-6])$/.exec(name);
         if (h) {
           const deco = headingLine[Number(h[1])];
@@ -129,7 +129,7 @@ function buildDecorations(view: EditorView): DecorationSet {
           return;
         }
 
-        // 인용: 줄마다 좌측 바 스타일.
+        // Blockquote: left-bar style on each line.
         if (name === "Blockquote") {
           const startLn = state.doc.lineAt(node.from).number;
           const endLn = state.doc.lineAt(node.to).number;
@@ -139,7 +139,7 @@ function buildDecorations(view: EditorView): DecorationSet {
           return;
         }
 
-        // 구분선(---): 비활성 줄에서 원문 대신 가로줄 위젯.
+        // Horizontal rule (---): horizontal line widget instead of the source on inactive lines.
         if (name === "HorizontalRule") {
           const ln = state.doc.lineAt(node.from).number;
           if (active.has(ln)) return;
@@ -151,7 +151,7 @@ function buildDecorations(view: EditorView): DecorationSet {
           return;
         }
 
-        // task list 체크박스: 비활성 줄에서 마커를 토글 위젯으로 치환.
+        // Task list checkbox: replace the marker with a toggle widget on inactive lines.
         if (name === "TaskMarker") {
           const ln = state.doc.lineAt(node.from).number;
           if (active.has(ln)) return;
@@ -164,25 +164,25 @@ function buildDecorations(view: EditorView): DecorationSet {
           return;
         }
 
-        // 인라인 스타일: 내용 범위에 항상 적용.
+        // Inline styles: always applied to the content range.
         if (name === "StrongEmphasis") ranges.push(strongMark.range(node.from, node.to));
         else if (name === "Emphasis") ranges.push(emMark.range(node.from, node.to));
         else if (name === "Strikethrough") ranges.push(strikeMark.range(node.from, node.to));
         else if (name === "InlineCode") ranges.push(codeMark.range(node.from, node.to));
         else if (name === "Link") ranges.push(linkMark.range(node.from, node.to));
         else if (name === "URL") {
-          // 인라인 링크 [text](url) 의 url 만 숨긴다(앞 문자가 '('). autolink·bare
-          // url 은 url 자체가 표시 콘텐츠이므로 보존.
+          // Hide only the url of an inline link [text](url) (preceding char is '('). For autolink/bare
+          // url, the url itself is the displayed content, so preserve it.
           const ln = state.doc.lineAt(node.from).number;
           if (active.has(ln)) return;
           if (state.doc.sliceString(node.from - 1, node.from) === "(")
             ranges.push(hideMark.range(node.from, node.to));
         } else if (MARKER_NODES.has(name)) {
-          // 마커 숨김 — 단, 커서가 놓인 줄은 소스를 보여준다.
+          // Hide markers — but the line with the cursor shows its source.
           const ln = state.doc.lineAt(node.from).number;
           if (active.has(ln)) return;
           let end = node.to;
-          // 헤딩 마커는 뒤따르는 공백 1칸까지 함께 숨겨 들여쓰기 잔여를 없앤다.
+          // For heading markers, also hide the one following space to remove leftover indentation.
           if (name === "HeaderMark" && state.doc.sliceString(end, end + 1) === " ") end += 1;
           if (node.from < end) ranges.push(hideMark.range(node.from, end));
         }
@@ -190,11 +190,11 @@ function buildDecorations(view: EditorView): DecorationSet {
     });
   }
 
-  // 정렬 위임(sort=true) — line/mark/replace 가 섞여도 안전하게 정렬된다.
+  // Delegate sorting (sort=true) — sorts safely even when line/mark/replace are mixed.
   return Decoration.set(ranges, true);
 }
 
-/** 라이브 프리뷰 ViewPlugin — 데코를 보유하고 변경 시 재계산. */
+/** Live preview ViewPlugin — holds the decorations and recomputes them on change. */
 const livePreviewPlugin = ViewPlugin.fromClass(
   class {
     decorations: DecorationSet;
@@ -210,7 +210,7 @@ const livePreviewPlugin = ViewPlugin.fromClass(
   { decorations: (v) => v.decorations },
 );
 
-/** 라이브 프리뷰 타이포 — 토큰 기반(테마 추종). */
+/** Live preview typography — token-based (follows the theme). */
 const lpTheme = EditorView.theme({
   ".cm-lp-h1": { fontSize: "var(--font-size-h1)", fontWeight: "var(--font-weight-semibold)", lineHeight: "1.3" },
   ".cm-lp-h2": { fontSize: "var(--font-size-h2)", fontWeight: "var(--font-weight-semibold)", lineHeight: "1.3" },
@@ -243,5 +243,5 @@ const lpTheme = EditorView.theme({
   },
 });
 
-/** 에디터에 추가할 라이브 프리뷰 확장 묶음. */
+/** Live preview extension bundle to add to the editor. */
 export const livePreview = [livePreviewPlugin, lpTheme];

@@ -1,8 +1,9 @@
 /*
- * 트리 UI 상태 — 접힘 집합 + 키보드 포커스 경로.
+ * Tree UI state — collapse set + keyboard focus path.
  *
- * 접힘은 표현 계층 선호이므로 localStorage 영속(절대경로 기반 → 볼트 무충돌).
- * 포커스(roving tabindex)는 세션 상태라 영속하지 않는다.
+ * Collapse is a presentation-layer preference, so it persists in localStorage
+ * (based on absolute paths → no vault conflict).
+ * Focus (roving tabindex) is session state and does not persist.
  */
 
 const COLLAPSE_KEY = "textree-tree-collapsed";
@@ -19,9 +20,9 @@ function loadCollapsed(): Set<string> {
 
 class TreeStore {
   collapsed = $state<Set<string>>(loadCollapsed());
-  /** 키보드 포커스 중인 노드 경로(roving tabindex 기준). null=미설정(첫 항목 폴백). */
+  /** Path of the node under keyboard focus (roving tabindex basis). null = unset (falls back to the first item). */
   focused = $state<string | null>(null);
-  /** 키보드 이동을 위해 "잘라낸" 노드 경로(Ctrl+X). 붙여넣기(Ctrl+V) 대상에 이동/adopt. */
+  /** Path of the node "cut" for keyboard move (Ctrl+X). Moved/adopted onto the paste (Ctrl+V) target. */
   cut = $state<string | null>(null);
 
   isCollapsed(path: string): boolean {

@@ -2,14 +2,14 @@ import { test, expect, type Browser, type Page } from "@playwright/test";
 import { connectToApp, loadVault, sampleVaultPath } from "./helpers";
 
 /**
- * P1a — 통합 팔레트. Ctrl+P로 열고 파일 검색(파일 모드)·명령 실행(명령 모드)을
- * 실제 WebView2에서 단언한다.
+ * P1a — unified palette. Open with Ctrl+P and assert file search (file mode) and
+ * command execution (command mode) against a real WebView2.
  *
- * 파일 모드: 기본, 쿼리가 '>'로 시작하지 않을 때.
- * 명령 모드: 쿼리가 '>'로 시작할 때. 실제 검색어는 '>' 이후.
+ * File mode: default, when the query does not start with '>'.
+ * Command mode: when the query starts with '>'. The actual search term is after '>'.
  *
- * sample-vault 최상위 파일: 프로젝트(리프).
- * 명령 타이틀: "테마 전환(라이트↔다크)" → '>테마'로 fuzzy 매칭.
+ * sample-vault top-level file: 프로젝트 (leaf).
+ * Command title: "테마 전환(라이트↔다크)" → fuzzy matched by '>테마'.
  */
 
 let browser: Browser;
@@ -25,54 +25,54 @@ test.afterAll(async () => {
   await browser?.close();
 });
 
-test("팔레트 파일 모드: Ctrl+P → 파일 검색 → Enter → 노트 로드", async () => {
+test("palette file mode: Ctrl+P → file search → Enter → note loads", async () => {
   await loadVault(page, sampleVaultPath());
 
-  // 팔레트 열기.
+  // Open the palette.
   await page.keyboard.press("Control+p");
   await expect(page.getByTestId("palette-overlay")).toBeVisible();
   await expect(page.getByTestId("palette-input")).toBeVisible();
 
-  // 파일명 일부 타이핑 — sample-vault의 실재 파일 "프로젝트".
+  // Type part of a file name — the real file "프로젝트" in sample-vault.
   await page.getByTestId("palette-input").type("프로젝트");
 
-  // 매칭 결과가 1개 이상 표시.
+  // At least one matching result is shown.
   await expect(page.getByTestId("palette-item").first()).toBeVisible();
 
-  // Enter → 팔레트 닫히고 해당 노트가 에디터에 로드.
+  // Enter → palette closes and the note loads in the editor.
   await page.keyboard.press("Enter");
   await expect(page.getByTestId("palette-overlay")).toHaveCount(0);
 
-  // smoke.spec.ts의 에디터 검증 셀렉터 재사용.
+  // Reuse the editor verification selectors from smoke.spec.ts.
   await expect(page.locator(".title")).toContainText("프로젝트");
   await expect(page.locator(".cm-content")).toBeVisible();
 });
 
-test("팔레트 명령 모드: Ctrl+P → '>테마' 입력 → Enter → 테마 전환", async () => {
+test("palette command mode: Ctrl+P → type '>테마' → Enter → theme toggles", async () => {
   await loadVault(page, sampleVaultPath());
 
   const html = page.locator("html");
   const before = (await html.getAttribute("data-theme")) ?? "light";
 
-  // 팔레트 열기.
+  // Open the palette.
   await page.keyboard.press("Control+p");
   await expect(page.getByTestId("palette-overlay")).toBeVisible();
 
-  // '>' 접두어로 명령 모드 전환 후 '테마' 입력 — "테마 전환(라이트↔다크)" fuzzy 매칭.
+  // Switch to command mode with the '>' prefix, then type '테마' — fuzzy matches "테마 전환(라이트↔다크)".
   await page.getByTestId("palette-input").type(">테마");
 
-  // 명령 결과 표시.
+  // Command result is shown.
   await expect(page.getByTestId("palette-item").first()).toBeVisible();
 
-  // Enter → 팔레트 닫히고 테마 전환.
+  // Enter → palette closes and the theme toggles.
   await page.keyboard.press("Enter");
   await expect(page.getByTestId("palette-overlay")).toHaveCount(0);
 
-  // theme.spec.ts의 검증 방식 재사용: data-theme 속성이 반대 값으로 전환.
+  // Reuse the verification approach from theme.spec.ts: the data-theme attribute switches to the opposite value.
   await expect(html).toHaveAttribute("data-theme", opposite(before));
 });
 
-test("팔레트 Esc: 열린 상태에서 Esc → 오버레이 닫힘", async () => {
+test("palette Esc: Esc while open → overlay closes", async () => {
   await page.keyboard.press("Control+p");
   await expect(page.getByTestId("palette-overlay")).toBeVisible();
 

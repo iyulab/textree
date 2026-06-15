@@ -18,19 +18,19 @@ test.afterAll(async () => {
   await browser?.close();
 });
 
-test("편집 → 디바운스 자동저장 → 디스크에 반영", async () => {
+test("edit → debounced autosave → persisted to disk", async () => {
   const vault = createTempVault({ "메모.md": "처음 내용\n" });
   try {
     await loadVault(page, vault);
     await page.getByRole("treeitem", { name: /메모/ }).click();
     await expect(page.locator(".cm-content")).toBeVisible();
 
-    // 본문 끝에 한 줄 추가 입력.
+    // Type an extra line at the end of the body.
     await page.locator(".cm-content").click();
     await page.keyboard.press("Control+End");
     await page.keyboard.type("추가된 줄");
 
-    // 디바운스(500ms) 후 디스크에 기록될 때까지 폴링 — 실제 fs 결과를 직접 검증.
+    // Poll until written to disk after the debounce (500ms) — directly verify the real fs result.
     await expect
       .poll(() => readVaultFile(vault, "메모.md"), { timeout: 5000 })
       .toContain("추가된 줄");
@@ -39,19 +39,19 @@ test("편집 → 디바운스 자동저장 → 디스크에 반영", async () =>
   }
 });
 
-test("노트 전환 시 미저장 편집을 flush", async () => {
+test("flush unsaved edits when switching notes", async () => {
   const vault = createTempVault({ "노트가.md": "가본문\n", "노트나.md": "나본문\n" });
   try {
     await loadVault(page, vault);
 
-    // 노트가 편집(디바운스 만료 전에 곧바로 노트나로 전환).
+    // Edit note A (switch to note B immediately, before the debounce expires).
     await page.getByRole("treeitem", { name: /노트가/ }).click();
     await expect(page.locator(".cm-content")).toBeVisible();
     await page.locator(".cm-content").click();
     await page.keyboard.press("Control+End");
     await page.keyboard.type("XYZ");
 
-    // 즉시 노트나로 전환 → flush가 노트가의 편집을 디스크에 보존해야 함.
+    // Switch to note B immediately → flush must persist note A's edit to disk.
     await page.getByRole("treeitem", { name: /노트나/ }).click();
 
     await expect

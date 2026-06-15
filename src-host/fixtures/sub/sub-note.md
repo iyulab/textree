@@ -1,2 +1,2 @@
-# 결제 모듈 상세
-서브폴더 전용 노트. 결제 게이트웨이 연동과 환불 처리 세부를 다룬다.
+# Payment Module Details
+A subfolder-only note. It covers payment-gateway integration and refund-handling details.

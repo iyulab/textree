@@ -1,8 +1,9 @@
-//! 외부 파일 변경 감시(M3).
+//! External file change watching (M3).
 //!
-//! `notify-debouncer-full`로 볼트 루트를 재귀 감시하고, self-write 레지스트리로
-//! 앱 자신의 쓰기(에코)를 걸러낸 뒤 `fs_changed` 이벤트를 프론트로 방출한다.
-//! 디바운서가 드롭되면 감시가 멈추므로, 반환된 핸들을 상태로 살려둔다.
+//! Recursively watches the vault root with `notify-debouncer-full`, filters out
+//! the app's own writes (echoes) via the self-write registry, then emits
+//! `fs_changed` events to the frontend. Dropping the debouncer stops watching,
+//! so the returned handle is kept alive in state.
 
 use crate::search::IndexHandle;
 use crate::self_write::SelfWrites;
@@ -24,7 +25,7 @@ pub enum ChangeKind {
     Removed,
 }
 
-/// 프론트로 보내는 변경 페이로드(앱 IPC wire 타입 — 라이브러리 타입과 분리).
+/// Change payload sent to the frontend (app IPC wire type — separate from library types).
 #[derive(Debug, Serialize, Clone, PartialEq, Eq)]
 pub struct FsChange {
     pub kind: ChangeKind,
@@ -33,12 +34,12 @@ pub struct FsChange {
 
 pub type VaultWatcher = Debouncer<RecommendedWatcher, RecommendedCache>;
 
-/// 실행 중인 볼트 워처 핸들. Tauri `State`로 관리한다.
-/// 볼트를 새로 열면 이전 디바운서를 드롭(감시 중지)하고 교체한다.
+/// Handle to the running vault watcher. Managed as a Tauri `State`.
+/// Opening a new vault drops the previous debouncer (stops watching) and replaces it.
 #[derive(Default)]
 pub struct WatcherHandle(pub Mutex<Option<VaultWatcher>>);
 
-/// notify `EventKind`를 우리 변경 종류로 축약. 관심 없는 종류는 `None`.
+/// Reduces a notify `EventKind` to our change kind. Kinds we don't care about return `None`.
 fn map_kind(kind: &EventKind) -> Option<ChangeKind> {
     if kind.is_create() {
         Some(ChangeKind::Created)
@@ -47,31 +48,34 @@ fn map_kind(kind: &EventKind) -> Option<ChangeKind> {
     } else if kind.is_modify() {
         Some(ChangeKind::Modified)
     } else {
-        None // Access/Any/Other는 무시
+        None // ignore Access/Any/Other
     }
 }
 
-/// 볼트 루트 기준 dot-세그먼트(`.textree`, `.git` 등)는 트리에서 숨김 대상이므로
-/// 워처도 무시한다. 루트 경로 자체에 포함된 dot는 무시 판정에 넣지 않는다.
+/// Dot segments relative to the vault root (`.textree`, `.git`, etc.) are hidden in the
+/// tree, so the watcher ignores them too. Dots in the root path itself are not counted
+/// toward the ignore decision.
 fn is_ignored(root: &Path, path: &Path) -> bool {
     let rel = path.strip_prefix(root).unwrap_or(path);
     rel.components()
         .any(|c| c.as_os_str().to_str().is_some_and(|s| s.starts_with('.')))
 }
 
-/// 단일 `(kind, path)`를 프론트 변경으로 변환. create/modify이고 현재 파일
-/// 내용이 등록된 자가쓰기와 일치하면 `None`(에코 억제).
+/// Converts a single `(kind, path)` into a frontend change. Returns `None` (echo
+/// suppression) when it's a create/modify and the current file content matches a
+/// registered self-write.
 fn to_fs_change(kind: ChangeKind, path: &Path, self_writes: &SelfWrites) -> Option<FsChange> {
     if matches!(kind, ChangeKind::Created | ChangeKind::Modified) {
         match std::fs::read_to_string(path) {
             Ok(content) => {
                 if self_writes.take_if_matches(path, &content) {
-                    return None; // 자가쓰기 에코 — 억제
+                    return None; // self-write echo — suppress
                 }
             }
             Err(_) => {
-                // 내용을 못 읽으면 에코 판정 불가. 등록이 남아 있으면 정리해
-                // stale 엔트리가 이후 동일내용 외부변경을 오판 억제하지 않게 한다.
+                // If the content can't be read, an echo decision is impossible. Clean up
+                // any remaining registration so a stale entry doesn't wrongly suppress a
+                // later external change with identical content.
                 self_writes.forget(path);
             }
         }
@@ -82,8 +86,8 @@ fn to_fs_change(kind: ChangeKind, path: &Path, self_writes: &SelfWrites) -> Opti
     })
 }
 
-/// 한 배치의 변경을 인덱스에 반영하고 1회 commit한다(.md만, dot 경로 제외는
-/// 호출부 is_ignored가 이미 수행). 인덱스 미설치 시 무동작.
+/// Applies a batch of changes to the index and commits once (.md only; excluding dot
+/// paths is already done by the caller's is_ignored). No-op when no index is installed.
 pub fn apply_changes_to_index(handle: &IndexHandle, root: &Path, changes: &[FsChange]) {
     let mut guard = handle.0.lock().unwrap_or_else(|e| e.into_inner());
     let Some(state) = guard.as_mut() else { return };
@@ -101,7 +105,7 @@ pub fn apply_changes_to_index(handle: &IndexHandle, root: &Path, changes: &[FsCh
     }
 }
 
-/// 볼트 루트를 재귀 감시하는 디바운서를 시작한다.
+/// Starts a debouncer that recursively watches the vault root.
 pub fn start(
     app: AppHandle,
     root: &Path,
@@ -114,7 +118,7 @@ pub fn start(
         None,
         move |result: DebounceEventResult| {
             let Ok(events) = result else {
-                return; // 워처 에러는 무시 — 다음 이벤트에서 자연 복구
+                return; // ignore watcher errors — recovers naturally on the next event
             };
             let mut batch: Vec<FsChange> = Vec::new();
             for ev in events {
@@ -178,9 +182,9 @@ mod tests {
     #[test]
     fn is_ignored_does_not_count_dot_in_root_path() {
         let root = PathBuf::from("/home/.config/vault");
-        // 루트 안의 .config는 무시 판정 대상이 아님.
+        // .config inside the root is not subject to the ignore decision.
         assert!(!is_ignored(&root, &PathBuf::from("/home/.config/vault/노트.md")));
-        // 루트 아래의 dot 폴더는 여전히 무시.
+        // A dot folder below the root is still ignored.
         assert!(is_ignored(
             &root,
             &PathBuf::from("/home/.config/vault/.textree/x.json")
@@ -195,10 +199,10 @@ mod tests {
         let sw = SelfWrites::default();
         sw.record(&f, "self-written");
 
-        // 등록된 자가쓰기와 내용 일치 → 억제.
+        // Content matches the registered self-write → suppress.
         assert!(to_fs_change(ChangeKind::Modified, &f, &sw).is_none());
 
-        // 외부 도구가 다른 내용으로 변경 → 방출.
+        // An external tool changes it to different content → emit.
         std::fs::write(&f, "external edit").unwrap();
         let change = to_fs_change(ChangeKind::Modified, &f, &sw);
         assert_eq!(change.map(|c| c.kind), Some(ChangeKind::Modified));
@@ -251,10 +255,10 @@ mod tests {
         let f = tmp.path().join("vanished.md");
         let sw = SelfWrites::default();
         sw.record(&f, "was-self-written");
-        // 파일이 없어 읽기 실패 → 이벤트는 통과(Some), 등록은 정리됨.
+        // File doesn't exist so the read fails → the event passes through (Some), the registration is cleaned up.
         let change = to_fs_change(ChangeKind::Modified, &f, &sw);
         assert_eq!(change.map(|c| c.kind), Some(ChangeKind::Modified));
-        // forget으로 소비됐으므로, 같은 내용이 다시 와도 자가쓰기로 안 봄.
+        // Since it was consumed by forget, the same content arriving again is not treated as a self-write.
         std::fs::write(&f, "was-self-written").unwrap();
         assert!(to_fs_change(ChangeKind::Modified, &f, &sw).is_some());
     }

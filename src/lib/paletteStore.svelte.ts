@@ -1,5 +1,5 @@
 /*
- * 통합 팔레트 상태 — 열림/쿼리/선택 인덱스. 모드는 쿼리에서 파생('>'=명령).
+ * Unified palette state — open/query/selection index. Mode is derived from the query ('>' = command).
  */
 
 import { paletteMode, paletteTerm, type PaletteMode } from "./palette.helpers";
@@ -7,15 +7,15 @@ import { paletteMode, paletteTerm, type PaletteMode } from "./palette.helpers";
 class PaletteStore {
   open = $state(false);
   query = $state("");
-  /** 결과 리스트 내 키보드 선택 인덱스. */
+  /** Keyboard selection index within the result list. */
   selected = $state(0);
 
-  /** 쿼리 접두로 모드 파생('>'=명령, '/'=본문검색, 그 외=파일). */
+  /** Derive mode from the query prefix ('>' = command, '/' = content search, otherwise = file). */
   get mode(): PaletteMode {
     return paletteMode(this.query);
   }
 
-  /** 모드별 실제 검색어(접두 제거). */
+  /** Actual search term per mode (prefix removed). */
   get term(): string {
     return paletteTerm(this.query);
   }
@@ -32,7 +32,7 @@ class PaletteStore {
 
   setQuery(q: string): void {
     this.query = q;
-    this.selected = 0; // 입력 변경 시 선택 리셋
+    this.selected = 0; // Reset selection on input change
   }
 
   move(delta: number, count: number): void {

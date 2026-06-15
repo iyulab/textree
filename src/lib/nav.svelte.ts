@@ -1,15 +1,15 @@
 /*
- * 네비게이션 스토어 — 즐겨찾기·최근·수동정렬.
- * 즐겨찾기/정렬은 .textree/(볼트 귀속), 최근은 localStorage(기기 귀속).
+ * Navigation store — favorites, recent, manual order.
+ * Favorites/order live in .textree/ (vault-bound); recent lives in localStorage (device-bound).
  *
- * 순수 로직(mergeOrder/dedupePushFront/RECENT_MAX)은 nav.helpers.ts에 있다 —
- * runes 없는 모듈로 분리해 vitest(node 환경)에서 직접 테스트한다.
+ * Pure logic (mergeOrder/dedupePushFront/RECENT_MAX) lives in nav.helpers.ts —
+ * split into a runes-free module so it can be tested directly under vitest (node environment).
  */
 
 import { readSidecar, writeSidecar } from "./ipc";
 import { dedupePushFront, RECENT_MAX } from "./nav.helpers";
 
-// 컴포넌트가 `$lib/nav.svelte`에서 정렬 헬퍼를 함께 import할 수 있도록 re-export.
+// Re-export so components can import the order helper alongside from `$lib/nav.svelte`.
 export { mergeOrder } from "./nav.helpers";
 
 const RECENT_KEY = "textree-recent";
@@ -17,12 +17,12 @@ const RECENT_KEY = "textree-recent";
 class NavStore {
   favorites = $state<string[]>([]);
   recent = $state<string[]>(loadRecent());
-  /** parentPath → 자식 경로 순서. */
+  /** parentPath → child path order. */
   order = $state<Record<string, string[]>>({});
-  /** 현재 볼트 루트(영속 IPC 대상). null이면 미로드. */
+  /** Current vault root (target of persist IPC). null means not loaded. */
   private root: string | null = null;
 
-  /** 볼트 열기/전환 시 호출 — 사이드카에서 favorites/order 재로드. */
+  /** Called on vault open/switch — reloads favorites/order from the sidecar. */
   async load(root: string): Promise<void> {
     this.root = root;
     this.favorites = (await readJson<string[]>(root, "favorites.json")) ?? [];
@@ -56,7 +56,7 @@ class NavStore {
     try {
       await writeSidecar(this.root, rel, JSON.stringify(value));
     } catch (e) {
-      // 비차단: 인메모리 상태는 유지. 다음 쓰기에서 복구 시도.
+      // Non-blocking: keep the in-memory state. Retry recovery on the next write.
       console.warn(`사이드카 쓰기 실패(${rel}):`, e);
     }
   }
@@ -72,7 +72,7 @@ function loadRecent(): string[] {
   }
 }
 
-/** 사이드카 JSON 읽기 — 부재/손상 시 null(호출부가 기본값 폴백). */
+/** Reads sidecar JSON — null on absence/corruption (the caller falls back to a default). */
 async function readJson<T>(root: string, rel: string): Promise<T | null> {
   try {
     const raw = await readSidecar(root, rel);

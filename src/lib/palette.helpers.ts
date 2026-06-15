@@ -1,6 +1,6 @@
 /*
- * 팔레트 모드/검색어 파생 — 순수 로직(runes 비의존, vitest 대상).
- * '>'=명령, '/'=본문검색, 그 외=파일명 fuzzy.
+ * Palette mode/search-term derivation — pure logic (runes-independent, vitest target).
+ * '>' = command, '/' = content search, otherwise = filename fuzzy.
  */
 
 export type PaletteMode = "file" | "command" | "content";

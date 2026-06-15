@@ -4,8 +4,8 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 
 /**
- * D5 — 페이지 디테일. 본문 헤더의 제목을 클릭해 인라인 편집하면 노트(파일)가
- * 실제로 rename 되고 제목이 갱신되는지 단언한다.
+ * D5 — Page detail. Asserts that clicking the title in the body header to edit
+ * it inline actually renames the note (file) and updates the title.
  */
 
 let browser: Browser;
@@ -19,20 +19,20 @@ test.afterAll(async () => {
   await browser?.close();
 });
 
-test("인라인 제목 편집 → 파일 rename + 제목 갱신", async () => {
+test("inline title edit -> file rename + title update", async () => {
   const vault = createTempVault({ "원제목.md": "내용\n" });
   try {
     await loadVault(page, vault);
     await page.getByRole("treeitem", { name: /원제목/ }).click();
     await expect(page.locator(".note-name")).toHaveText("원제목");
 
-    // 제목 클릭 → 입력창 → 새 이름 입력 → Enter.
+    // Click title -> input -> enter new name -> Enter.
     await page.locator(".note-name").click();
     await expect(page.locator(".title-input")).toBeVisible();
     await page.locator(".title-input").fill("새제목");
     await page.locator(".title-input").press("Enter");
 
-    // 제목 갱신 + 디스크 파일 rename.
+    // Title updated + disk file renamed.
     await expect(page.locator(".note-name")).toHaveText("새제목");
     await expect(page.getByRole("treeitem", { name: /새제목/ })).toBeVisible();
     expect(existsSync(join(vault, "새제목.md"))).toBe(true);
@@ -42,7 +42,7 @@ test("인라인 제목 편집 → 파일 rename + 제목 갱신", async () => {
   }
 });
 
-test("제목 편집 Escape → 변경 없음", async () => {
+test("title edit Escape -> no change", async () => {
   const vault = createTempVault({ "유지.md": "내용\n" });
   try {
     await loadVault(page, vault);

@@ -1,8 +1,8 @@
 /*
- * 레이아웃 상태 — 사이드바 폭 + 접힘.
+ * Layout state — sidebar width + collapse.
  *
- * 표현 계층 선호이므로 localStorage 에 영속한다(앱 설정 — 볼트의 라이브러리
- * schema 와 분리). theme.svelte.ts 와 동일한 패턴.
+ * Since it is a presentation-layer preference, it persists in localStorage (app setting —
+ * separate from the vault's library schema). Same pattern as theme.svelte.ts.
  */
 
 const WIDTH_KEY = "textree-sidebar-width";
@@ -31,13 +31,13 @@ class LayoutStore {
   width = $state<number>(SIDEBAR_DEFAULT);
   collapsed = $state<boolean>(false);
 
-  /** 앱 시작 시 1회: 저장된 값 로드. */
+  /** Once at app startup: load stored values. */
   init(): void {
     this.width = readWidth();
     this.collapsed = readCollapsed();
   }
 
-  /** 드래그 중 폭 설정(클램프). 영속은 드래그 종료 시 1회(persistWidth). */
+  /** Set width during drag (clamped). Persistence happens once at drag end (persistWidth). */
   setWidth(w: number): void {
     this.width = clampWidth(w);
   }

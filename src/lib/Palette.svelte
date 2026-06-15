@@ -38,7 +38,7 @@
   let cmdMatches = $derived<Match<Command>[]>(
     palette.mode === "command" ? fuzzyMatch(palette.term, commands, (c) => c.title) : [],
   );
-  // 본문검색은 백엔드 IPC(비동기) — 디바운스 + 마지막 응답만 반영(경합방지).
+  // Content search uses the backend IPC (async) — debounce + apply only the last response (race prevention).
   let contentHits = $state<SearchHit[]>([]);
   let searchSeq = 0;
 
@@ -55,7 +55,7 @@
     const seq = ++searchSeq;
     const t = setTimeout(() => {
       void onSearchContent(term).then((hits) => {
-        if (seq === searchSeq) contentHits = hits; // 최신 요청만 반영
+        if (seq === searchSeq) contentHits = hits; // apply only the latest request
       });
     }, 120);
     return () => clearTimeout(t);
@@ -204,7 +204,7 @@
   .overlay {
     position: fixed;
     inset: 0;
-    /* --bg-primary: 배경 기반 반투명 오버레이 */
+    /* --bg-primary: background-based translucent overlay */
     background: color-mix(in srgb, var(--bg-primary) 60%, transparent);
     display: flex;
     justify-content: center;
@@ -217,13 +217,13 @@
     max-height: 60vh;
     display: flex;
     flex-direction: column;
-    /* --bg-secondary: 패널 서피스 */
+    /* --bg-secondary: panel surface */
     background: var(--bg-secondary);
-    /* --border: 경계선 */
+    /* --border: border line */
     border: 1px solid var(--border);
-    /* --radius-m: 패널 radius */
+    /* --radius-m: panel radius */
     border-radius: var(--radius-m);
-    /* --shadow-m: 가장 강한 그림자 토큰 */
+    /* --shadow-m: strongest shadow token */
     box-shadow: var(--shadow-m);
     overflow: hidden;
   }
@@ -232,7 +232,7 @@
     border: 0;
     border-bottom: 1px solid var(--border);
     background: transparent;
-    /* --text-normal: 기본 텍스트 */
+    /* --text-normal: default text */
     color: var(--text-normal);
     font-size: 1rem;
     outline: none;
@@ -248,18 +248,18 @@
     flex-direction: column;
     gap: 0.1rem;
     padding: 0.4rem 0.6rem;
-    /* --radius-s: 행 radius */
+    /* --radius-s: row radius */
     border-radius: var(--radius-s);
     cursor: pointer;
   }
   .row.sel {
-    /* --selection-bg: accent 알파 파생(선택 강조) */
+    /* --selection-bg: derived from accent alpha (selection highlight) */
     background: var(--selection-bg);
   }
   .title { color: var(--text-normal); }
-  /* --accent: 매치 하이라이트 */
+  /* --accent: match highlight */
   .hl { color: var(--accent); font-weight: 600; }
-  /* --text-muted: 보조 경로 텍스트 */
+  /* --text-muted: secondary path text */
   .sub { color: var(--text-muted); font-size: 0.8rem; }
   .snippet { color: var(--text-normal); font-size: 0.85rem; }
 </style>

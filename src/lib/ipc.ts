@@ -5,9 +5,9 @@ export type NodeKind = "leaf" | "container";
 export interface TreeNode {
   name: string;
   kind: NodeKind;
-  // 노드 자체 경로(리프=.md, 컨테이너=디렉터리). 구조 편집의 주소.
+  // The node's own path (leaf=.md, container=directory). The address for structure edits.
   path: string;
-  // Rust PathBuf는 JSON에서 문자열로 직렬화됨. body 없는 컨테이너면 null.
+  // Rust PathBuf serializes to a string in JSON. null for a container with no body.
   body_path: string | null;
   children: TreeNode[];
 }
@@ -32,7 +32,7 @@ export async function writeNote(
   return invoke<void>("write_note", { root, path, content });
 }
 
-// ── 구조 편집(M4) ────────────────────────────────────────────────
+// ── Structure edits (M4) ────────────────────────────────────────────────
 
 export async function createNote(
   root: string,
@@ -66,7 +66,7 @@ export async function moveNode(
   return invoke<string>("move_node", { root, path, dest });
 }
 
-/** 리프 노트(leaf)를 컨테이너로 승격하고 path 노드를 그 안으로 이동. 새 경로 반환. */
+/** Promote a leaf note to a container and move the path node into it. Returns the new path. */
 export async function adoptNode(
   root: string,
   path: string,
@@ -76,8 +76,8 @@ export async function adoptNode(
 }
 
 /**
- * 첨부 이미지를 노트(note, .md) 옆 assets/에 저장. data는 base64 바이트.
- * 본문에 삽입할 상대링크(예: "assets/Pasted-….png")를 반환.
+ * Save an attached image to assets/ next to the note (note, .md). data is base64 bytes.
+ * Returns the relative link to insert into the body (e.g. "assets/Pasted-….png").
  */
 export async function saveAttachment(
   root: string,
@@ -99,9 +99,9 @@ export async function promoteNode(
   return invoke<string>("promote_node", { root, path });
 }
 
-// ── 사이드카(.textree/) 영속 ───────────────────────────────────
+// ── Sidecar (.textree/) persistence ───────────────────────────────────
 
-/** `.textree/<rel>` 사이드카 읽기. 부재 시 null. */
+/** Read the `.textree/<rel>` sidecar. null if absent. */
 export async function readSidecar(
   root: string,
   rel: string,
@@ -109,7 +109,7 @@ export async function readSidecar(
   return invoke<string | null>("read_sidecar", { root, rel });
 }
 
-/** `.textree/<rel>` 사이드카 원자적 쓰기(부모 자동 생성). */
+/** Atomic write of the `.textree/<rel>` sidecar (parent auto-created). */
 export async function writeSidecar(
   root: string,
   rel: string,
@@ -118,18 +118,18 @@ export async function writeSidecar(
   return invoke<void>("write_sidecar", { root, rel, content });
 }
 
-// ── 본문 전문검색(P1b) ──────────────────────────────────────────
+// ── Body full-text search (P1b) ──────────────────────────────────────────
 
 export interface SearchHit {
-  /** 볼트 상대경로(POSIX). 프론트에서 root와 결합해 절대경로로 오픈. */
+  /** Vault-relative path (POSIX). The front end combines it with root to open the absolute path. */
   path: string;
   title: string;
   snippet: string;
-  /** 스니펫 문자열 내 하이라이트 [start, end) char 인덱스. */
+  /** Highlight [start, end) char indices within the snippet string. */
   ranges: [number, number][];
 }
 
-/** 본문 전문검색. 인덱스 미설치/빈쿼리 시 빈 배열. */
+/** Body full-text search. Empty array if the index is missing or the query is empty. */
 export async function searchContent(
   query: string,
   limit = 50,
@@ -137,7 +137,7 @@ export async function searchContent(
   return invoke<SearchHit[]>("search_content", { query, limit });
 }
 
-/** 전체 재색인(>재색인 명령). */
+/** Full reindex (>reindex command). */
 export async function rebuildIndex(root: string): Promise<void> {
   return invoke<void>("rebuild_index", { root });
 }
