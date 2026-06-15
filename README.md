@@ -85,14 +85,15 @@ my-vault/
 - [x] Full-text search (local index, no DB) and a unified command palette / quick switcher
 - [x] Dark/light theme, keyboard navigation, accessibility (ARIA)
 
-### Next — AI as a first-class citizen (the differentiator)
+### Next — pretty-by-default, frictionless publish, free local AI
 
-- [ ] **Tree-topology scope** — where you ask sets the search range; position *is* the scope (zero config)
-- [ ] **Tree-derived write permission** — writes only flow down the current branch
-- [ ] User-triggered summary regeneration (never autonomous; stale marker + approval)
+- [ ] **Pretty-by-default** — opinionated defaults (title, cover, icon, type hierarchy, spacing) so notes look good with zero design effort
+- [ ] **Frictionless publish** — one action turns a local note into a read-only web page (the source stays local)
+- [ ] **Free local AI + bring-your-own API key** — a local model by default (graceful degradation: editing/tree/search work without it), cloud elevation with your own key
 
 ### Later
 
+- [ ] Tree-topology AI (amplification layer) — search/write scoped by where you are in the tree
 - [ ] Wikilinks `[[note]]`, backlinks, graph view
 - [ ] frontmatter database / table, board, calendar views
 - [ ] Slash commands / rich block editing
