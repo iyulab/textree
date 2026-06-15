@@ -1,0 +1,31 @@
+[package]
+name = "textree"
+version = "0.1.0"
+description = "로컬 파일시스템 기반 노트 앱"
+authors = ["iyulab"]
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+# The `_lib` suffix may seem redundant but it is necessary
+# to make the lib name unique and wouldn't conflict with the bin name.
+# This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
+name = "textree_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-opener = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tauri-plugin-dialog = "2.7.1"
+# 원자적 노트 저장(temp+rename)에 사용 — 쓰기 중 크래시 시 truncation 방지.
+tempfile = "3"
+notify-debouncer-full = "0.7.0"
+# 첨부(이미지) 붙여넣기 — base64 문자열로 IPC 전달된 바이너리를 디코드.
+base64 = "0.22"
+
