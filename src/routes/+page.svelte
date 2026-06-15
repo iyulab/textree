@@ -39,28 +39,28 @@
   let dirty = $state(false);
   let saveError = $state<string | null>(null);
 
-  // 외부 변경(M3) 상태.
-  let reloadVersion = $state(0); // 외부 재로드 시 bump → Editor 강제 재생성
-  let removed = $state(false); // 열린 노트가 외부 삭제/이동됨
-  let conflictDisk = $state<string | null>(null); // 충돌 시 디스크 버전(배너용)
+  // External change (M3) state.
+  let reloadVersion = $state(0); // bump on external reload → force Editor re-creation
+  let removed = $state(false); // open note was externally deleted/moved
+  let conflictDisk = $state<string | null>(null); // disk version on conflict (for banner)
 
-  // 구조 편집(M4) 상태.
+  // Structure editing (M4) state.
   let selectedNode = $state<TreeNode | null>(null);
   let mode = $state<"none" | "new-note" | "new-folder" | "rename">("none");
   let nameInput = $state("");
   let opError = $state<string | null>(null);
-  // 생성 타깃 명시 오버라이드(예: 리프 승격 후 새 컨테이너). 설정 시 선택 기반 추론 대신 사용.
+  // Explicit create-target override (e.g. new container after leaf promote). When set, used instead of selection-based inference.
   let createParent = $state<string | null>(null);
 
-  // 디바운스 자동저장 상태(반응형 불필요 — 타이머/최신 드래프트 보관용).
+  // Debounced autosave state (no reactivity needed — holds timer/latest draft).
   let saveTimer: ReturnType<typeof setTimeout> | null = null;
   let pending: { path: string; text: string } | null = null;
   const DEBOUNCE_MS = 500;
 
   /**
-   * 대기 중인 저장을 즉시 디스크에 기록. 노트 전환·볼트 변경 전에 호출.
-   * 실패해도 throw하지 않고 `saveError`로 표면화한다(호출자의 전환을 막지 않음).
-   * 실패 시 `pending`을 보존해 다음 flush에서 재시도할 수 있게 한다.
+   * Write the pending save to disk immediately. Called before switching notes or changing vault.
+   * Does not throw on failure; surfaces it via `saveError` (so it does not block the caller's switch).
+   * On failure, preserves `pending` so the next flush can retry.
    */
   async function flush() {
     if (saveTimer) {
@@ -71,14 +71,14 @@
     const job = pending;
     try {
       await writeNote(root, job.path, job.text);
-      // 저장 중 더 새 편집이 안 쌓였을 때만 깨끗 상태로 전환.
+      // Switch to clean state only if no newer edit accumulated during the save.
       if (pending === job) {
         pending = null;
         dirty = false;
       }
       saveError = null;
     } catch (e) {
-      // pending 유지 → 재시도 가능. 사용자에게 표면화.
+      // Keep pending → retryable. Surface to the user.
       saveError = String(e);
     }
   }
@@ -96,18 +96,18 @@
     if (activePath) scheduleSave(activePath, text);
   }
 
-  /** 볼트 경로를 열어 트리를 로드(다이얼로그와 분리 — 테스트 브리지가 재사용). */
+  /** Open a vault path and load the tree (separate from the dialog — reused by the test bridge). */
   async function loadVault(path: string) {
-    await flush(); // 볼트 전환 전 미저장 편집 보존
+    await flush(); // preserve unsaved edits before switching vault
     root = path;
     tree = await openVault(path);
-    // 볼트가 바뀌면 이전 볼트의 선택·열린 노트·편집 모드 컨텍스트는 무효다.
-    // 정리하지 않으면 stale한 selectedNode가 생성/이동의 타깃 부모를 이전 볼트
-    // 경로로 잘못 잡아 작업이 엉뚱한 위치를 향하거나 실패한다.
+    // When the vault changes, the previous vault's selection, open note, and edit-mode context are invalid.
+    // If not cleared, a stale selectedNode would wrongly target the previous vault's path as the
+    // parent for creation/move, sending operations to the wrong location or failing.
     closeEditor();
     selectedNode = null;
     cancelMode();
-    await nav.load(path); // 즐겨찾기·정렬 사이드카 로드
+    await nav.load(path); // load favorites/order sidecar
   }
 
   async function chooseVault() {
@@ -115,10 +115,10 @@
     if (typeof selected === "string") await loadVault(selected);
   }
 
-  // ── 인라인 제목 편집(D5) ──────────────────────────────────────
+  // ── Inline title editing (D5) ──────────────────────────────────────
   let titleEditing = $state(false);
   let titleInput = $state("");
-  // Escape 취소 시, 입력창이 사라지며 발생하는 blur 의 commit 을 1회 억제.
+  // On Escape cancel, suppress once the commit from the blur that fires as the input disappears.
   let suppressTitleBlur = false;
 
   function startTitleEdit() {
@@ -127,32 +127,32 @@
     titleEditing = true;
   }
 
-  /** 마운트 시 포커스+전체선택(인라인 제목 입력창). */
+  /** Focus + select-all on mount (inline title input). */
   function focusSelect(node: HTMLInputElement) {
     node.focus();
     node.select();
   }
 
   function cancelTitleEdit() {
-    suppressTitleBlur = true; // 뒤따르는 blur 가 commit 하지 않도록
+    suppressTitleBlur = true; // so the following blur does not commit
     titleEditing = false;
   }
 
-  /** 제목 편집 확정 → 활성 노트를 rename 하고 새 경로를 추종. */
+  /** Confirm title edit → rename the active note and follow the new path. */
   async function commitTitle() {
-    // Escape 취소 직후의 blur 는 무시.
+    // Ignore the blur right after an Escape cancel.
     if (suppressTitleBlur) {
       suppressTitleBlur = false;
       return;
     }
-    // 재진입 가드: Enter 가 먼저 처리하면 titleEditing=false → 뒤따르는 blur 는 무시.
+    // Re-entry guard: if Enter handles it first, titleEditing=false → ignore the following blur.
     if (!titleEditing) return;
     const name = titleInput.trim();
     titleEditing = false;
     if (!root || !activePath || !name || name === activeName) return;
     const node = findByBody(tree, activePath);
     if (!node) return;
-    await flush(); // rename 전 미저장 편집 보존
+    await flush(); // preserve unsaved edits before rename
     if (pending) {
       saveError = "미저장 편집을 저장하지 못해 이름변경을 취소했습니다.";
       return;
@@ -160,7 +160,7 @@
     try {
       const newNodePath = await renameNode(root, node.path, name);
       await refreshTree();
-      // 새 본문 경로 추종: 리프=새 노드경로, 컨테이너노트=새폴더/새이름.md.
+      // Follow the new body path: leaf=new node path, container note=newfolder/newname.md.
       activePath =
         node.kind === "leaf"
           ? newNodePath
@@ -173,22 +173,22 @@
     }
   }
 
-  /** 키보드 F2: 노드를 선택하고 이름변경 모드 진입. */
+  /** Keyboard F2: select the node and enter rename mode. */
   function handleRename(node: TreeNode) {
     selectedNode = node;
     startMode("rename");
   }
 
-  /** 키보드 Delete: 노드를 선택하고 삭제(휴지통). */
+  /** Keyboard Delete: select the node and delete it (trash). */
   function handleDelete(node: TreeNode) {
     selectedNode = node;
     void deleteSelected();
   }
 
   async function handleSelect(node: TreeNode) {
-    selectedNode = node; // 구조 편집 대상(폴더 포함)
-    if (!root || !node.body_path) return; // body 없는 컨테이너는 열지 않음
-    await flush(); // 이전 노트의 미저장 편집 보존
+    selectedNode = node; // structure-edit target (including folders)
+    if (!root || !node.body_path) return; // do not open containers without a body
+    await flush(); // preserve unsaved edits of the previous note
     content = await readNote(root, node.body_path);
     activeName = node.name;
     activePath = node.body_path;
@@ -197,9 +197,9 @@
     conflictDisk = null;
   }
 
-  // ── 구조 편집(M4) ──────────────────────────────────────────────
-  /** 경로 정규화 비교: child가 ancestor와 같거나 그 하위인가.
-   *  Windows는 대소문자 비구분이므로 소문자로 정규화(Windows-first). */
+  // ── Structure editing (M4) ──────────────────────────────────────────────
+  /** Normalized path comparison: is child equal to or below ancestor.
+   *  Windows is case-insensitive, so normalize to lowercase (Windows-first). */
   function pathInside(child: string, ancestor: string): boolean {
     const n = (p: string) => p.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
     const c = n(child);
@@ -207,25 +207,25 @@
     return c === a || c.startsWith(a + "/");
   }
 
-  /** 경로의 부모 디렉터리(구분자 보존). */
+  /** Parent directory of a path (separator preserved). */
   function parentDir(p: string): string {
     const i = Math.max(p.lastIndexOf("/"), p.lastIndexOf("\\"));
     return i >= 0 ? p.slice(0, i) : p;
   }
 
-  /** 경로의 마지막 구성요소(파일/폴더명). */
+  /** Last component of a path (file/folder name). */
   function baseName(p: string): string {
     const i = Math.max(p.lastIndexOf("/"), p.lastIndexOf("\\"));
     return i >= 0 ? p.slice(i + 1) : p;
   }
 
-  /** dir에 child를 잇는다(dir의 기존 구분자 스타일 보존). */
+  /** Join child onto dir (preserving dir's existing separator style). */
   function joinPath(dir: string, child: string): string {
     const sep = dir.includes("\\") ? "\\" : "/";
     return `${dir}${sep}${child}`;
   }
 
-  /** 정규화 동등 비교(구분자·후행 슬래시·대소문자 흡수; pathInside와 동일 정책). */
+  /** Normalized equality comparison (absorbs separator, trailing slash, case; same policy as pathInside). */
   function samePath(a: string, b: string): boolean {
     const n = (p: string) => p.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
     return n(a) === n(b);
@@ -235,7 +235,7 @@
     if (root) tree = await listTree(root);
   }
 
-  /** body_path로 트리에서 노드를 역탐색(인라인 제목 편집의 rename 타깃 확인용). */
+  /** Reverse-lookup a node in the tree by body_path (to confirm the rename target for inline title editing). */
   function findByBody(nodes: TreeNode[], body: string): TreeNode | null {
     for (const n of nodes) {
       if (n.body_path && samePath(n.body_path, body)) return n;
@@ -245,13 +245,13 @@
     return null;
   }
 
-  /** 새 항목이 들어갈 부모 디렉터리. 명시 오버라이드(createParent) 우선, 없으면
-   *  컨테이너는 그 안, 리프는 형제(부모), 선택 없으면 루트. */
+  /** Parent directory for a new item. Explicit override (createParent) takes priority; otherwise
+   *  a container = inside it, a leaf = sibling (parent), no selection = root. */
   function targetParent(): string {
     if (createParent) return createParent;
     if (!selectedNode) return root as string;
     if (selectedNode.kind === "container") return selectedNode.path;
-    return parentDir(selectedNode.path); // 리프 선택 → 형제로 생성
+    return parentDir(selectedNode.path); // leaf selected → create as sibling
   }
 
   function closeEditor() {
@@ -260,8 +260,8 @@
     content = "";
     dirty = false;
     pending = null;
-    // 편집 컨텍스트(미저장 pending 포함)를 버리므로 직전 저장 오류도 더는 유효하지
-    // 않다. 정리하지 않으면 볼트 전환/노트 닫기 후에도 stale 오류가 잔존한다.
+    // Since we discard the edit context (including unsaved pending), the previous save error is no
+    // longer valid either. If not cleared, a stale error persists after vault switch/note close.
     saveError = null;
     removed = false;
     conflictDisk = null;
@@ -279,14 +279,14 @@
   }
 
   /**
-   * 선택된 리프 노트 하위에 새 노트를 추가(설계 §3.3 자동 승격).
-   * 리프 `foo.md`를 컨테이너 `foo/foo.md`로 승격한 뒤, 새 컨테이너를 생성 타깃으로
-   * new-note 모드 진입. 승격된 리프가 열려 있었다면 새 본문 경로로 추종.
+   * Add a new note under the selected leaf note (design §3.3 auto-promote).
+   * Promotes leaf `foo.md` to container `foo/foo.md`, then enters new-note mode with the
+   * new container as the create target. If the promoted leaf was open, follow the new body path.
    */
   async function startAddChild() {
     if (!root || !selectedNode || selectedNode.kind !== "leaf") return;
     const leaf = selectedNode.path;
-    await flush(); // 승격 전 현재 편집 보존
+    await flush(); // preserve current edits before promote
     if (pending) {
       opError = "미저장 편집을 저장하지 못해 작업을 취소했습니다.";
       return;
@@ -295,10 +295,10 @@
     try {
       const newDir = await promoteNode(root, leaf);
       await refreshTree();
-      // 승격된 리프가 열린 노트였으면 본문이 newDir/<stem>.md로 이동됨 → 추종.
+      // If the promoted leaf was the open note, its body moved to newDir/<stem>.md → follow it.
       if (wasActive) activePath = joinPath(newDir, `${baseName(newDir)}.md`);
       selectedNode = null;
-      startMode("new-note", newDir); // 새 컨테이너를 타깃으로
+      startMode("new-note", newDir); // target the new container
     } catch (e) {
       opError = String(e);
     }
@@ -315,7 +315,7 @@
     if (!root) return;
     const name = nameInput.trim();
     if (!name) return;
-    await flush(); // 구조 변경 전 현재 편집 보존
+    await flush(); // preserve current edits before structure change
     if (pending) {
       opError = "미저장 편집을 저장하지 못해 작업을 취소했습니다.";
       return;
@@ -324,7 +324,7 @@
       if (mode === "new-note") {
         const p = await createNote(root, targetParent(), name);
         await refreshTree();
-        // 새 노트 바로 열기
+        // open the new note immediately
         content = await readNote(root, p);
         activeName = name;
         activePath = p;
@@ -338,7 +338,7 @@
         const affectsOpen = activePath !== null && pathInside(activePath, target);
         await renameNode(root, target, name);
         await refreshTree();
-        // 열린 노트가 이름변경된 노드 안에 있으면 닫고 재선택 유도(경로 변동).
+        // If the open note is inside the renamed node, close it and prompt re-selection (path changed).
         if (affectsOpen) closeEditor();
         selectedNode = null;
       }
@@ -346,7 +346,7 @@
       nameInput = "";
       createParent = null;
     } catch (e) {
-      opError = String(e); // mode/createParent 유지 → 같은 타깃으로 재시도 가능
+      opError = String(e); // keep mode/createParent → retryable with the same target
     }
   }
 
@@ -371,18 +371,18 @@
   }
 
   /**
-   * 노드를 다른 폴더(destDir)로 이동(드래그앤드롭). 무의미/불가 케이스는 조용히
-   * 무시하거나 안내하고, 그 외엔 `move_node` 위임 후 트리 갱신.
+   * Move a node to another folder (destDir) via drag-and-drop. Silently ignores or notifies on
+   * meaningless/impossible cases; otherwise delegates to `move_node` then refreshes the tree.
    */
   async function handleMove(src: string, destDir: string) {
     if (!root) return;
-    if (samePath(src, destDir)) return; // 자기 자신 위에 드롭 — no-op
-    if (samePath(parentDir(src), destDir)) return; // 이미 그 폴더에 있음 — no-op
+    if (samePath(src, destDir)) return; // dropped onto itself — no-op
+    if (samePath(parentDir(src), destDir)) return; // already in that folder — no-op
     if (pathInside(destDir, src)) {
       opError = "자기 하위 폴더로는 이동할 수 없습니다.";
       return;
     }
-    await flush(); // 이동 전 현재 편집 보존
+    await flush(); // preserve current edits before move
     if (pending) {
       opError = "미저장 편집을 저장하지 못해 이동을 취소했습니다.";
       return;
@@ -391,7 +391,7 @@
     try {
       const newPath = await moveNode(root, src, destDir);
       await refreshTree();
-      // 열린 노트가 이동된 서브트리 안이면 새 경로로 추종(내용 동일, 경로만 변경).
+      // If the open note is inside the moved subtree, follow the new path (content same, path only changed).
       if (affectsOpen && activePath) activePath = newPath + activePath.slice(src.length);
       selectedNode = null;
       opError = null;
@@ -401,13 +401,13 @@
   }
 
   /**
-   * 리프 노트 위에 드롭(adopt): leaf를 컨테이너로 승격하고 src를 그 자식으로 이동.
-   * 백엔드 `adopt_node`가 원자적으로 처리(실패 시 승격 롤백). 열린 노트가 승격된
-   * 리프 또는 이동된 src 안이면 새 경로로 추종.
+   * Drop onto a leaf note (adopt): promote leaf to a container and move src into it as a child.
+   * The backend `adopt_node` handles this atomically (rolls back the promote on failure). If the
+   * open note is the promoted leaf or inside the moved src, follow the new path.
    */
   async function handleAdopt(src: string, leaf: string) {
     if (!root) return;
-    if (samePath(src, leaf)) return; // 자기 자신 위에 드롭 — no-op
+    if (samePath(src, leaf)) return; // dropped onto itself — no-op
     if (pathInside(leaf, src)) {
       opError = "자기 하위로는 이동할 수 없습니다.";
       return;
@@ -422,10 +422,10 @@
     try {
       const movedPath = await adoptNode(root, src, leaf);
       await refreshTree();
-      // 승격된 새 컨테이너 = 이동된 노드의 부모.
+      // The promoted new container = the parent of the moved node.
       const newDir = parentDir(movedPath);
       if (wasActiveLeaf) {
-        // 승격된 리프 본문은 newDir/<stem>.md로 이동됨.
+        // The promoted leaf body moved to newDir/<stem>.md.
         activePath = joinPath(newDir, `${baseName(newDir)}.md`);
       } else if (wasActiveSrc && activePath) {
         activePath = movedPath + activePath.slice(src.length);
@@ -438,8 +438,8 @@
   }
 
   /**
-   * 이미지 붙여넣기: 첨부를 현재 노트 옆 assets/에 저장하고 삽입할 마크다운 링크 반환.
-   * 저장 실패는 saveError로 표면화하고 null 반환(삽입 안 함).
+   * Image paste: save the attachment to assets/ next to the current note and return the markdown link to insert.
+   * On save failure, surface via saveError and return null (no insertion).
    */
   async function handleImagePaste(dataBase64: string, ext: string): Promise<string | null> {
     if (!root || !activePath) return null;
@@ -453,47 +453,47 @@
     }
   }
 
-  // ── 외부 변경 조정(sync.ts 콜백) ───────────────────────────────
+  // ── External change reconciliation (sync.ts callbacks) ───────────────────────────────
   function applyReload(diskContent: string) {
     content = diskContent;
-    reloadVersion += 1; // Editor 재생성 트리거
+    reloadVersion += 1; // trigger Editor re-creation
     dirty = false;
     pending = null;
     saveError = null;
-    removed = false; // 외부 삭제 후 재생성된 경우 정상 상태로 복귀
+    removed = false; // return to normal state if re-created after external deletion
   }
 
-  /** 충돌 배너: 디스크 버전으로 덮어 내 편집 폐기. */
+  /** Conflict banner: overwrite with the disk version, discarding my edits. */
   function resolveTakeDisk() {
     if (conflictDisk !== null) applyReload(conflictDisk);
     conflictDisk = null;
   }
 
-  /** 충돌 배너: 내 편집 유지(다음 저장 때 디스크를 덮어씀). */
+  /** Conflict banner: keep my edits (overwrites disk on the next save). */
   function resolveKeepMine() {
     conflictDisk = null;
   }
 
-  /** 볼트 루트 경로의 마지막 폴더명(사이드바 헤더 컴팩트 표시용). 전체 경로는 title. */
+  /** Last folder name of the vault root path (for the compact sidebar header). Full path is in the title. */
   function vaultName(p: string): string {
     return baseName(p.replace(/[/\\]+$/, "")) || p;
   }
 
-  /** 열린 노트의 조상 폴더들(브레드크럼). 파일명·컨테이너 노트의 중복 폴더는 제외. */
+  /** Ancestor folders of the open note (breadcrumb). Excludes the filename and the duplicate folder of a container note. */
   function breadcrumb(): string[] {
     if (!root || !activePath) return [];
     const rel = activePath.slice(root.length).replace(/^[/\\]+/, "");
     const parts = rel.split(/[/\\]/).filter(Boolean);
     const file = parts.pop() ?? "";
     const stem = file.replace(/\.md$/i, "");
-    // 컨테이너 노트(folder/folder.md): 마지막 폴더가 파일 stem과 같으면 중복 → 제거.
+    // Container note (folder/folder.md): if the last folder equals the file stem, it is a duplicate → remove.
     if (parts.length && parts[parts.length - 1] === stem) parts.pop();
     return parts;
   }
 
-  // ── 사이드바 리사이즈(D2) ─────────────────────────────────────
-  // 드래그 핸들에서 pointer 캡처로 폭을 조정. 종료 시 1회 영속(드래그 중 localStorage
-  // 폭주 방지). pointermove/up은 window가 아니라 setPointerCapture로 핸들에 고정.
+  // ── Sidebar resize (D2) ─────────────────────────────────────
+  // Adjust width via pointer capture on the drag handle. Persist once on release (avoid localStorage
+  // thrashing during drag). pointermove/up are pinned to the handle via setPointerCapture, not window.
   function startResize(e: PointerEvent) {
     e.preventDefault();
     const handle = e.currentTarget as HTMLElement;
@@ -509,7 +509,7 @@
     handle.addEventListener("pointerup", onUp);
   }
 
-  // ── 통합 팔레트(P1a Task 11) ───────────────────────────────────
+  // ── Unified palette (P1a Task 11) ───────────────────────────────────
   interface FileEntry {
     name: string;
     path: string;
@@ -530,13 +530,13 @@
     openVault: () => { void chooseVault(); },
     toggleTheme: () => { theme.toggle(); },
     toggleSidebar: () => { layout.toggleCollapsed(); },
-    // 루트 생성: parentOverride=root 로 selectedNode 상태와 무관하게 루트를 타깃으로.
+    // Create at root: parentOverride=root targets the root regardless of selectedNode state.
     newNoteAtRoot: () => { if (root) startMode("new-note", root); },
     newFolderAtRoot: () => { if (root) startMode("new-folder", root); },
     hasSelection: () => selectedNode !== null,
     renameSelected: () => { startMode("rename"); },
     deleteSelected: () => { void deleteSelected(); },
-    // 승격은 리프 전용 — 선택 노드가 리프일 때만 의미 있음(startAddChild 내부에서도 확인).
+    // Promote is leaf-only — meaningful only when the selected node is a leaf (also checked inside startAddChild).
     promoteSelected: () => { void startAddChild(); },
     toggleFavoriteSelected: () => {
       const p = selectedNode?.path ?? null;
@@ -551,7 +551,7 @@
 
   let commands = $derived(activeCommands(buildCommands(actions)));
 
-  /** TreeNode.path 기준 트리 탐색(없으면 null). */
+  /** Search the tree by TreeNode.path (null if not found). */
   function findNode(nodes: TreeNode[], p: string): TreeNode | null {
     for (const n of nodes) {
       if (n.path === p) return n;
@@ -563,21 +563,33 @@
     return null;
   }
 
-  /** 볼트 루트 + POSIX 상대경로 → TreeNode.path 형식(절대, OS 구분자). */
-  function joinVaultPath(rootDir: string, rel: string): string {
-    const sep = rootDir.includes("\\") ? "\\" : "/";
-    return rootDir + sep + rel.split("/").join(sep);
+  /** TreeNode.path → POSIX relative path from the vault root (same form as search hit path). */
+  function relPosixOf(absPath: string, rootDir: string): string {
+    const rel = absPath.startsWith(rootDir) ? absPath.slice(rootDir.length) : absPath;
+    return rel.replace(/^[\\/]+/, "").replace(/\\/g, "/");
   }
 
-  /** 팔레트 본문검색 → 상대경로 히트를 절대경로로 변환(기존 onOpenFile 호환). */
+  /**
+   * Palette content search → resolve each hit's POSIX relative path to the actual TreeNode.path.
+   * Reconstructing the path as a string (guessing the separator) would diverge from the mixed
+   * separators the backend emits (forward-slash root + OS join), making findNode exact-match fail →
+   * map to the actual node path to make it robust. Folder notes (folder/folder.md) map to the
+   * container node (loads the body on selection).
+   */
   async function searchContentFromPalette(query: string): Promise<SearchHit[]> {
     if (!root) return [];
     const r = root;
     const hits = await searchContent(query);
-    return hits.map((h) => ({ ...h, path: joinVaultPath(r, h.path) }));
+    const byRel = new Map<string, string>();
+    for (const e of fileIndex) {
+      const rel = relPosixOf(e.path, r);
+      byRel.set(rel, e.path);
+      if (e.kind === "container") byRel.set(`${rel}/${e.name}.md`, e.path);
+    }
+    return hits.map((h) => ({ ...h, path: byRel.get(h.path) ?? h.path }));
   }
 
-  /** 팔레트 파일 선택 → 해당 TreeNode를 찾아 handleSelect 위임. */
+  /** Palette file selection → find the matching TreeNode and delegate to handleSelect. */
   function openFileFromPalette(path: string): void {
     const node = findNode(tree, path);
     if (node) {
@@ -587,21 +599,21 @@
   }
 
   /**
-   * 선택 노드를 부모 형제 목록 내에서 delta칸(+1=아래, -1=위) 옮기고 order를 영속.
-   * 형제 배열은 TreeView 렌더와 동일하게 mergeOrder 적용 순서를 기준으로 한다 —
-   * parentPath 키도 TreeView와 일치(루트=root, 그 외=부모 컨테이너 path).
+   * Move the selected node by delta slots (+1=down, -1=up) within its parent's sibling list and persist order.
+   * The sibling array uses the same mergeOrder-applied order as the TreeView render —
+   * the parentPath key also matches TreeView (root=root, otherwise the parent container path).
    */
   function reorderSelected(delta: number): void {
     if (!root || !selectedNode) return;
     const path = selectedNode.path;
-    const parentPath = parentDir(path); // 루트 레벨 노드면 root와 일치
+    const parentPath = parentDir(path); // for a root-level node, equals root
     const parentNode = parentPath === root ? null : findNode(tree, parentPath);
     const siblings = parentNode ? parentNode.children : tree;
     const ordered = mergeOrder(siblings, nav.order[parentPath] ?? [], (n) => n.path);
     const idx = ordered.findIndex((n) => n.path === path);
     if (idx === -1) return;
     const next = moveInArray(ordered, idx, delta);
-    if (next === ordered) return; // 경계 — 변화 없음
+    if (next === ordered) return; // boundary — no change
     void nav.setOrder(parentPath, next.map((n) => n.path));
   }
 
@@ -612,10 +624,10 @@
     }
   }
 
-  // 창 닫기 시 미저장 편집을 디스크에 flush한 뒤 실제로 닫는다("항상 저장됨" 보장).
+  // On window close, flush unsaved edits to disk before actually closing (guarantees "always saved").
   onMount(() => {
-    // E2E 테스트 브리지(dev 빌드 전용 — 프로덕션 번들에서 트리쉐이크 제거).
-    // 네이티브 폴더 다이얼로그를 우회해 Playwright가 볼트를 직접 열 수 있게 한다.
+    // E2E test bridge (dev build only — tree-shaken out of the production bundle).
+    // Bypasses the native folder dialog so Playwright can open a vault directly.
     if (import.meta.env.DEV) {
       (window as unknown as { __textreeTest?: unknown }).__textreeTest = {
         loadVault,
@@ -624,15 +636,15 @@
 
     const win = getCurrentWindow();
     const unlistenClose = win.onCloseRequested(async (event) => {
-      if (!pending) return; // 저장할 것 없으면 기본 닫기 진행
+      if (!pending) return; // nothing to save → proceed with default close
       event.preventDefault();
       await flush();
-      // flush가 실패하면 pending이 남는다(saveError 표시됨). 이 경우 닫지
-      // 않고 창을 유지해 데이터 유실을 막는다. 성공 시에만 실제로 닫는다.
+      // If flush fails, pending remains (saveError shown). In that case do not close
+      // and keep the window open to prevent data loss. Only close on success.
       if (!pending) await win.destroy();
     });
 
-    // 외부 파일 변경 구독.
+    // Subscribe to external file changes.
     const unlistenSyncP = startSync({
       root: () => root,
       activePath: () => activePath,
@@ -643,9 +655,9 @@
       reloadActive: applyReload,
       activeRemoved: () => {
         removed = true;
-        pending = null; // 사라진 파일에 저장 시도 방지
+        pending = null; // prevent save attempts to a vanished file
         dirty = false;
-        conflictDisk = null; // 충돌 배너와 동시 표시 방지(삭제가 우선)
+        conflictDisk = null; // avoid showing alongside the conflict banner (deletion takes priority)
       },
       conflict: (disk) => {
         conflictDisk = disk;
@@ -727,8 +739,8 @@
       {#if opError}
         <p class="op-error">⚠ {opError}</p>
       {/if}
-      <!-- 노드 밖(빈 영역)에 드롭하면 볼트 루트로 이동. 노드 드롭은 stopPropagation됨.
-           이 영역은 트리를 감싸는 "볼트 루트 드롭 영역"이므로 group으로 표기. -->
+      <!-- Dropping outside a node (empty area) moves it to the vault root. Node drops are stopPropagation'd.
+           This area is the "vault root drop zone" wrapping the tree, so it is marked as a group. -->
       <div
         class="tree-root"
         role="group"
@@ -856,7 +868,7 @@
     overflow: auto;
     padding: var(--sp-2);
   }
-  /* 사이드바와 본문 사이 드래그 핸들. 폭은 좁게, 히트영역은 넉넉히(여백). */
+  /* Drag handle between the sidebar and the content. Narrow width, generous hit area (margin). */
   .resize-handle {
     flex-shrink: 0;
     width: 1px;
@@ -865,7 +877,7 @@
     position: relative;
   }
   .resize-handle::after {
-    /* 보이지 않는 넓은 히트 영역(±3px). */
+    /* Invisible wide hit area (±3px). */
     content: "";
     position: absolute;
     inset: 0 -3px;
@@ -977,7 +989,7 @@
   .banner-actions button:hover {
     background: var(--bg-hover);
   }
-  /* 볼트명(컴팩트 헤더) — 클릭 시 볼트 전환. 전체 경로는 title 툴팁. */
+  /* Vault name (compact header) — click to switch vault. Full path is the title tooltip. */
   .vault-name {
     flex: 1;
     min-width: 0;
@@ -1009,7 +1021,7 @@
     color: var(--text-muted);
     padding: var(--sp-1) var(--sp-2);
   }
-  /* 헤더 아이콘 버튼(테마·접기). 정사각, 무테, 호버 시만 강조. */
+  /* Header icon buttons (theme/collapse). Square, borderless, highlighted only on hover. */
   .icon-btn {
     flex-shrink: 0;
     width: 26px;
@@ -1031,7 +1043,7 @@
     background: var(--bg-hover);
     color: var(--text-normal);
   }
-  /* 접힌 상태에서 떠 있는 펼치기 버튼(좌상단). */
+  /* Floating expand button shown while collapsed (top-left). */
   .expand-btn {
     position: fixed;
     top: var(--sp-2);
@@ -1054,7 +1066,7 @@
     background: var(--bg-hover);
     color: var(--text-normal);
   }
-  /* 빈 상태(볼트 미열림) — 본문 중앙 온보딩. */
+  /* Empty state (no vault open) — centered onboarding in the content. */
   .empty-state {
     flex: 1;
     display: flex;
@@ -1158,7 +1170,7 @@
     color: var(--text-muted);
     padding: var(--sp-3);
   }
-  /* 트리 아래 빈 영역도 드롭 대상이 되도록 남은 높이를 채운다(루트로 이동). */
+  /* Fill the remaining height so the empty area below the tree is also a drop target (move to root). */
   .tree-root {
     min-height: 80px;
   }

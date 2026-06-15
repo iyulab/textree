@@ -1,9 +1,12 @@
-//! 로컬 본문 전문검색(P1b).
+//! Local body full-text search (P1b).
 //!
-//! tantivy 인덱스로 `.md` 본문/제목을 색인한다. 한글 부분일치를 위해
-//! n-gram(2~3) 토크나이저를 쓰며, 문서 식별자는 볼트 상대경로다.
-//! 인덱스는 앱 데이터 디렉터리에 두어(볼트 비오염) 볼트별 해시로 분리한다.
-//! "FS가 진실, 인덱스는 파생 캐시" — 손상 시 재빌드(`>재색인`)로 복구한다.
+//! Indexes `.md` body/title with a tantivy index. For Korean substring
+//! matching it uses an n-gram (2~3) tokenizer, and the document identifier is
+//! the vault relative path.
+//! The index lives in the app data directory (vault stays clean) and is
+//! separated per vault by hash.
+//! "FS is truth, the index is a derived cache" — on corruption, recover by
+//! rebuilding (`>reindex`).
 
 use serde::Serialize;
 use sha2::{Digest, Sha256};
@@ -20,19 +23,19 @@ use tantivy::{doc, Index, IndexWriter, TantivyDocument, Term};
 const TOKENIZER: &str = "ngram";
 const WRITER_HEAP: usize = 50_000_000;
 
-/// 프론트로 보내는 검색 히트(앱 IPC wire 타입).
+/// Search hit sent to the front (app IPC wire type).
 #[derive(Debug, Serialize, Clone, PartialEq, Eq)]
 pub struct SearchHit {
-    /// 볼트 상대경로(POSIX 구분자).
+    /// Vault relative path (POSIX separator).
     pub path: String,
     pub title: String,
-    /// 매치 주변 본문 발췌.
+    /// Body excerpt around the match.
     pub snippet: String,
-    /// 스니펫 문자열 내 하이라이트 [start, end) char 인덱스.
+    /// Highlight [start, end) char indices within the snippet string.
     pub ranges: Vec<(usize, usize)>,
 }
 
-/// 스키마 필드 핸들(매 질의/색인마다 재조회 회피).
+/// Schema field handles (avoid re-lookup on every query/index).
 #[derive(Clone, Copy)]
 pub struct Fields {
     pub path: Field,
@@ -40,7 +43,7 @@ pub struct Fields {
     pub body: Field,
 }
 
-/// path=식별자(비토큰, 정확삭제용), title/body=ngram 토큰.
+/// path=identifier (non-tokenized, for exact deletion), title/body=ngram tokens.
 pub fn build_schema() -> (Schema, Fields) {
     let mut b = Schema::builder();
     let path = b.add_text_field("path", STRING | STORED);
@@ -57,14 +60,14 @@ pub fn build_schema() -> (Schema, Fields) {
     (schema, Fields { path, title, body })
 }
 
-/// 인덱스에 ngram 토크나이저를 등록한다(open/create 직후 필수).
+/// Registers the ngram tokenizer on the index (required right after open/create).
 pub fn register_tokenizer(index: &Index) {
-    let ngram = NgramTokenizer::new(2, 3, false).expect("유효한 ngram 파라미터");
+    let ngram = NgramTokenizer::new(2, 3, false).expect("valid ngram parameters");
     let analyzer = TextAnalyzer::builder(ngram).filter(LowerCaser).build();
     index.tokenizers().register(TOKENIZER, analyzer);
 }
 
-/// 볼트 루트(canonical) → 앱 데이터 하위 인덱스 디렉터리.
+/// Vault root (canonical) → index directory under app data.
 pub fn index_dir(app_data: &Path, vault_root: &Path) -> PathBuf {
     let canon = std::fs::canonicalize(vault_root).unwrap_or_else(|_| vault_root.to_path_buf());
     let mut hasher = Sha256::new();
@@ -73,18 +76,18 @@ pub fn index_dir(app_data: &Path, vault_root: &Path) -> PathBuf {
     app_data.join("index").join(&hex[..16])
 }
 
-/// 볼트 루트 기준 상대경로를 POSIX 구분자 문자열로.
+/// Relative path against the vault root as a POSIX-separator string.
 fn rel_posix(root: &Path, path: &Path) -> Option<String> {
     let rel = path.strip_prefix(root).ok()?;
     Some(rel.to_string_lossy().replace('\\', "/"))
 }
 
-/// `.md` 파일명(확장자 제외)을 제목으로.
+/// Uses the `.md` file name (without extension) as the title.
 fn title_of(path: &Path) -> String {
     path.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default()
 }
 
-/// 한 문서 upsert: 같은 path 문서를 지우고 새로 추가(교체 = idempotent).
+/// Upsert one document: delete the doc with the same path and add anew (replace = idempotent).
 pub fn upsert(
     writer: &IndexWriter,
     f: &Fields,
@@ -101,12 +104,12 @@ pub fn upsert(
     Ok(())
 }
 
-/// path로 문서 삭제(commit은 호출자 책임).
+/// Delete a document by path (commit is the caller's responsibility).
 pub fn delete(writer: &IndexWriter, f: &Fields, rel_path: &str) {
     writer.delete_term(Term::from_field_text(f.path, rel_path));
 }
 
-/// 볼트의 모든 `.md`를 순회 색인(commit은 호출자). dot 디렉터리는 건너뛴다.
+/// Recursively index all `.md` in the vault (commit is the caller's). Skips dot directories.
 pub fn build_all(writer: &mut IndexWriter, f: &Fields, root: &Path) -> tantivy::Result<()> {
     index_dir_recursive(writer, f, root, root);
     Ok(())
@@ -117,7 +120,7 @@ fn index_dir_recursive(writer: &IndexWriter, f: &Fields, root: &Path, dir: &Path
     for entry in entries.filter_map(|r| r.ok()) {
         let name = entry.file_name().to_string_lossy().to_string();
         if name.starts_with('.') {
-            continue; // .textree/.git 등 제외
+            continue; // exclude .textree/.git etc.
         }
         let path = entry.path();
         let Ok(ft) = entry.file_type() else { continue };
@@ -131,8 +134,8 @@ fn index_dir_recursive(writer: &IndexWriter, f: &Fields, root: &Path, dir: &Path
     }
 }
 
-/// body·title 다중필드 질의. 각 히트에 body 스니펫·하이라이트 범위를 붙인다.
-/// 빈/공백 질의는 빈 결과.
+/// Multi-field query over body·title. Attaches a body snippet·highlight ranges to each hit.
+/// Empty/whitespace query yields empty results.
 pub fn search(index: &Index, f: &Fields, query: &str, limit: usize) -> tantivy::Result<Vec<SearchHit>> {
     if query.trim().is_empty() {
         return Ok(Vec::new());
@@ -140,7 +143,7 @@ pub fn search(index: &Index, f: &Fields, query: &str, limit: usize) -> tantivy::
     let reader = index.reader()?;
     let searcher = reader.searcher();
     let parser = QueryParser::for_index(index, vec![f.title, f.body]);
-    // 사용자 입력의 특수문자가 파싱 에러를 내지 않게 — 실패 시 빈 결과.
+    // Keep special characters in user input from causing parse errors — empty results on failure.
     let Ok(q) = parser.parse_query(query) else {
         return Ok(Vec::new());
     };
@@ -168,15 +171,29 @@ fn first_text(doc: &TantivyDocument, field: Field) -> String {
         .to_string()
 }
 
-/// tantivy 하이라이트(바이트 범위) → 스니펫 문자열의 char 인덱스 범위.
-/// JS 문자열 슬라이스(UTF-16 BMP) 정합용. 보충문자(emoji)는 근사(무시 가능).
+/// tantivy highlights (byte ranges) → **sorted·non-overlapping** char index ranges of the snippet string.
+/// The ngram tokenizer produces multiple overlapping ranges per match, so this guarantees the
+/// "sorted·disjoint" contract that consumers (front `highlight()`·publishing renderer) rely on.
+/// Without merging, overlapping spans get re-sliced and characters are emitted twice.
+/// For JS string slice (UTF-16 BMP) alignment. Supplementary characters (emoji) are approximate (negligible).
 fn byte_ranges_to_char(s: &str, ranges: &[std::ops::Range<usize>]) -> Vec<(usize, usize)> {
-    // 슬라이싱 없이 char_indices로 세어 코드포인트 중간 오프셋에도 패닉하지 않는다.
+    // Count via char_indices without slicing, so it never panics on mid-codepoint offsets.
     let byte_to_char = |b: usize| s.char_indices().take_while(|(i, _)| *i < b).count();
-    ranges.iter().map(|r| (byte_to_char(r.start), byte_to_char(r.end))).collect()
+    let mut spans: Vec<(usize, usize)> =
+        ranges.iter().map(|r| (byte_to_char(r.start), byte_to_char(r.end))).collect();
+    // ngram matches are overlapping·unsorted → sort, then merge adjacent/overlapping ranges to guarantee disjoint.
+    spans.sort_unstable();
+    let mut merged: Vec<(usize, usize)> = Vec::with_capacity(spans.len());
+    for (start, end) in spans {
+        match merged.last_mut() {
+            Some(last) if start <= last.1 => last.1 = last.1.max(end),
+            _ => merged.push((start, end)),
+        }
+    }
+    merged
 }
 
-/// 현재 볼트의 인덱스 상태. 장수 IndexWriter를 보유해 빌드/증분 색인을 직렬화한다.
+/// Index state of the current vault. Holds a long-lived IndexWriter to serialize build/incremental indexing.
 pub struct IndexState {
     pub index: Index,
     pub writer: IndexWriter,
@@ -184,7 +201,7 @@ pub struct IndexState {
 }
 
 impl IndexState {
-    /// 디렉터리에 인덱스를 열거나(없으면) 생성한다. 토크나이저를 등록한다.
+    /// Opens the index in the directory or (if absent) creates it. Registers the tokenizer.
     pub fn open_or_create(dir: &Path) -> tantivy::Result<Self> {
         std::fs::create_dir_all(dir).ok();
         let (schema, fields) = build_schema();
@@ -199,7 +216,7 @@ impl IndexState {
         Ok(self.index.reader()?.searcher().num_docs() == 0)
     }
 
-    /// 전체 재빌드: 기존 문서 전부 삭제 후 볼트를 다시 색인.
+    /// Full rebuild: delete all existing documents, then re-index the vault.
     pub fn rebuild(&mut self, vault_root: &Path) -> tantivy::Result<()> {
         self.writer.delete_all_documents()?;
         build_all(&mut self.writer, &self.fields, vault_root)?;
@@ -207,20 +224,20 @@ impl IndexState {
         Ok(())
     }
 
-    /// 단일 파일 upsert/삭제를 writer에 스테이징한다(commit은 배치 호출자 책임).
+    /// Stages a single-file upsert/delete to the writer (commit is the batch caller's responsibility).
     pub fn apply_change(&mut self, vault_root: &Path, abs_path: &Path, removed: bool) {
         if let Some(rel) = rel_posix(vault_root, abs_path) {
             if removed {
                 delete(&self.writer, &self.fields, &rel);
-            // 읽기 실패 시 기존 색인 유지(stale) — 워처 재발화/재색인으로 자가복구.
+            // On read failure, keep the existing index (stale) — self-heals via watcher re-fire/reindex.
             } else if let Ok(body) = std::fs::read_to_string(abs_path) {
                 let _ = upsert(&self.writer, &self.fields, &rel, &title_of(abs_path), &body);
             }
         }
     }
 
-    /// 인메모리 본문으로 단일 노트를 색인하고 commit한다(앱내 편집 경로 — 워처가
-    /// self-write를 억제하므로 쓰기 지점에서 결정적으로 인덱스를 갱신).
+    /// Indexes a single note from in-memory body and commits (in-app edit path — the watcher
+    /// suppresses self-writes, so the index is updated deterministically at the write site).
     pub fn index_note(&mut self, vault_root: &Path, abs_path: &Path, body: &str) -> tantivy::Result<()> {
         if let Some(rel) = rel_posix(vault_root, abs_path) {
             upsert(&self.writer, &self.fields, &rel, &title_of(abs_path), body)?;
@@ -239,7 +256,7 @@ impl IndexState {
     }
 }
 
-/// Tauri State로 관리되는 현재 볼트 인덱스 핸들. 워처 스레드와 커맨드가 공유(Arc).
+/// Current vault index handle managed as Tauri State. Shared (Arc) by the watcher thread and commands.
 #[derive(Default)]
 pub struct IndexHandle(pub Mutex<Option<IndexState>>);
 
@@ -267,10 +284,10 @@ mod tests {
         w.commit().unwrap();
         assert_eq!(num_docs(&index), 1);
 
-        // 같은 path upsert = 교체(중복 아님).
+        // Same path upsert = replace (not a duplicate).
         upsert(&w, &f, "일기/2026.md", "2026", "수정된 본문").unwrap();
         w.commit().unwrap();
-        assert_eq!(num_docs(&index), 1, "동일 path는 교체되어 1건 유지");
+        assert_eq!(num_docs(&index), 1, "same path is replaced, stays at 1 doc");
 
         delete(&w, &f, "일기/2026.md");
         w.commit().unwrap();
@@ -284,17 +301,17 @@ mod tests {
         std::fs::create_dir_all(root.join("일기")).unwrap();
         std::fs::write(root.join("노트.md"), "루트 본문").unwrap();
         std::fs::write(root.join("일기/2026.md"), "일기 본문").unwrap();
-        std::fs::write(root.join("그림.png"), b"binary").unwrap(); // 비-md 제외
+        std::fs::write(root.join("그림.png"), b"binary").unwrap(); // exclude non-md
         std::fs::create_dir_all(root.join(".textree")).unwrap();
-        std::fs::write(root.join(".textree/cache.md"), "캐시 본문").unwrap(); // dot 디렉터리 → 색인 제외
+        std::fs::write(root.join(".textree/cache.md"), "캐시 본문").unwrap(); // dot directory → excluded from index
 
         let (index, f) = open_mem();
         let mut w = index.writer(WRITER_HEAP).unwrap();
         build_all(&mut w, &f, root).unwrap();
-        w.commit().unwrap(); // build_all은 commit을 호출자에 위임 — 가시화 위해 commit.
-        assert_eq!(num_docs(&index), 2, "dot 디렉터리 하위 .md는 제외되어 여전히 2건");
+        w.commit().unwrap(); // build_all delegates commit to the caller — commit to make visible.
+        assert_eq!(num_docs(&index), 2, ".md under a dot directory is excluded, still 2 docs");
 
-        // 상대경로가 POSIX 구분자로 저장되는지 — delete로 간접 확인.
+        // Whether the relative path is stored with POSIX separators — checked indirectly via delete.
         delete(&w, &f, "일기/2026.md");
         w.commit().unwrap();
         assert_eq!(num_docs(&index), 1);
@@ -309,10 +326,20 @@ mod tests {
         w.commit().unwrap();
 
         let hits = search(&index, &f, "검색", 10).unwrap();
-        assert_eq!(hits.len(), 1, "'검색'은 a.md만 매치");
+        assert_eq!(hits.len(), 1, "'검색' matches only a.md");
         assert_eq!(hits[0].path, "a.md");
-        assert!(hits[0].snippet.contains("검색"), "스니펫에 매치어 포함");
-        assert!(!hits[0].ranges.is_empty(), "하이라이트 범위 존재");
+        assert!(hits[0].snippet.contains("검색"), "snippet contains the matched term");
+        let ranges = &hits[0].ranges;
+        assert!(!ranges.is_empty(), "highlight ranges exist");
+        // Consumers (front highlight) rely on sorted·non-overlapping ranges — if the ngram
+        // overlapping output is not merged, characters get emitted twice (regression guard).
+        let snip_len = hits[0].snippet.chars().count();
+        for w in ranges.windows(2) {
+            assert!(w[0].1 <= w[1].0, "ranges must be sorted·non-overlapping: {ranges:?}");
+        }
+        for &(start, end) in ranges {
+            assert!(start < end && end <= snip_len, "range is within snippet bounds: {ranges:?}");
+        }
     }
 
     #[test]
@@ -328,10 +355,10 @@ mod tests {
     fn open_or_create_then_rebuild_finds_doc_end_to_end() {
         let vault = TempDir::new().unwrap();
         std::fs::write(vault.path().join("메모.md"), "전문검색 통합 테스트").unwrap();
-        let idx = TempDir::new().unwrap(); // 인덱스 디렉터리(앱 데이터 모사)
+        let idx = TempDir::new().unwrap(); // index directory (simulates app data)
 
         let mut state = IndexState::open_or_create(idx.path()).unwrap();
-        // 신규 인덱스는 비어있음 → 전체 빌드.
+        // A new index is empty → full build.
         state.rebuild(vault.path()).unwrap();
 
         let hits = state.search("검색", 10).unwrap();
@@ -343,12 +370,12 @@ mod tests {
     fn is_empty_reports_doc_presence() {
         let idx = TempDir::new().unwrap();
         let state = IndexState::open_or_create(idx.path()).unwrap();
-        assert!(state.is_empty().unwrap(), "새 인덱스는 비어있음");
+        assert!(state.is_empty().unwrap(), "a new index is empty");
     }
 
     #[test]
     fn index_note_indexes_in_memory_body() {
-        // 앱내 편집 경로 회귀 방어: 디스크 재읽기 없이 인메모리 본문이 색인된다.
+        // In-app edit path regression guard: the in-memory body is indexed without re-reading from disk.
         let vault = TempDir::new().unwrap();
         let idx = TempDir::new().unwrap();
         let abs = vault.path().join("일기/오늘.md");
@@ -357,8 +384,8 @@ mod tests {
         state.index_note(vault.path(), &abs, "한글 본문 토큰").unwrap();
 
         let hits = state.search("토큰", 10).unwrap();
-        assert_eq!(hits.len(), 1, "인메모리 본문이 검색에 잡힘");
-        assert_eq!(hits[0].path, "일기/오늘.md", "상대경로(POSIX) 식별자 일치");
+        assert_eq!(hits.len(), 1, "in-memory body is found by search");
+        assert_eq!(hits[0].path, "일기/오늘.md", "relative path (POSIX) identifier matches");
     }
 
     #[test]
@@ -375,8 +402,8 @@ mod tests {
         let a1 = index_dir(app, Path::new("/no/such/vault-a"));
         let a2 = index_dir(app, Path::new("/no/such/vault-a"));
         let b = index_dir(app, Path::new("/no/such/vault-b"));
-        assert_eq!(a1, a2, "같은 루트는 같은 디렉터리");
-        assert_ne!(a1, b, "다른 루트는 다른 디렉터리");
+        assert_eq!(a1, a2, "same root yields the same directory");
+        assert_ne!(a1, b, "different roots yield different directories");
         assert!(a1.starts_with(app.join("index")));
     }
 }
