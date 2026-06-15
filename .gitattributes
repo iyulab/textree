@@ -1,0 +1,15 @@
+# Normalize all text files to LF in the repository; check out as-is.
+* text=auto eol=lf
+
+# Treat binary assets as binary to avoid EOL/encoding corruption.
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.ico  binary
+*.webp binary
+*.pdf  binary
+*.woff  binary
+*.woff2 binary
+*.ttf  binary
+*.otf  binary
