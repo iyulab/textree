@@ -1,145 +1,146 @@
 # Textree
 
-> 파일시스템 위에서 그대로 살아 숨 쉬는, 나만의 로컬 노션.
+> Your own local Notion, living directly on the filesystem.
 
-**Textree**는 Notion의 사용 경험을 모방하되, SaaS가 아니라 **로컬 전용 데스크톱 앱**입니다.
-별도의 데이터베이스 없이 **로컬 파일시스템 자체가 유일한 진실의 원천(single source of truth)** 이며,
-좌측 트리뷰는 폴더 구조와, 우측 에디터는 마크다운 파일과 **1:1로 양방향 동기화**됩니다.
+**Textree** mirrors the Notion experience, but as a **local-only desktop app** instead of a SaaS.
+There is no separate database — **the local filesystem itself is the single source of truth**.
+The tree view on the left maps to your folder structure, and the editor on the right syncs **bidirectionally, 1:1** with the underlying markdown files.
 
-당신의 노트는 어딘가의 클라우드 테이블에 갇혀 있지 않습니다. 그냥 당신의 디스크 위에, 평범한 `.md` 파일로 놓여 있습니다.
-
----
-
-## 왜 Textree인가
-
-**Text** — 가공되지 않은 순수한 텍스트. 어떤 DB에도 종속되지 않고, 앱을 지워도 메모장으로 열리는 `.md` 파일 그 자체입니다.
-**Tree** — 파일시스템의 폴더/디렉터리 트리를 거울처럼 미러링합니다. 흩어진 노트들이 하나의 지식 나무로 자라납니다.
-
-이름 그대로, Textree는 **트리 구조의 파일시스템 위에 놓인 순수 텍스트**입니다.
+Your notes are not trapped in some cloud table. They sit right on your disk, as ordinary `.md` files.
 
 ---
 
-## 핵심 철학
+## Why Textree
 
-1. **파일시스템이 곧 데이터베이스다.**
-   숨겨진 DB, 인덱스 파일, 독점 포맷이 없습니다. 폴더는 폴더고, 노트는 `.md` 파일입니다.
-2. **완전한 소유권.**
-   앱을 삭제해도 데이터는 그대로 남습니다. VS Code, Obsidian, `vim`, `cat` 무엇으로 열어도 읽힙니다.
-3. **오프라인 우선, 프라이버시 우선.**
-   네트워크 없이 동작하며, 데이터가 기기를 떠나지 않습니다.
-4. **양방향 라이브 동기화.**
-   외부 에디터로 파일을 고치면 앱에 즉시 반영되고, 앱에서 고치면 디스크에 즉시 기록됩니다. 충돌 시 **파일시스템이 항상 옳습니다.**
-5. **잠금 없음(no lock-in).**
-   언제든 폴더째 들고 떠날 수 있습니다.
+**Text** — pure, unprocessed text. Not bound to any database; an `.md` file that opens in Notepad even after you delete the app.
+**Tree** — mirrors your filesystem's folder/directory tree. Scattered notes grow into a single tree of knowledge.
+
+True to its name, Textree is **plain text on top of a tree-structured filesystem**.
 
 ---
 
-## 파일시스템 매핑 모델
+## Core Philosophy
 
-Textree의 모든 동작은 다음 한 가지 규칙으로 환원됩니다. **트리 노드 = 파일시스템 엔트리.**
+1. **The filesystem is the database.**
+   No hidden DB, no index files, no proprietary format. Folders are folders, notes are `.md` files.
+2. **Full ownership.**
+   Delete the app and your data remains. Open it with VS Code, Obsidian, `vim`, or `cat` — it just reads.
+3. **Offline-first, privacy-first.**
+   Works without a network; your data never leaves your machine.
+4. **Bidirectional live sync.**
+   Edit a file in an external editor and the app reflects it instantly; edit in the app and it writes to disk instantly. On conflict, **the filesystem always wins.**
+5. **No lock-in.**
+   You can pick up your folder and leave at any time.
 
-| Textree 개념          | 파일시스템 대응                          |
-| ------------------- | ---------------------------------------- |
-| 워크스페이스(Vault) | 사용자가 지정한 루트 폴더                |
-| 자식이 없는 노트    | `note.md` 파일                           |
-| 자식이 있는 노트    | `note/` 폴더 + 그 안의 `note.md`         |
-| 하위 노트           | 부모 폴더 안의 `.md` 파일 / 하위 폴더    |
-| 첨부(이미지 등)     | 같은 폴더에 저장 + 마크다운 상대경로 링크 |
-| 트리 정렬 순서      | `.textree/order.json` (선택적 메타)        |
+---
 
-### 예시
+## Filesystem Mapping Model
+
+Every Textree operation reduces to a single rule: **a tree node is a filesystem entry.**
+
+| Textree concept       | Filesystem counterpart                  |
+| --------------------- | --------------------------------------- |
+| Workspace (Vault)     | A root folder you choose                 |
+| Note without children | A `note.md` file                         |
+| Note with children    | A `note/` folder + a `note.md` inside it |
+| Sub-note              | An `.md` file / subfolder inside the parent folder |
+| Attachment (images…)  | Stored in the same folder + linked via a relative markdown path |
+| Tree sort order       | `.textree/order.json` (optional metadata) |
+
+### Example
 
 ```
 my-vault/
-├── 프로젝트.md                 ← 자식 없는 노트 (리프)
-├── 일기/                        ← 자식 있는 노트
-│   ├── 일기.md                  ← "일기" 노트 본문
+├── project.md                  ← leaf note (no children)
+├── journal/                     ← note with children
+│   ├── journal.md               ← body of the "journal" note
 │   ├── 2026-06-13.md
 │   └── 2026-06-12.md
-└── 자료실/
-    ├── 자료실.md
-    ├── 회의록.md
+└── library/
+    ├── library.md
+    ├── meeting-notes.md
     └── assets/
-        └── diagram.png          ← 회의록.md 에서 ![](assets/diagram.png) 로 참조
+        └── diagram.png          ← referenced from meeting-notes.md via ![](assets/diagram.png)
 ```
 
-> **설계 결정 — "폴더 노트(folder note)" 패턴**
-> Notion에서는 모든 페이지가 *본문*과 *하위 페이지*를 동시에 가질 수 있습니다.
-> 순수 파일시스템에는 "내용도 있고 자식도 있는 노드"가 없으므로,
-> Textree는 **`폴더명/폴더명.md`** 규칙으로 이를 표현합니다.
-> 리프 노트는 단순 `.md` 파일로 두어 일반 마크다운 도구와 100% 호환을 유지합니다.
-> (대안으로 `index.md` 규칙도 가능 — 설정에서 선택 예정.)
+> **Design decision — the "folder note" pattern**
+> In Notion, every page can have *both* body content *and* sub-pages.
+> A pure filesystem has no "node that has both content and children", so
+> Textree expresses this with the **`folder-name/folder-name.md`** convention.
+> Leaf notes stay as plain `.md` files, keeping 100% compatibility with ordinary markdown tools.
+> (An `index.md` convention is also possible — selectable in settings, planned.)
 
 ---
 
-## 주요 기능
+## Features
 
-### 완료 (MVP + 디자인 파운데이션)
+### Done — MVP + design foundation + local search
 
-- [x] 워크스페이스(루트 폴더) 열기 / 전환
-- [x] 폴더 ↔ 트리뷰 실시간 양방향 동기화 (파일 워처)
-- [x] 마크다운 에디터 (CodeMirror 6 라이브 프리뷰)
-- [x] 노트 생성 / 이름변경 / 이동 / 삭제 / 승격 → 즉시 파일시스템 반영
-- [x] 드래그 앤 드롭 트리 재배치
-- [x] 이미지 붙여넣기 → 로컬 저장 + 상대경로 링크
-- [x] 다크/라이트 테마, 키보드 네비게이션, 접근성(ARIA)
+- [x] Open / switch workspace (root folder)
+- [x] Real-time bidirectional sync between folders and the tree view (file watcher)
+- [x] Markdown editor (CodeMirror 6 live preview)
+- [x] Create / rename / move / delete / promote notes → instantly reflected on the filesystem
+- [x] Drag-and-drop tree reordering
+- [x] Paste an image → stored locally + linked via relative path
+- [x] Full-text search (local index, no DB) and a unified command palette / quick switcher
+- [x] Dark/light theme, keyboard navigation, accessibility (ARIA)
 
-### 진행 중 (P1 — 검색 & 네비게이션)
+### Next — AI as a first-class citizen (the differentiator)
 
-- [ ] 통합 팔레트(파일 빠른 전환 + 명령), 즐겨찾기/최근, 수동 정렬
-- [ ] 전문 검색 (파일 인덱싱, DB 없이)
+- [ ] **Tree-topology scope** — where you ask sets the search range; position *is* the scope (zero config)
+- [ ] **Tree-derived write permission** — writes only flow down the current branch
+- [ ] User-triggered summary regeneration (never autonomous; stale marker + approval)
 
-### 이후
+### Later
 
-- [ ] 위키링크 `[[노트]]` 및 백링크 · 그래프 뷰
-- [ ] frontmatter 데이터베이스 / 테이블·보드·캘린더 뷰
-- [ ] 슬래시 커맨드 / 리치 블록 편집
-- [ ] 로컬 AI(작성 보조·RAG)
-
----
-
-## Notion과의 차이
-
-| 항목            | Notion              | Textree                          |
-| --------------- | ------------------- | ------------------------------ |
-| 배포 형태       | 클라우드 SaaS       | 로컬 데스크톱 앱               |
-| 저장소          | 독점 DB (서버)      | 로컬 파일시스템 (`.md`)        |
-| 오프라인        | 제한적              | 완전 지원                      |
-| 데이터 소유권   | 벤더 종속           | 100% 사용자 소유               |
-| 포맷            | 독점 / export 필요  | 표준 마크다운, 그 자체로 이식 가능 |
-| 협업            | 실시간 다중 사용자  | 단일 사용자 (Git 등으로 우회)  |
-| 외부 도구 호환  | 낮음                | 모든 마크다운 도구와 호환      |
-
-> Textree는 협업을 포기하는 대신 **소유권·이식성·투명성**을 얻습니다. "나 혼자 쓰는 노션"이라는 명확한 포지셔닝입니다.
+- [ ] Wikilinks `[[note]]`, backlinks, graph view
+- [ ] frontmatter database / table, board, calendar views
+- [ ] Slash commands / rich block editing
 
 ---
 
-## 아키텍처
+## How Textree Differs from Notion
 
-- **셸:** [Tauri 2](https://tauri.app) — Rust 백엔드 + 웹뷰. 경량(설치 ~10MB대)·빠른 파일 I/O.
-- **프론트엔드:** Svelte 5 + TypeScript + Vite
-- **에디터 코어:** [CodeMirror 6](https://codemirror.net) — 라이브 프리뷰 데코레이션
-- **파일 감시:** Rust `notify`(+ debouncer)
-- **검색(예정):** Rust `tantivy` 로컬 인덱스 — 외부 DB 불필요
-- **사이드카 메타:** `.textree/`(order.json, favorites.json 등) — 볼트와 함께 이동
+| Aspect          | Notion              | Textree                          |
+| --------------- | ------------------- | -------------------------------- |
+| Delivery        | Cloud SaaS          | Local desktop app                |
+| Storage         | Proprietary DB (server) | Local filesystem (`.md`)     |
+| Offline         | Limited             | Fully supported                  |
+| Data ownership  | Vendor-locked       | 100% owned by you                |
+| Format          | Proprietary / needs export | Standard markdown, portable as-is |
+| Collaboration   | Real-time multi-user | Single user (work around with Git, etc.) |
+| External tools  | Low compatibility   | Compatible with every markdown tool |
+
+> Textree trades collaboration for **ownership, portability, and transparency** — a clear positioning of "Notion, just for me."
 
 ---
 
-## 시작하기
+## Architecture
+
+- **Shell:** [Tauri 2](https://tauri.app) — Rust backend + webview. Lightweight (~10MB-class install), fast file I/O.
+- **Frontend:** Svelte 5 + TypeScript + Vite
+- **Editor core:** [CodeMirror 6](https://codemirror.net) — live preview decorations
+- **File watching:** Rust `notify` (+ debouncer)
+- **Search:** Rust `tantivy` local index — no external DB required
+- **Sidecar metadata:** `.textree/` (order.json, favorites.json, etc.) — travels with the vault
+
+---
+
+## Getting Started
 
 ```bash
 git clone https://github.com/iyulab/textree.git
 cd textree
 npm install
-npm run tauri dev      # 개발 실행
-npm run tauri build    # 배포 빌드
+npm run tauri dev      # development run
+npm run tauri build    # production build
 ```
 
-요구사항: Node 24+, Rust(stable). Windows/macOS/Linux 데스크톱.
+Requirements: Node 24+, Rust (stable). Windows/macOS/Linux desktop.
 
 ---
 
-## 라이선스
+## License
 
 MIT
 
