@@ -1,0 +1,21 @@
+<Project>
+  <PropertyGroup>
+    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageVersion Include="FluxIndex.Core" Version="0.13.19" />
+    <PackageVersion Include="FluxIndex.SDK" Version="0.13.19" />
+    <PackageVersion Include="FluxIndex.Storage.SQLite" Version="0.13.19" />
+    <PackageVersion Include="FluxIndex.Extensions.FileVault" Version="0.13.19" />
+    <PackageVersion Include="FileFlux" Version="0.10.11" />
+    <PackageVersion Include="FluxCurator" Version="0.7.6" />
+    <PackageVersion Include="LMSupply.Embedder" Version="0.34.20" />
+    <PackageVersion Include="sqlite-vec" Version="0.1.7-alpha.2.1" />
+    <PackageVersion Include="Microsoft.Data.Sqlite" Version="10.0.8" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageVersion Include="xunit" Version="2.9.2" />
+    <PackageVersion Include="xunit.runner.visualstudio" Version="2.8.2" />
+    <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
+  </ItemGroup>
+</Project>

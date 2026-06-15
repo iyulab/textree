@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>textree-host</AssemblyName>
+    <RootNamespace>Textree.Host</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="FluxIndex.SDK" />
+    <PackageReference Include="FluxIndex.Core" />
+    <PackageReference Include="FluxIndex.Storage.SQLite" />
+    <PackageReference Include="FluxIndex.Extensions.FileVault" />
+    <PackageReference Include="FileFlux" />
+    <PackageReference Include="FluxCurator" />
+    <PackageReference Include="LMSupply.Embedder" />
+    <PackageReference Include="sqlite-vec" />
+    <PackageReference Include="Microsoft.Data.Sqlite" />
+  </ItemGroup>
+</Project>

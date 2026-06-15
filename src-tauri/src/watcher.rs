@@ -4,6 +4,7 @@
 //! 앱 자신의 쓰기(에코)를 걸러낸 뒤 `fs_changed` 이벤트를 프론트로 방출한다.
 //! 디바운서가 드롭되면 감시가 멈추므로, 반환된 핸들을 상태로 살려둔다.
 
+use crate::search::IndexHandle;
 use crate::self_write::SelfWrites;
 use notify_debouncer_full::notify::{EventKind, RecommendedWatcher, RecursiveMode};
 use notify_debouncer_full::{
@@ -81,11 +82,31 @@ fn to_fs_change(kind: ChangeKind, path: &Path, self_writes: &SelfWrites) -> Opti
     })
 }
 
+/// 한 배치의 변경을 인덱스에 반영하고 1회 commit한다(.md만, dot 경로 제외는
+/// 호출부 is_ignored가 이미 수행). 인덱스 미설치 시 무동작.
+pub fn apply_changes_to_index(handle: &IndexHandle, root: &Path, changes: &[FsChange]) {
+    let mut guard = handle.0.lock().unwrap_or_else(|e| e.into_inner());
+    let Some(state) = guard.as_mut() else { return };
+    let mut touched = false;
+    for c in changes {
+        let p = Path::new(&c.path);
+        if !p.extension().is_some_and(|e| e.eq_ignore_ascii_case("md")) {
+            continue;
+        }
+        state.apply_change(root, p, matches!(c.kind, ChangeKind::Removed));
+        touched = true;
+    }
+    if touched {
+        let _ = state.commit();
+    }
+}
+
 /// 볼트 루트를 재귀 감시하는 디바운서를 시작한다.
 pub fn start(
     app: AppHandle,
     root: &Path,
     self_writes: Arc<SelfWrites>,
+    index: Arc<IndexHandle>,
 ) -> Result<VaultWatcher, String> {
     let root_owned = root.to_path_buf();
     let mut debouncer = new_debouncer(
@@ -95,6 +116,7 @@ pub fn start(
             let Ok(events) = result else {
                 return; // 워처 에러는 무시 — 다음 이벤트에서 자연 복구
             };
+            let mut batch: Vec<FsChange> = Vec::new();
             for ev in events {
                 let Some(kind) = map_kind(&ev.kind) else {
                     continue;
@@ -104,10 +126,12 @@ pub fn start(
                         continue;
                     }
                     if let Some(change) = to_fs_change(kind.clone(), path, &self_writes) {
-                        let _ = app.emit("fs_changed", change);
+                        let _ = app.emit("fs_changed", change.clone());
+                        batch.push(change);
                     }
                 }
             }
+            apply_changes_to_index(&index, &root_owned, &batch);
         },
     )
     .map_err(|e| e.to_string())?;
@@ -185,6 +209,40 @@ mod tests {
         let sw = SelfWrites::default();
         let change = to_fs_change(ChangeKind::Removed, &PathBuf::from("/v/gone.md"), &sw);
         assert_eq!(change.map(|c| c.kind), Some(ChangeKind::Removed));
+    }
+
+    use crate::search::{IndexHandle, IndexState};
+    use std::sync::Arc;
+
+    #[test]
+    fn apply_changes_to_index_upserts_and_deletes() {
+        let vault = TempDir::new().unwrap();
+        let idx = TempDir::new().unwrap();
+        std::fs::write(vault.path().join("a.md"), "처음 본문").unwrap();
+
+        let handle: Arc<IndexHandle> = Arc::new(IndexHandle::default());
+        *handle.0.lock().unwrap() = Some(IndexState::open_or_create(idx.path()).unwrap());
+
+        // created/modified → upsert
+        let changes = vec![
+            FsChange { kind: ChangeKind::Created, path: vault.path().join("a.md").display().to_string() },
+        ];
+        apply_changes_to_index(&handle, vault.path(), &changes);
+        {
+            let guard = handle.0.lock().unwrap();
+            let st = guard.as_ref().unwrap();
+            assert_eq!(st.search("본문", 10).unwrap().len(), 1);
+        }
+
+        // removed → delete
+        let changes = vec![
+            FsChange { kind: ChangeKind::Removed, path: vault.path().join("a.md").display().to_string() },
+        ];
+        apply_changes_to_index(&handle, vault.path(), &changes);
+        {
+            let guard = handle.0.lock().unwrap();
+            assert_eq!(guard.as_ref().unwrap().search("본문", 10).unwrap().len(), 0);
+        }
     }
 
     #[test]

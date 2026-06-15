@@ -98,3 +98,46 @@ export async function promoteNode(
 ): Promise<string> {
   return invoke<string>("promote_node", { root, path });
 }
+
+// ── 사이드카(.textree/) 영속 ───────────────────────────────────
+
+/** `.textree/<rel>` 사이드카 읽기. 부재 시 null. */
+export async function readSidecar(
+  root: string,
+  rel: string,
+): Promise<string | null> {
+  return invoke<string | null>("read_sidecar", { root, rel });
+}
+
+/** `.textree/<rel>` 사이드카 원자적 쓰기(부모 자동 생성). */
+export async function writeSidecar(
+  root: string,
+  rel: string,
+  content: string,
+): Promise<void> {
+  return invoke<void>("write_sidecar", { root, rel, content });
+}
+
+// ── 본문 전문검색(P1b) ──────────────────────────────────────────
+
+export interface SearchHit {
+  /** 볼트 상대경로(POSIX). 프론트에서 root와 결합해 절대경로로 오픈. */
+  path: string;
+  title: string;
+  snippet: string;
+  /** 스니펫 문자열 내 하이라이트 [start, end) char 인덱스. */
+  ranges: [number, number][];
+}
+
+/** 본문 전문검색. 인덱스 미설치/빈쿼리 시 빈 배열. */
+export async function searchContent(
+  query: string,
+  limit = 50,
+): Promise<SearchHit[]> {
+  return invoke<SearchHit[]>("search_content", { query, limit });
+}
+
+/** 전체 재색인(>재색인 명령). */
+export async function rebuildIndex(root: string): Promise<void> {
+  return invoke<void>("rebuild_index", { root });
+}

@@ -10,10 +10,12 @@
 <script lang="ts">
   import type { TreeNode } from "./ipc";
   import { tree } from "./tree.svelte";
+  import { mergeOrder, nav } from "./nav.svelte";
   import Self from "./TreeView.svelte";
 
   let {
     nodes,
+    parentPath,
     onselect,
     onmove,
     onadopt,
@@ -23,6 +25,8 @@
     top = false,
   }: {
     nodes: TreeNode[];
+    /** 이 노드 목록의 부모 경로(수동 정렬 키). 최상위는 볼트 루트. */
+    parentPath: string;
     onselect: (node: TreeNode) => void;
     /** 노드 이동(폴더 간). srcPath를 destDir(컨테이너 디렉터리)로 옮긴다. */
     onmove: (srcPath: string, destDir: string) => void;
@@ -37,6 +41,9 @@
     /** 최상위 인스턴스 여부(role=tree vs group, 폴백 포커스). */
     top?: boolean;
   } = $props();
+
+  /** nav.order[parentPath]에 따라 형제 노드를 정렬한 파생 배열. order 미등재 시 원래 순서. */
+  let ordered = $derived(mergeOrder(nodes, nav.order[parentPath] ?? [], (n) => n.path));
 
   function onDragStart(e: DragEvent, node: TreeNode) {
     if (!e.dataTransfer) return;
@@ -188,7 +195,7 @@
 </script>
 
 <ul class="tree" role={top ? "tree" : "group"}>
-  {#each nodes as node, i}
+  {#each ordered as node, i}
     {@const hasChildren = node.children.length > 0}
     {@const open = !tree.isCollapsed(node.path)}
     {@const isContainer = node.kind === "container" && hasChildren}
@@ -238,6 +245,7 @@
       {#if hasChildren && open}
         <Self
           nodes={node.children}
+          parentPath={node.path}
           {onselect}
           {onmove}
           {onadopt}

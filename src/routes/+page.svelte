@@ -15,13 +15,21 @@
     promoteNode,
     adoptNode,
     saveAttachment,
+    searchContent,
+    rebuildIndex,
     type TreeNode,
+    type SearchHit,
   } from "$lib/ipc";
   import { startSync } from "$lib/sync";
   import { theme } from "$lib/theme.svelte";
   import { layout } from "$lib/layout.svelte";
   import TreeView, { DRAG_MIME } from "$lib/TreeView.svelte";
   import Editor from "$lib/Editor.svelte";
+  import { palette } from "$lib/paletteStore.svelte";
+  import Palette from "$lib/Palette.svelte";
+  import { buildCommands, activeCommands, type PaletteActions } from "$lib/commands";
+  import { mergeOrder, nav } from "$lib/nav.svelte";
+  import { moveInArray } from "$lib/nav.helpers";
 
   let root = $state<string | null>(null);
   let tree = $state<TreeNode[]>([]);
@@ -99,6 +107,7 @@
     closeEditor();
     selectedNode = null;
     cancelMode();
+    await nav.load(path); // 즐겨찾기·정렬 사이드카 로드
   }
 
   async function chooseVault() {
@@ -500,6 +509,109 @@
     handle.addEventListener("pointerup", onUp);
   }
 
+  // ── 통합 팔레트(P1a Task 11) ───────────────────────────────────
+  interface FileEntry {
+    name: string;
+    path: string;
+    kind: "leaf" | "container";
+  }
+
+  function flattenTree(nodes: TreeNode[], acc: FileEntry[] = []): FileEntry[] {
+    for (const n of nodes) {
+      acc.push({ name: n.name, path: n.path, kind: n.kind });
+      if (n.children?.length) flattenTree(n.children, acc);
+    }
+    return acc;
+  }
+
+  let fileIndex = $derived<FileEntry[]>(flattenTree(tree));
+
+  const actions: PaletteActions = {
+    openVault: () => { void chooseVault(); },
+    toggleTheme: () => { theme.toggle(); },
+    toggleSidebar: () => { layout.toggleCollapsed(); },
+    // 루트 생성: parentOverride=root 로 selectedNode 상태와 무관하게 루트를 타깃으로.
+    newNoteAtRoot: () => { if (root) startMode("new-note", root); },
+    newFolderAtRoot: () => { if (root) startMode("new-folder", root); },
+    hasSelection: () => selectedNode !== null,
+    renameSelected: () => { startMode("rename"); },
+    deleteSelected: () => { void deleteSelected(); },
+    // 승격은 리프 전용 — 선택 노드가 리프일 때만 의미 있음(startAddChild 내부에서도 확인).
+    promoteSelected: () => { void startAddChild(); },
+    toggleFavoriteSelected: () => {
+      const p = selectedNode?.path ?? null;
+      if (p) void nav.toggleFavorite(p);
+    },
+    moveSelectedUp: () => reorderSelected(-1),
+    moveSelectedDown: () => reorderSelected(1),
+    rebuildIndex: () => {
+      if (root) void rebuildIndex(root);
+    },
+  };
+
+  let commands = $derived(activeCommands(buildCommands(actions)));
+
+  /** TreeNode.path 기준 트리 탐색(없으면 null). */
+  function findNode(nodes: TreeNode[], p: string): TreeNode | null {
+    for (const n of nodes) {
+      if (n.path === p) return n;
+      if (n.children?.length) {
+        const c = findNode(n.children, p);
+        if (c) return c;
+      }
+    }
+    return null;
+  }
+
+  /** 볼트 루트 + POSIX 상대경로 → TreeNode.path 형식(절대, OS 구분자). */
+  function joinVaultPath(rootDir: string, rel: string): string {
+    const sep = rootDir.includes("\\") ? "\\" : "/";
+    return rootDir + sep + rel.split("/").join(sep);
+  }
+
+  /** 팔레트 본문검색 → 상대경로 히트를 절대경로로 변환(기존 onOpenFile 호환). */
+  async function searchContentFromPalette(query: string): Promise<SearchHit[]> {
+    if (!root) return [];
+    const r = root;
+    const hits = await searchContent(query);
+    return hits.map((h) => ({ ...h, path: joinVaultPath(r, h.path) }));
+  }
+
+  /** 팔레트 파일 선택 → 해당 TreeNode를 찾아 handleSelect 위임. */
+  function openFileFromPalette(path: string): void {
+    const node = findNode(tree, path);
+    if (node) {
+      void handleSelect(node);
+      nav.pushRecent(path);
+    }
+  }
+
+  /**
+   * 선택 노드를 부모 형제 목록 내에서 delta칸(+1=아래, -1=위) 옮기고 order를 영속.
+   * 형제 배열은 TreeView 렌더와 동일하게 mergeOrder 적용 순서를 기준으로 한다 —
+   * parentPath 키도 TreeView와 일치(루트=root, 그 외=부모 컨테이너 path).
+   */
+  function reorderSelected(delta: number): void {
+    if (!root || !selectedNode) return;
+    const path = selectedNode.path;
+    const parentPath = parentDir(path); // 루트 레벨 노드면 root와 일치
+    const parentNode = parentPath === root ? null : findNode(tree, parentPath);
+    const siblings = parentNode ? parentNode.children : tree;
+    const ordered = mergeOrder(siblings, nav.order[parentPath] ?? [], (n) => n.path);
+    const idx = ordered.findIndex((n) => n.path === path);
+    if (idx === -1) return;
+    const next = moveInArray(ordered, idx, delta);
+    if (next === ordered) return; // 경계 — 변화 없음
+    void nav.setOrder(parentPath, next.map((n) => n.path));
+  }
+
+  function onGlobalKey(e: KeyboardEvent): void {
+    if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === "p") {
+      e.preventDefault();
+      palette.show();
+    }
+  }
+
   // 창 닫기 시 미저장 편집을 디스크에 flush한 뒤 실제로 닫는다("항상 저장됨" 보장).
   onMount(() => {
     // E2E 테스트 브리지(dev 빌드 전용 — 프로덕션 번들에서 트리쉐이크 제거).
@@ -546,6 +658,15 @@
     };
   });
 </script>
+
+<svelte:window onkeydown={onGlobalKey} />
+<Palette
+  files={fileIndex}
+  {commands}
+  onOpenFile={openFileFromPalette}
+  onRunCommand={(c) => c.run()}
+  onSearchContent={searchContentFromPalette}
+/>
 
 <div class="app" style="--sidebar-width: {layout.width}px">
   {#if !layout.collapsed}
@@ -625,6 +746,7 @@
         <TreeView
           top
           nodes={tree}
+          parentPath={root!}
           onselect={handleSelect}
           onmove={handleMove}
           onadopt={handleAdopt}
