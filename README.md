@@ -85,9 +85,17 @@ my-vault/
 - [x] Full-text search (local index, no DB) and a unified command palette / quick switcher
 - [x] Dark/light theme, keyboard navigation, accessibility (ARIA)
 
-### Next — pretty-by-default, frictionless publish, free local AI
+### Done — pretty-by-default
 
-- [ ] **Pretty-by-default** — opinionated defaults (title, cover, icon, type hierarchy, spacing) so notes look good with zero design effort
+- [x] **Frontmatter page header** — `title` + emoji `icon` render as a tidy page header above the editor; the raw YAML folds into a compact "properties" pill while you edit (the source `.md` is never rewritten)
+- [x] **Opinionated typography** — a modular heading scale (h1–h6) with spacing-token vertical rhythm, so an unstyled note looks tidy by default
+- [x] **Reading view** — a one-toggle, clean read-only render (all markdown markers hidden, frontmatter folded)
+- [x] **Favorites** — star a note straight from the tree; favorites surface in the tree and at the top of the command palette
+
+> Cover banners and image (non-emoji) icons are planned — they need the Tauri asset protocol to display local files.
+
+### Next — frictionless publish, free local AI
+
 - [ ] **Frictionless publish** — one action turns a local note into a read-only web page (the source stays local)
 - [ ] **Free local AI + bring-your-own API key** — a local model by default (graceful degradation: editing/tree/search work without it), cloud elevation with your own key
 

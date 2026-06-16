@@ -25,14 +25,35 @@ npm run test:e2e
 
 - `helpers.ts` — CDP connection / app page lookup, a dev bridge (`window.__textreeTest.loadVault`)
   to bypass the native folder dialog, temporary vault fixtures, and native DnD dispatch.
+
+**Core (filesystem ↔ tree ↔ editor):**
+
 - `smoke.spec.ts` — open vault, select note (depends on `sample-vault`).
-- `editing.spec.ts` — M2 editing, debounced autosave, flush on switch.
-- `sync.spec.ts` — M3 external sync (reload/create/delete, conflict banner & resolution).
-- `structure.spec.ts` — M4 structural edits (create/rename/delete/DnD/＋child/adopt, vault-switch isolation).
-- `attachment.spec.ts` — M5 image paste → save into assets/ + link.
+- `editing.spec.ts` — editing, debounced autosave, flush on switch.
+- `sync.spec.ts` — external sync (reload/create/delete, conflict banner & resolution).
+- `structure.spec.ts` — structural edits (create/rename/delete/DnD/＋child/adopt, vault-switch isolation).
+- `attachment.spec.ts` — image paste → save into assets/ + link.
+- `tree.spec.ts` — tree expand/collapse, keyboard navigation, breadcrumb.
+- `pagedetail.spec.ts` — inline title (file name) editing.
+- `search.spec.ts` — full-text content search.
+
+**UI / shell:**
+
+- `palette.spec.ts` — unified palette (file search + command mode, depends on `sample-vault`).
+- `layout.spec.ts` — sidebar collapse/expand + resize, persistence.
+- `theme.spec.ts` — theme toggle + token-driven color change, persistence.
+- `sidecar-ux.spec.ts` — manual ordering + favorites (star affordance and palette command) persist to the sidecar.
+
+**Editor rendering (pretty-by-default):**
+
+- `livepreview.spec.ts` — inline heading/emphasis/code render + marker hide/reveal.
+- `frontmatter.spec.ts` — frontmatter page header (title/icon) + editor folding pill.
+- `reading.spec.ts` — reading-view toggle (markers hidden, editor read-only).
 
 ## Notes
 
-- Only `smoke.spec.ts` depends on a local `sample-vault/` (gitignored). The rest create and
-  clean up isolated fixture vaults under the OS temp directory, so they are self-contained.
+- `smoke.spec.ts` and `palette.spec.ts` depend on a local `sample-vault/` (gitignored). The rest
+  create and clean up isolated fixture vaults under the OS temp directory, so they are self-contained.
+- Specs share one running app instance, so app-level state (theme, reading mode) can leak between
+  files; tests that care normalize it at their start.
 - The dev bridge is guarded by `import.meta.env.DEV`, so it is tree-shaken out of production bundles.
