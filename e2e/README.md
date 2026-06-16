@@ -12,6 +12,7 @@ Two terminals are required.
 
 ```powershell
 $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS="--remote-debugging-port=9222"
+$env:TEXTREE_CANOPY_CLI="..\canopy\dist\cli.js"   # only needed for publish.spec (build canopy first)
 npm run tauri dev
 ```
 
@@ -23,8 +24,9 @@ npm run test:e2e
 
 ## Layout
 
-- `helpers.ts` — CDP connection / app page lookup, a dev bridge (`window.__textreeTest.loadVault`)
-  to bypass the native folder dialog, temporary vault fixtures, and native DnD dispatch.
+- `helpers.ts` — CDP connection / app page lookup, a dev bridge (`window.__textreeTest`:
+  `loadVault` / `publishTo`) to bypass the native folder dialogs, temporary vault fixtures, and
+  native DnD dispatch.
 
 **Core (filesystem ↔ tree ↔ editor):**
 
@@ -49,6 +51,13 @@ npm run test:e2e
 - `livepreview.spec.ts` — inline heading/emphasis/code render + marker hide/reveal.
 - `frontmatter.spec.ts` — frontmatter page header (title/icon) + editor folding pill.
 - `reading.spec.ts` — reading-view toggle (markers hidden, editor read-only).
+- `wikilink.spec.ts` — wikilink render/click navigation, backlinks panel, `[[` autocomplete.
+
+**Publishing:**
+
+- `publish.spec.ts` — publish the vault to a static site via canopy (auto-theming tokens, source
+  `.md` byte-unchanged, self-host banner). Requires the app to be launched with
+  `TEXTREE_CANOPY_CLI` set to canopy's CLI (e.g. `../canopy/dist/cli.js`) so the backend can spawn it.
 
 ## Notes
 
