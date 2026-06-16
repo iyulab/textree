@@ -29,7 +29,7 @@ test("sidebar collapse/expand + persist", async () => {
   await ensureExpanded(page);
 
   // Collapse
-  await page.getByRole("button", { name: "사이드바 접기" }).click();
+  await page.getByRole("button", { name: "Collapse sidebar" }).click();
   await expect(page.locator(".sidebar")).toHaveCount(0);
   await expect(page.locator(".expand-btn")).toBeVisible();
   expect(

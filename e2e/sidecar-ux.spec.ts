@@ -3,11 +3,10 @@ import { connectToApp, loadVault, createTempVault, removeTempVault, readVaultFil
 
 /**
  * P0 sidecar UX — verify manual ordering (order.json) and favorites (favorites.json)
- * all the way from the real UI → backend IPC → disk sidecar. Both are triggered via
- * palette command mode ('>').
+ * all the way from the real UI → backend IPC → disk sidecar.
  *
- * Note: favorites currently has no read surface (tree marker/list), so the toggle result
- * is verified only via the sidecar file (read surface is a separate proposal — see cycle-03 log).
+ * Favorites are exposed in the tree as a star affordance (read indicator + toggle, P1) and can
+ * also be toggled via palette command mode ('>'). Both paths persist to favorites.json.
  */
 
 let browser: Browser;
@@ -49,7 +48,7 @@ test("manual ordering: 'move down' → visual order swap + order.json persists",
 
     // Select the first item, then run the 'move down' command.
     await items.first().click();
-    await runCommand(page, ">아래로 이동");
+    await runCommand(page, ">move down");
 
     // The first and second items should be swapped.
     await expect(async () => {
@@ -80,14 +79,38 @@ test("favorite toggle → favorites.json add/remove persists", async () => {
 
     // Toggle ON → 1 entry in favorites.json.
     await node.click();
-    await runCommand(page, ">즐겨찾기");
+    await runCommand(page, ">favorite");
     await expect
       .poll(() => (readSidecar(vault, "favorites.json") as string[] | null)?.length ?? 0)
       .toBe(1);
 
     // Toggle OFF → favorites.json is emptied.
     await node.click();
-    await runCommand(page, ">즐겨찾기");
+    await runCommand(page, ">favorite");
+    await expect
+      .poll(() => (readSidecar(vault, "favorites.json") as string[] | null)?.length ?? 0)
+      .toBe(0);
+  } finally {
+    removeTempVault(vault);
+  }
+});
+
+test("tree star: toggle favorite from the row + reflects state + persists", async () => {
+  const vault = createTempVault({ "starme.md": "x\n" });
+  try {
+    await loadVault(page, vault);
+    await expect(page.getByRole("treeitem", { name: /starme/ })).toBeVisible();
+
+    // Star the node from the tree row → state flips to "Remove from favorites" + persists.
+    await page.getByRole("button", { name: "Add to favorites" }).click();
+    await expect(page.getByRole("button", { name: "Remove from favorites" })).toBeVisible();
+    await expect
+      .poll(() => (readSidecar(vault, "favorites.json") as string[] | null)?.length ?? 0)
+      .toBe(1);
+
+    // Un-star → back to "Add to favorites" + favorites.json emptied.
+    await page.getByRole("button", { name: "Remove from favorites" }).click();
+    await expect(page.getByRole("button", { name: "Add to favorites" })).toBeVisible();
     await expect
       .poll(() => (readSidecar(vault, "favorites.json") as string[] | null)?.length ?? 0)
       .toBe(0);

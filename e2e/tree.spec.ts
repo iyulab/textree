@@ -33,8 +33,8 @@ test("expand/collapse children via container chevron + persist", async () => {
     await expect(page.getByRole("treeitem", { name: /자식1/ })).toBeVisible();
     await expect(page.getByRole("treeitem", { name: /자식2/ })).toBeVisible();
 
-    // Collapse → children disappear. (exact: distinguish from the sidebar collapse button)
-    await page.getByRole("button", { name: "접기", exact: true }).click();
+    // Collapse → children disappear. (exact: distinguish from the "Collapse sidebar" button)
+    await page.getByRole("button", { name: "Collapse", exact: true }).click();
     await expect(page.getByRole("treeitem", { name: /자식1/ })).toHaveCount(0);
     await expect(page.getByRole("treeitem", { name: /자식2/ })).toHaveCount(0);
 
@@ -45,7 +45,7 @@ test("expand/collapse children via container chevron + persist", async () => {
     expect(stored.length).toBe(1);
 
     // Expand → children return.
-    await page.getByRole("button", { name: "펼치기", exact: true }).click();
+    await page.getByRole("button", { name: "Expand", exact: true }).click();
     await expect(page.getByRole("treeitem", { name: /자식1/ })).toBeVisible();
   } finally {
     await page.evaluate(() => localStorage.removeItem("textree-tree-collapsed"));

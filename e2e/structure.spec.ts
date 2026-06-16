@@ -26,7 +26,7 @@ test("＋note → create .md on disk + appears in tree", async () => {
   const vault = createTempVault({ "기존.md": "x\n" });
   try {
     await loadVault(page, vault);
-    await page.getByRole("button", { name: "＋노트" }).click();
+    await page.getByRole("button", { name: "＋Note" }).click();
     await page.locator(".name-input").fill("새노트");
     await page.locator(".name-input").press("Enter");
 
@@ -41,7 +41,7 @@ test("＋folder → create directory on disk", async () => {
   const vault = createTempVault({ "기존.md": "x\n" });
   try {
     await loadVault(page, vault);
-    await page.getByRole("button", { name: "＋폴더" }).click();
+    await page.getByRole("button", { name: "＋Folder" }).click();
     await page.locator(".name-input").fill("새폴더");
     await page.locator(".name-input").press("Enter");
 
@@ -57,7 +57,7 @@ test("rename → rename file on disk", async () => {
   try {
     await loadVault(page, vault);
     await page.getByRole("treeitem", { name: /옛이름/ }).click();
-    await page.getByRole("button", { name: "이름변경", exact: true }).click();
+    await page.getByRole("button", { name: "Rename", exact: true }).click();
     await page.locator(".name-input").fill("새이름");
     await page.locator(".name-input").press("Enter");
 
@@ -74,7 +74,7 @@ test("delete → move to trash (original disappears)", async () => {
   try {
     await loadVault(page, vault);
     await page.getByRole("treeitem", { name: /삭제할노트/ }).click();
-    await page.getByRole("button", { name: "삭제", exact: true }).click();
+    await page.getByRole("button", { name: "Delete", exact: true }).click();
 
     await expect(page.getByRole("treeitem", { name: /삭제할노트/ })).toHaveCount(0);
     expect(exists(vault, "삭제할노트.md")).toBe(false);
@@ -94,7 +94,7 @@ test("create after vault switch targets new vault — stale selection isolation 
     await expect(page.locator(".cm-content")).toBeVisible();
 
     await loadVault(page, v2); // vault switch — previous selection must be invalidated
-    await page.getByRole("button", { name: "＋노트" }).click();
+    await page.getByRole("button", { name: "＋Note" }).click();
     await page.locator(".name-input").fill("새것");
     await page.locator(".name-input").press("Enter");
 
@@ -130,7 +130,7 @@ test("＋child → promote leaf then create child note", async () => {
   try {
     await loadVault(page, vault);
     await page.getByRole("treeitem", { name: /부모/ }).click();
-    await page.getByRole("button", { name: "＋하위" }).click();
+    await page.getByRole("button", { name: "＋Child" }).click();
     await page.locator(".name-input").fill("자식");
     await page.locator(".name-input").press("Enter");
 

@@ -31,8 +31,8 @@ export async function connectToApp(): Promise<{ browser: Browser; page: Page }> 
   }
   await browser.close();
   throw new Error(
-    `Textree 앱 페이지를 CDP에서 찾지 못했습니다(${CDP_ENDPOINT}). ` +
-      `'$env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS="--remote-debugging-port=9222"; npm run tauri dev'로 앱을 띄웠는지 확인하세요.`,
+    `Could not find the Textree app page via CDP (${CDP_ENDPOINT}). ` +
+      `Make sure the app is running with '$env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS="--remote-debugging-port=9222"; npm run tauri dev'.`,
   );
 }
 
@@ -96,7 +96,7 @@ const DRAG_MIME = "application/x-textree-path";
 export async function dragNodeOnto(page: Page, src: Locator, dst: Locator): Promise<void> {
   const srcEl = await src.elementHandle();
   const dstEl = await dst.elementHandle();
-  if (!srcEl || !dstEl) throw new Error("드래그 소스/대상 엘리먼트를 찾지 못했습니다");
+  if (!srcEl || !dstEl) throw new Error("Could not find the drag source/target element");
   await page.evaluate(
     ([s, d]) => {
       const dt = new DataTransfer();

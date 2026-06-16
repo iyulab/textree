@@ -59,7 +59,7 @@ test("external delete → open note shows moved/deleted indicator", async () => 
 
     rmSync(join(vault, "삭제대상.md"), { force: true });
 
-    await expect(page.locator(".status.error")).toContainText("외부에서 이동/삭제됨");
+    await expect(page.locator(".status.error")).toContainText("Moved/deleted externally");
   } finally {
     removeTempVault(vault);
   }
@@ -95,9 +95,9 @@ test("external modify during unsaved edit → conflict banner + resolution butto
   const vault = createTempVault({ "충돌.md": "초기\n" });
   try {
     await triggerConflict(vault);
-    await expect(page.locator(".banner")).toContainText("외부에서 변경되었습니다");
-    await expect(page.getByRole("button", { name: "디스크 버전 불러오기" })).toBeVisible();
-    await expect(page.getByRole("button", { name: "내 편집 유지" })).toBeVisible();
+    await expect(page.locator(".banner")).toContainText("changed on disk");
+    await expect(page.getByRole("button", { name: "Load disk version" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Keep my edits" })).toBeVisible();
   } finally {
     removeTempVault(vault);
   }
@@ -107,7 +107,7 @@ test("conflict resolution: load disk version → editor replaced with disk conte
   const vault = createTempVault({ "충돌.md": "초기\n" });
   try {
     const external = await triggerConflict(vault);
-    await page.getByRole("button", { name: "디스크 버전 불러오기" }).click();
+    await page.getByRole("button", { name: "Load disk version" }).click();
 
     await expect(page.locator(".banner")).toHaveCount(0);
     await expect(page.locator(".cm-content")).toContainText(external);
@@ -122,7 +122,7 @@ test("conflict resolution: keep my edit → close banner and preserve my edit (d
   const vault = createTempVault({ "충돌.md": "초기\n" });
   try {
     await triggerConflict(vault);
-    await page.getByRole("button", { name: "내 편집 유지" }).click();
+    await page.getByRole("button", { name: "Keep my edits" }).click();
 
     // "keep my edit" responsibility = close the banner and not discard my edit.
     // (Contrast with disk replacement — the load-disk-version test verifies the opposite path.)

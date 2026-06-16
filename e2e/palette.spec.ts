@@ -9,7 +9,7 @@ import { connectToApp, loadVault, sampleVaultPath } from "./helpers";
  * Command mode: when the query starts with '>'. The actual search term is after '>'.
  *
  * sample-vault top-level file: 프로젝트 (leaf).
- * Command title: "테마 전환(라이트↔다크)" → fuzzy matched by '>테마'.
+ * Command title: "Toggle theme (light/dark)" → fuzzy matched by '>theme'.
  */
 
 let browser: Browser;
@@ -48,7 +48,7 @@ test("palette file mode: Ctrl+P → file search → Enter → note loads", async
   await expect(page.locator(".cm-content")).toBeVisible();
 });
 
-test("palette command mode: Ctrl+P → type '>테마' → Enter → theme toggles", async () => {
+test("palette command mode: Ctrl+P → type '>theme' → Enter → theme toggles", async () => {
   await loadVault(page, sampleVaultPath());
 
   const html = page.locator("html");
@@ -58,8 +58,8 @@ test("palette command mode: Ctrl+P → type '>테마' → Enter → theme toggle
   await page.keyboard.press("Control+p");
   await expect(page.getByTestId("palette-overlay")).toBeVisible();
 
-  // Switch to command mode with the '>' prefix, then type '테마' — fuzzy matches "테마 전환(라이트↔다크)".
-  await page.getByTestId("palette-input").type(">테마");
+  // Switch to command mode with the '>' prefix, then type 'theme' — fuzzy matches "Toggle theme (light/dark)".
+  await page.getByTestId("palette-input").type(">theme");
 
   // Command result is shown.
   await expect(page.getByTestId("palette-item").first()).toBeVisible();
