@@ -16,6 +16,7 @@ export interface PaletteActions {
   openVault: () => void;
   toggleTheme: () => void;
   toggleSidebar: () => void;
+  toggleReading: () => void;
   newNoteAtRoot: () => void;
   newFolderAtRoot: () => void;
   hasSelection: () => boolean;
@@ -31,18 +32,19 @@ export interface PaletteActions {
 export function buildCommands(a: PaletteActions): Command[] {
   const sel = a.hasSelection;
   return [
-    { id: "vault.open", title: "볼트 열기/전환", run: a.openVault },
-    { id: "view.theme", title: "테마 전환(라이트↔다크)", run: a.toggleTheme },
-    { id: "view.sidebar", title: "사이드바 접기/펼치기", run: a.toggleSidebar },
-    { id: "note.new", title: "새 노트(루트)", run: a.newNoteAtRoot },
-    { id: "folder.new", title: "새 폴더(루트)", run: a.newFolderAtRoot },
-    { id: "node.rename", title: "선택 노드 이름 변경", run: a.renameSelected, when: sel },
-    { id: "node.delete", title: "선택 노드 삭제", run: a.deleteSelected, when: sel },
-    { id: "node.promote", title: "선택 노드 승격", run: a.promoteSelected, when: sel },
-    { id: "node.favorite", title: "선택 노드 즐겨찾기 토글", run: a.toggleFavoriteSelected, when: sel },
-    { id: "node.moveUp", title: "선택 노드 위로 이동", run: a.moveSelectedUp, when: sel },
-    { id: "node.moveDown", title: "선택 노드 아래로 이동", run: a.moveSelectedDown, when: sel },
-    { id: "search.rebuild", title: "본문 인덱스 재색인", run: a.rebuildIndex },
+    { id: "vault.open", title: "Open / switch vault", run: a.openVault },
+    { id: "view.theme", title: "Toggle theme (light/dark)", run: a.toggleTheme },
+    { id: "view.sidebar", title: "Toggle sidebar", run: a.toggleSidebar },
+    { id: "view.reading", title: "Toggle reading view", run: a.toggleReading },
+    { id: "note.new", title: "New note (root)", run: a.newNoteAtRoot },
+    { id: "folder.new", title: "New folder (root)", run: a.newFolderAtRoot },
+    { id: "node.rename", title: "Rename selected node", run: a.renameSelected, when: sel },
+    { id: "node.delete", title: "Delete selected node", run: a.deleteSelected, when: sel },
+    { id: "node.promote", title: "Promote selected node", run: a.promoteSelected, when: sel },
+    { id: "node.favorite", title: "Toggle favorite on selected node", run: a.toggleFavoriteSelected, when: sel },
+    { id: "node.moveUp", title: "Move selected node up", run: a.moveSelectedUp, when: sel },
+    { id: "node.moveDown", title: "Move selected node down", run: a.moveSelectedDown, when: sel },
+    { id: "search.rebuild", title: "Rebuild content index", run: a.rebuildIndex },
   ];
 }
 

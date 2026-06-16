@@ -25,6 +25,8 @@
   import { layout } from "$lib/layout.svelte";
   import TreeView, { DRAG_MIME } from "$lib/TreeView.svelte";
   import Editor from "$lib/Editor.svelte";
+  import PageHeader from "$lib/PageHeader.svelte";
+  import { parseFrontmatter, getField } from "$lib/frontmatter.helpers";
   import { palette } from "$lib/paletteStore.svelte";
   import Palette from "$lib/Palette.svelte";
   import { buildCommands, activeCommands, type PaletteActions } from "$lib/commands";
@@ -34,6 +36,15 @@
   let root = $state<string | null>(null);
   let tree = $state<TreeNode[]>([]);
   let content = $state("");
+  // Live document text — mirrors `content` on note load, then tracks edits so the page header
+  // reflects frontmatter changes immediately (the editor owns its own doc; `content` is load-only).
+  let liveDoc = $state("");
+  $effect(() => {
+    liveDoc = content;
+  });
+  let frontmatter = $derived(parseFrontmatter(liveDoc));
+  // Reading view toggle (ephemeral, per-session) — clean read-only render vs. live-preview editing.
+  let reading = $state(false);
   let activeName = $state("");
   let activePath = $state<string | null>(null);
   let dirty = $state(false);
@@ -93,6 +104,7 @@
   }
 
   function handleEdit(text: string) {
+    liveDoc = text; // keep the page header in sync with in-editor frontmatter edits
     if (activePath) scheduleSave(activePath, text);
   }
 
@@ -154,7 +166,7 @@
     if (!node) return;
     await flush(); // preserve unsaved edits before rename
     if (pending) {
-      saveError = "미저장 편집을 저장하지 못해 이름변경을 취소했습니다.";
+      saveError = "Rename canceled — could not save your unsaved edits.";
       return;
     }
     try {
@@ -288,7 +300,7 @@
     const leaf = selectedNode.path;
     await flush(); // preserve current edits before promote
     if (pending) {
-      opError = "미저장 편집을 저장하지 못해 작업을 취소했습니다.";
+      opError = "Operation canceled — could not save your unsaved edits.";
       return;
     }
     const wasActive = activePath !== null && samePath(activePath, leaf);
@@ -317,7 +329,7 @@
     if (!name) return;
     await flush(); // preserve current edits before structure change
     if (pending) {
-      opError = "미저장 편집을 저장하지 못해 작업을 취소했습니다.";
+      opError = "Operation canceled — could not save your unsaved edits.";
       return;
     }
     try {
@@ -356,7 +368,7 @@
     const affectsOpen = activePath !== null && pathInside(activePath, target);
     await flush();
     if (pending) {
-      opError = "미저장 편집을 저장하지 못해 삭제를 취소했습니다.";
+      opError = "Delete canceled — could not save your unsaved edits.";
       return;
     }
     try {
@@ -379,12 +391,12 @@
     if (samePath(src, destDir)) return; // dropped onto itself — no-op
     if (samePath(parentDir(src), destDir)) return; // already in that folder — no-op
     if (pathInside(destDir, src)) {
-      opError = "자기 하위 폴더로는 이동할 수 없습니다.";
+      opError = "Cannot move a node into its own subfolder.";
       return;
     }
     await flush(); // preserve current edits before move
     if (pending) {
-      opError = "미저장 편집을 저장하지 못해 이동을 취소했습니다.";
+      opError = "Move canceled — could not save your unsaved edits.";
       return;
     }
     const affectsOpen = activePath !== null && pathInside(activePath, src);
@@ -409,12 +421,12 @@
     if (!root) return;
     if (samePath(src, leaf)) return; // dropped onto itself — no-op
     if (pathInside(leaf, src)) {
-      opError = "자기 하위로는 이동할 수 없습니다.";
+      opError = "Cannot move a node into its own descendant.";
       return;
     }
     await flush();
     if (pending) {
-      opError = "미저장 편집을 저장하지 못해 작업을 취소했습니다.";
+      opError = "Operation canceled — could not save your unsaved edits.";
       return;
     }
     const wasActiveLeaf = activePath !== null && samePath(activePath, leaf);
@@ -530,6 +542,7 @@
     openVault: () => { void chooseVault(); },
     toggleTheme: () => { theme.toggle(); },
     toggleSidebar: () => { layout.toggleCollapsed(); },
+    toggleReading: () => { reading = !reading; },
     // Create at root: parentOverride=root targets the root regardless of selectedNode state.
     newNoteAtRoot: () => { if (root) startMode("new-note", root); },
     newFolderAtRoot: () => { if (root) startMode("new-folder", root); },
@@ -688,7 +701,7 @@
         <button
           class="vault-name"
           onclick={chooseVault}
-          title={`볼트 전환 — 현재: ${root}`}
+          title={`Switch vault — current: ${root}`}
         >📁 {vaultName(root)}</button>
       {:else}
         <span class="brand">Textree</span>
@@ -696,27 +709,27 @@
       <button
         class="icon-btn"
         onclick={() => theme.toggle()}
-        title={theme.resolved === "dark" ? "라이트 테마로 전환" : "다크 테마로 전환"}
-        aria-label="테마 전환"
+        title={theme.resolved === "dark" ? "Switch to light theme" : "Switch to dark theme"}
+        aria-label="Toggle theme"
       >{theme.resolved === "dark" ? "☀" : "☾"}</button>
       <button
         class="icon-btn"
         onclick={() => layout.toggleCollapsed()}
-        title="사이드바 접기"
-        aria-label="사이드바 접기"
+        title="Collapse sidebar"
+        aria-label="Collapse sidebar"
       >⟨</button>
     </div>
     {#if root}
       <div class="toolbar">
-        <button onclick={() => startMode("new-note")} title="새 노트">＋노트</button>
-        <button onclick={() => startMode("new-folder")} title="새 폴더">＋폴더</button>
+        <button onclick={() => startMode("new-note")} title="New note">＋Note</button>
+        <button onclick={() => startMode("new-folder")} title="New folder">＋Folder</button>
         <button
           onclick={startAddChild}
           disabled={selectedNode?.kind !== "leaf"}
-          title="선택한 노트를 폴더로 승격하고 그 안에 새 노트 추가"
-        >＋하위</button>
-        <button onclick={() => startMode("rename")} disabled={!selectedNode}>이름변경</button>
-        <button onclick={deleteSelected} disabled={!selectedNode}>삭제</button>
+          title="Promote the selected note to a folder and add a child note inside it"
+        >＋Child</button>
+        <button onclick={() => startMode("rename")} disabled={!selectedNode}>Rename</button>
+        <button onclick={deleteSelected} disabled={!selectedNode}>Delete</button>
       </div>
       {#if mode !== "none"}
         <div class="name-edit">
@@ -724,16 +737,16 @@
             class="name-input"
             placeholder={mode === "new-folder" ||
             (mode === "rename" && selectedNode?.kind === "container")
-              ? "폴더 이름"
-              : "노트 이름"}
+              ? "Folder name"
+              : "Note name"}
             bind:value={nameInput}
             onkeydown={(e) => {
               if (e.key === "Enter") confirmMode();
               else if (e.key === "Escape") cancelMode();
             }}
           />
-          <button onclick={confirmMode}>확인</button>
-          <button onclick={cancelMode}>취소</button>
+          <button onclick={confirmMode}>OK</button>
+          <button onclick={cancelMode}>Cancel</button>
         </div>
       {/if}
       {#if opError}
@@ -744,7 +757,7 @@
       <div
         class="tree-root"
         role="group"
-        aria-label="볼트 루트 — 여기에 드롭하면 루트로 이동"
+        aria-label="Vault root — drop here to move to the root"
         ondragover={(e) => {
           e.preventDefault();
           if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
@@ -764,18 +777,19 @@
           onadopt={handleAdopt}
           onrename={handleRename}
           ondelete={handleDelete}
+          onfavorite={(node) => nav.toggleFavorite(node.path)}
           selectedPath={selectedNode?.path ?? null}
         />
       </div>
     {:else}
-      <p class="hint">볼트가 열려 있지 않습니다.</p>
+      <p class="hint">No vault is open.</p>
     {/if}
   </aside>
   <div
     class="resize-handle"
     role="separator"
     aria-orientation="vertical"
-    aria-label="사이드바 크기 조절"
+    aria-label="Resize sidebar"
     onpointerdown={startResize}
   ></div>
   {/if}
@@ -783,8 +797,8 @@
     {#if !root}
       <div class="empty-state">
         <h1 class="empty-brand">Textree</h1>
-        <p class="empty-sub">로컬 마크다운 볼트를 열어 시작하세요.</p>
-        <button class="open-cta" onclick={chooseVault}>볼트 열기</button>
+        <p class="empty-sub">Open a local Markdown vault to get started.</p>
+        <button class="open-cta" onclick={chooseVault}>Open vault</button>
       </div>
     {:else if activePath}
       <header class="title">
@@ -808,47 +822,59 @@
             <button
               class="note-name"
               onclick={startTitleEdit}
-              title="클릭하여 제목(파일명) 변경"
+              title="Click to change the title (file name)"
             >{activeName}</button>
           {/if}
         </span>
         {#if saveError}
-          <span class="status error">⚠ 저장 실패: {saveError}</span>
+          <span class="status error">⚠ Save failed: {saveError}</span>
         {:else if removed}
-          <span class="status error">⚠ 외부에서 이동/삭제됨</span>
+          <span class="status error">⚠ Moved/deleted externally</span>
         {:else}
-          <span class="status">{dirty ? "● 저장 중…" : "저장됨"}</span>
+          <span class="status">{dirty ? "● Saving…" : "Saved"}</span>
         {/if}
+        <button
+          class="icon-btn read-toggle"
+          onclick={() => (reading = !reading)}
+          title={reading ? "Switch to editing" : "Switch to reading view"}
+          aria-label={reading ? "Switch to editing" : "Switch to reading view"}
+          aria-pressed={reading}
+        >{reading ? "✏" : "📖"}</button>
       </header>
       {#if conflictDisk !== null}
         <div class="banner" role="alert">
-          <span>이 노트가 외부에서 변경되었습니다. 미저장 편집이 있습니다.</span>
+          <span>This note changed on disk while you have unsaved edits.</span>
           <span class="banner-actions">
-            <button onclick={resolveTakeDisk}>디스크 버전 불러오기</button>
-            <button onclick={resolveKeepMine}>내 편집 유지</button>
+            <button onclick={resolveTakeDisk}>Load disk version</button>
+            <button onclick={resolveKeepMine}>Keep my edits</button>
           </span>
         </div>
       {/if}
       {#if removed}
-        <p class="hint">이 노트는 외부에서 이동되거나 삭제되었습니다. 다른 노트를 선택하세요.</p>
+        <p class="hint">This note was moved or deleted externally. Select another note.</p>
       {:else}
+        <PageHeader
+          icon={getField(frontmatter.data, "icon") ?? ""}
+          title={getField(frontmatter.data, "title") ?? ""}
+        />
         <Editor
           docKey={`${activePath}@${reloadVersion}`}
           initialDoc={content}
+          {reading}
           onchange={handleEdit}
           onImagePaste={handleImagePaste}
         />
       {/if}
     {:else}
-      <p class="hint">노트를 선택하세요.</p>
+      <p class="hint">Select a note.</p>
     {/if}
   </main>
   {#if layout.collapsed}
     <button
       class="expand-btn"
       onclick={() => layout.toggleCollapsed()}
-      title="사이드바 펼치기"
-      aria-label="사이드바 펼치기"
+      title="Expand sidebar"
+      aria-label="Expand sidebar"
     >⟩</button>
   {/if}
 </div>
@@ -952,6 +978,14 @@
   }
   .title-input:focus {
     outline: none;
+  }
+  /* Reading/editing toggle — pushed to the right edge of the title bar. */
+  .read-toggle {
+    margin-left: auto;
+    align-self: center;
+  }
+  .read-toggle[aria-pressed="true"] {
+    color: var(--accent);
   }
   .status {
     font-size: var(--font-size-smallest);

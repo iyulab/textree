@@ -29,7 +29,11 @@
     palette.mode !== "file"
       ? []
       : palette.term === ""
-        ? nav.recent
+        ? // Empty query: surface favorites first, then recent (excluding ones already favorited).
+          [
+            ...nav.favorites,
+            ...nav.recent.filter((p) => !nav.favorites.includes(p)),
+          ]
             .map((p) => files.find((f) => f.path === p))
             .filter((f): f is FileEntry => f !== undefined)
             .map((item) => ({ item, score: 0, ranges: [] as [number, number][] }))
@@ -128,10 +132,10 @@
         data-testid="palette-input"
         autofocus
         placeholder={palette.mode === "command"
-          ? "명령 실행…"
+          ? "Run a command…"
           : palette.mode === "content"
-            ? "본문 검색…"
-            : "파일 검색…  ('>'=명령, '/'=본문)"}
+            ? "Search content…"
+            : "Search files…  ('>' = commands, '/' = content)"}
         value={palette.query}
         oninput={(e) => palette.setQuery(e.currentTarget.value)}
         onkeydown={onKey}
@@ -150,7 +154,9 @@
               }}
             >
               <span class="title">
-                {#each highlight(m.item.name, m.ranges) as seg}<span class:hl={seg.on}>{seg.t}</span
+                {#if nav.isFavorite(m.item.path)}<span class="fav-mark" aria-hidden="true">★</span
+                  >{/if}{#each highlight(m.item.name, m.ranges) as seg}<span class:hl={seg.on}
+                    >{seg.t}</span
                   >{/each}
               </span>
               <span class="sub">{m.item.path}</span>
@@ -257,6 +263,8 @@
     background: var(--selection-bg);
   }
   .title { color: var(--text-normal); }
+  /* Favorite marker in the empty-query file list. */
+  .fav-mark { color: var(--accent); margin-right: 0.35em; }
   /* --accent: match highlight */
   .hl { color: var(--accent); font-weight: 600; }
   /* --text-muted: secondary path text */

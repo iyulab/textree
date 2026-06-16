@@ -21,6 +21,7 @@
     onadopt,
     onrename,
     ondelete,
+    onfavorite,
     selectedPath = null,
     top = false,
   }: {
@@ -36,6 +37,8 @@
     onrename: (node: TreeNode) => void;
     /** Keyboard Delete: delete the node. */
     ondelete: (node: TreeNode) => void;
+    /** Toggle the node's favorite state (star affordance in the row). */
+    onfavorite: (node: TreeNode) => void;
     /** Currently selected node path (for highlighting). Propagated to all descendants. */
     selectedPath?: string | null;
     /** Whether this is the top-level instance (role=tree vs group, fallback focus). */
@@ -199,6 +202,7 @@
     {@const hasChildren = node.children.length > 0}
     {@const open = !tree.isCollapsed(node.path)}
     {@const isContainer = node.kind === "container" && hasChildren}
+    {@const fav = nav.isFavorite(node.path)}
     <li>
       <div
         class="row"
@@ -215,7 +219,7 @@
               e.stopPropagation();
               tree.toggle(node.path);
             }}
-            aria-label={open ? "접기" : "펼치기"}
+            aria-label={open ? "Collapse" : "Expand"}
             tabindex="-1"
           >▸</button>
         {:else}
@@ -241,6 +245,17 @@
           <span class="icon">{node.kind === "container" ? "📁" : "📄"}</span>
           <span class="label">{node.name}</span>
         </button>
+        <button
+          class="fav"
+          class:is-fav={fav}
+          onclick={(e) => {
+            e.stopPropagation();
+            onfavorite(node);
+          }}
+          tabindex="-1"
+          aria-label={fav ? "Remove from favorites" : "Add to favorites"}
+          aria-pressed={fav}
+        >{fav ? "★" : "☆"}</button>
       </div>
       {#if hasChildren && open}
         <Self
@@ -251,6 +266,7 @@
           {onadopt}
           {onrename}
           {ondelete}
+          {onfavorite}
           {selectedPath}
         />
       {/if}
@@ -349,6 +365,42 @@
   /* Container without a body: body can't be opened, but it can still be selected for structure editing */
   .no-body .label {
     color: var(--text-muted);
+  }
+  /* Favorite star — read indicator + toggle. Hidden until row hover/focus unless favorited. */
+  .fav {
+    flex-shrink: 0;
+    width: 22px;
+    height: 22px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    font-size: 0.85em;
+    line-height: 1;
+    background: none;
+    border: none;
+    cursor: pointer;
+    color: var(--text-faint);
+    opacity: 0;
+    transition:
+      opacity var(--transition-fast),
+      color var(--transition-fast);
+  }
+  .row:hover .fav,
+  .fav:focus-visible {
+    opacity: 1;
+  }
+  .fav.is-fav {
+    opacity: 1;
+    color: var(--accent);
+  }
+  .fav:hover {
+    color: var(--accent);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .fav {
+      transition: none;
+    }
   }
   @media (prefers-reduced-motion: reduce) {
     .chevron {

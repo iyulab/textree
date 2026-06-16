@@ -57,7 +57,7 @@ class NavStore {
       await writeSidecar(this.root, rel, JSON.stringify(value));
     } catch (e) {
       // Non-blocking: keep the in-memory state. Retry recovery on the next write.
-      console.warn(`사이드카 쓰기 실패(${rel}):`, e);
+      console.warn(`Sidecar write failed (${rel}):`, e);
     }
   }
 }
@@ -78,7 +78,7 @@ async function readJson<T>(root: string, rel: string): Promise<T | null> {
     const raw = await readSidecar(root, rel);
     return raw === null ? null : (JSON.parse(raw) as T);
   } catch (e) {
-    console.warn(`사이드카 읽기/파싱 실패(${rel}):`, e);
+    console.warn(`Sidecar read/parse failed (${rel}):`, e);
     return null;
   }
 }
