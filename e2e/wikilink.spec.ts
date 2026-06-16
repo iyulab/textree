@@ -122,10 +122,13 @@ test("typing [[ opens autocomplete and picking inserts a wikilink", async () => 
 
     const tooltip = page.locator(".cm-tooltip-autocomplete");
     await expect(tooltip).toBeVisible();
-    await expect(tooltip.getByText("Beta", { exact: true })).toBeVisible();
+    // CodeMirror splits the label for match-highlighting (<span>Bet</span>a), so assert on the
+    // option label's combined text rather than an exact-text node.
+    await expect(tooltip.locator(".cm-completionLabel").first()).toContainText("Beta");
 
-    // Accept the completion → the source now contains a full [[Beta]] link.
-    await page.keyboard.press("Enter");
+    // Accept by clicking the option (deterministic regardless of keyboard-focus timing) → the
+    // source now contains a full [[Beta]] link.
+    await tooltip.locator(".cm-completionLabel").first().click();
     await expect(page.locator(".cm-content")).toContainText("[[Beta]]");
   } finally {
     removeTempVault(vault);

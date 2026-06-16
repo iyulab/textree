@@ -234,7 +234,7 @@ export function wikiCompletions(notePaths: readonly string[], query: string): Wi
   const q = query.trim().toLowerCase();
   const stemCount = new Map<string, number>();
   const entries = notePaths.map((path) => {
-    const noExt = path.replace(/\.md$/i, "");
+    const noExt = path.replace(/\\/g, "/").replace(/\.md$/i, "");
     const stem = noExt.split("/").pop() ?? noExt;
     const lc = stem.toLowerCase();
     stemCount.set(lc, (stemCount.get(lc) ?? 0) + 1);

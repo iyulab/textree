@@ -88,7 +88,7 @@
     const job = pending;
     try {
       await writeNote(root, job.path, job.text);
-      backlinks.updateSource(job.path, job.text); // refresh links from the just-saved note (cheap, no re-read)
+      backlinks.updateSource(toRelative(job.path), job.text); // refresh links from the saved note (relative key, no re-read)
       // Switch to clean state only if no newer edit accumulated during the save.
       if (pending === job) {
         pending = null;
@@ -547,7 +547,20 @@
 
   let fileIndex = $derived<FileEntry[]>(flattenTree(tree));
 
-  /** Collect every note's vault-relative `.md` path: leaf=own path, container=its folder note. */
+  // The app's tree/IPC paths are absolute; wikilinks use vault-relative POSIX paths so the text
+  // written into `.md` (`[[note]]`) stays portable (data sovereignty) and matches canopy's model.
+  // These helpers convert at the boundary, tolerant of mixed `/`/`\` separators.
+  function toRelative(abs: string): string {
+    const a = abs.replace(/\\/g, "/");
+    const r = (root ?? "").replace(/\\/g, "/").replace(/\/+$/, "");
+    return r && a.startsWith(`${r}/`) ? a.slice(r.length + 1) : a;
+  }
+  function toAbsolute(rel: string): string {
+    const r = (root ?? "").replace(/\\/g, "/").replace(/\/+$/, "");
+    return r ? `${r}/${rel}` : rel;
+  }
+
+  /** Collect every note's absolute `.md` path: leaf=own path, container=its folder note. */
   function collectNotePaths(nodes: TreeNode[], acc: string[] = []): string[] {
     for (const n of nodes) {
       if (n.kind === "leaf") acc.push(n.path);
@@ -557,25 +570,27 @@
     return acc;
   }
 
-  /** Wikilink resolution targets — passed to the editor so `[[links]]` resolve against the live tree. */
-  let notePaths = $derived<string[]>(collectNotePaths(tree));
+  /** Wikilink resolution targets (vault-relative) — passed to the editor; resolve against the live tree. */
+  let notePaths = $derived<string[]>(collectNotePaths(tree).map(toRelative));
 
-  /** Find the tree node whose body is the given vault-relative `.md` path (leaf path or folder note). */
-  function findNodeByNotePath(nodes: TreeNode[], notePath: string): TreeNode | null {
+  /** Find the tree node for an absolute `.md` path (leaf path or folder note), separator-tolerant. */
+  function findNodeByNotePath(nodes: TreeNode[], abs: string): TreeNode | null {
+    const norm = (p: string | null) => (p ?? "").replace(/\\/g, "/");
+    const want = norm(abs);
     for (const n of nodes) {
-      if (n.body_path === notePath || (n.kind === "leaf" && n.path === notePath)) return n;
-      const found = n.children?.length ? findNodeByNotePath(n.children, notePath) : null;
+      if (norm(n.body_path) === want || (n.kind === "leaf" && norm(n.path) === want)) return n;
+      const found = n.children?.length ? findNodeByNotePath(n.children, abs) : null;
       if (found) return found;
     }
     return null;
   }
 
   /**
-   * Open the note a wikilink resolves to. Reuses `handleSelect` (flush, read, selection follow) so
-   * navigation behaves exactly like clicking the note in the tree. Heading scroll is a follow-up.
+   * Open the note a wikilink resolves to (target is vault-relative). Reuses `handleSelect` (flush,
+   * read, selection follow) so navigation behaves exactly like clicking the note in the tree.
    */
-  async function handleWikiLink(path: string, heading: string | undefined) {
-    const node = findNodeByNotePath(tree, path);
+  async function handleWikiLink(relPath: string, heading: string | undefined) {
+    const node = findNodeByNotePath(tree, toAbsolute(relPath));
     if (!node) return;
     await handleSelect(node); // clears pendingHeading, then opens (recreates the editor)
     // Set after handleSelect so the editor recreation picks it up and scrolls once on load.
@@ -585,15 +600,20 @@
   /**
    * Rebuild the vault-wide backlink index by reading every note's body once. Frontend scan (no new
    * IPC); the simplicity beats a Rust link graph at this scale (constitution: simplicity > perf).
+   * Reads use absolute paths (the IPC contract); the index is keyed by vault-relative paths.
    * A failed read degrades that note to empty rather than aborting the whole index.
    */
   async function rebuildBacklinks() {
     const r = root;
     if (!r) return;
-    const paths = notePaths;
-    const resolve = buildWikiResolver(paths).resolve;
+    const absPaths = collectNotePaths(tree);
+    const relPaths = absPaths.map(toRelative);
+    const resolve = buildWikiResolver(relPaths).resolve;
     const notes = await Promise.all(
-      paths.map(async (p) => ({ path: p, body: await readNote(r, p).catch(() => "") })),
+      absPaths.map(async (abs, i) => ({
+        path: relPaths[i],
+        body: await readNote(r, abs).catch(() => ""),
+      })),
     );
     backlinks.rebuild(notes, resolve);
   }
@@ -937,7 +957,10 @@
               onWikiLink={handleWikiLink}
             />
           </div>
-          <Backlinks links={backlinks.for(activePath)} onOpen={(p) => handleWikiLink(p, undefined)} />
+          <Backlinks
+            links={backlinks.for(activePath ? toRelative(activePath) : null)}
+            onOpen={(p) => handleWikiLink(p, undefined)}
+          />
         </div>
       {/if}
     {:else}

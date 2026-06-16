@@ -8,10 +8,13 @@
 
 import {
   autocompletion,
+  completionKeymap,
   type Completion,
   type CompletionContext,
   type CompletionResult,
 } from "@codemirror/autocomplete";
+import { Prec } from "@codemirror/state";
+import { keymap } from "@codemirror/view";
 import { wikiCompletions } from "./wikilink.helpers";
 
 /** Build the `[[` autocomplete extension over the given vault note paths. */
@@ -41,5 +44,11 @@ export function wikiAutocomplete(notePaths: readonly string[]) {
     };
   };
 
-  return autocompletion({ override: [source] });
+  // The completion keymap is raised above the editor's default keymap so Enter/Tab accept an open
+  // suggestion instead of inserting a newline. When no completion is active, its bindings fall
+  // through to the default behavior. (Default keymap disabled here to avoid binding it twice.)
+  return [
+    autocompletion({ override: [source], defaultKeymap: false }),
+    Prec.high(keymap.of(completionKeymap)),
+  ];
 }
