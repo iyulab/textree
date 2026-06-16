@@ -6,6 +6,7 @@
   import { GFM } from "@lezer/markdown";
   import { livePreview, readingMode, wikiResolver } from "./livePreview";
   import { parseFrontmatter } from "./frontmatter.helpers";
+  import { detectLineEnding, normalizeLineEndings } from "./eol.helpers";
   import { buildWikiResolver, findHeadingOffset } from "./wikilink.helpers";
   import { wikiAutocomplete } from "./wikiComplete";
   import { untrack } from "svelte";
@@ -193,6 +194,9 @@
     // Start the cursor at the body (after any frontmatter) so the frontmatter folds by default
     // (a cursor inside the block keeps it expanded). Notes without frontmatter start at offset 0.
     const fmEnd = parseFrontmatter(doc).end;
+    // CodeMirror normalizes every line break to `\n`; re-apply the source's ending on emit so a
+    // CRLF note (e.g. a Windows Obsidian vault under git) round-trips byte-for-byte.
+    const eol = detectLineEnding(doc);
     return EditorState.create({
       doc,
       selection: fmEnd > 0 ? { anchor: fmEnd } : undefined,
@@ -212,7 +216,7 @@
           mousedown: (event, view) => handleWikiClick(event, view, onLink),
         }),
         EditorView.updateListener.of((u) => {
-          if (u.docChanged) emit?.(u.state.doc.toString());
+          if (u.docChanged) emit?.(normalizeLineEndings(u.state.doc.toString(), eol));
         }),
       ],
     });

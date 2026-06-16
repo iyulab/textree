@@ -61,3 +61,29 @@ test("flush unsaved edits when switching notes", async () => {
     removeTempVault(vault);
   }
 });
+
+test("CRLF note round-trips byte-faithfully (Obsidian vault interop)", async () => {
+  // A Windows Obsidian vault (often CRLF under git) must not be silently rewritten to LF when
+  // edited in Textree — that would dirty every line and break lossless coexistence.
+  const vault = createTempVault({ "윈도우노트.md": "첫 줄\r\n둘째 줄\r\n" });
+  try {
+    await loadVault(page, vault);
+    await page.getByRole("treeitem", { name: /윈도우노트/ }).click();
+    await expect(page.locator(".cm-content")).toBeVisible();
+
+    await page.locator(".cm-content").click();
+    await page.keyboard.press("Control+End");
+    await page.keyboard.type("셋째 줄");
+
+    await expect
+      .poll(() => readVaultFile(vault, "윈도우노트.md"), { timeout: 5000 })
+      .toContain("셋째 줄");
+
+    const out = readVaultFile(vault, "윈도우노트.md");
+    // The pre-existing CRLFs survive and the newly typed break is CRLF too — no lone LF anywhere.
+    expect(out.startsWith("첫 줄\r\n둘째 줄\r\n")).toBe(true);
+    expect(/[^\r]\n/.test(out)).toBe(false);
+  } finally {
+    removeTempVault(vault);
+  }
+});

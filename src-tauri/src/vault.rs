@@ -183,6 +183,24 @@ mod tests {
     }
 
     #[test]
+    fn obsidian_vault_coexists_artifacts_hidden_but_preserved() {
+        // Opening a vault shared with Obsidian must not surface or disturb its config (`.obsidian/`)
+        // nor its JSON Canvas files (`.canvas`). The tree shows only the notes; the artifacts stay
+        // untouched on disk so the two apps can take turns on the same vault losslessly.
+        let tmp = TempDir::new().unwrap();
+        touch(tmp.path(), "노트.md");
+        touch(tmp.path(), ".obsidian/app.json");
+        touch(tmp.path(), ".obsidian/workspace.json");
+        touch(tmp.path(), "보드.canvas");
+        let tree = build_tree(tmp.path()).unwrap();
+        assert_eq!(tree.len(), 1, "only the markdown note is shown");
+        assert_eq!(tree[0].name, "노트");
+        // build_tree is read-only: the Obsidian artifacts remain exactly where they were.
+        assert!(tmp.path().join(".obsidian/app.json").is_file());
+        assert!(tmp.path().join("보드.canvas").is_file());
+    }
+
+    #[test]
     fn root_level_note_matching_vault_name_is_not_dropped() {
         // TempDir itself uses a dot-prefixed (`.tmpXXXX`) name, so to avoid colliding with the
         // dot-hidden rule we create a separate non-dot subfolder to use as the vault root.

@@ -386,6 +386,48 @@ mod tests {
     }
 
     #[test]
+    fn rename_container_carries_obsidian_and_canvas_inside() {
+        // Renaming a folder must move everything it holds — including an Obsidian config folder and
+        // a JSON Canvas file — so a vault shared with Obsidian stays lossless across the rename.
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().join("프로젝트");
+        std::fs::create_dir_all(dir.join(".obsidian")).unwrap();
+        std::fs::write(dir.join("프로젝트.md"), "본문").unwrap();
+        std::fs::write(dir.join(".obsidian").join("app.json"), "{}").unwrap();
+        std::fs::write(dir.join("그림.canvas"), "{\"nodes\":[]}").unwrap();
+
+        let new_dir = rename_node(tmp.path(), &dir, "project").unwrap();
+        assert!(new_dir.join("project.md").is_file(), "folder note renamed");
+        assert_eq!(
+            std::fs::read_to_string(new_dir.join(".obsidian").join("app.json")).unwrap(),
+            "{}",
+            "the Obsidian config moved intact"
+        );
+        assert_eq!(
+            std::fs::read_to_string(new_dir.join("그림.canvas")).unwrap(),
+            "{\"nodes\":[]}",
+            "the canvas moved intact"
+        );
+        assert!(!dir.exists());
+    }
+
+    #[test]
+    fn delete_note_leaves_sibling_obsidian_and_canvas_untouched() {
+        // Deleting a note trashes only that file; sibling Obsidian artifacts are never collateral.
+        let tmp = TempDir::new().unwrap();
+        let note = tmp.path().join("지울노트.md");
+        std::fs::write(&note, "x").unwrap();
+        std::fs::create_dir_all(tmp.path().join(".obsidian")).unwrap();
+        std::fs::write(tmp.path().join(".obsidian").join("app.json"), "{}").unwrap();
+        std::fs::write(tmp.path().join("보드.canvas"), "{}").unwrap();
+
+        delete_to_trash(tmp.path(), &note).unwrap();
+        assert!(!note.exists(), "only the note is trashed");
+        assert!(tmp.path().join(".obsidian").join("app.json").is_file());
+        assert!(tmp.path().join("보드.canvas").is_file());
+    }
+
+    #[test]
     fn rename_rejects_duplicate_and_bad_name() {
         let tmp = TempDir::new().unwrap();
         std::fs::write(tmp.path().join("a.md"), "").unwrap();
