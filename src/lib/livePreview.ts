@@ -24,6 +24,7 @@ import {
   WidgetType,
 } from "@codemirror/view";
 import { parseFrontmatter } from "./frontmatter.helpers";
+import { wikiRenderSpans } from "./wikilink.helpers";
 
 /**
  * Reading mode flag. When set, the editor renders as a clean reading view: all markdown markers
@@ -32,6 +33,18 @@ import { parseFrontmatter } from "./frontmatter.helpers";
  */
 export const readingMode = Facet.define<boolean, boolean>({
   combine: (vals) => (vals.length ? vals[vals.length - 1] : false),
+});
+
+/** Resolve a wikilink target to a vault-relative note path, undefined when unresolved. */
+type WikiResolve = (target: string) => string | undefined;
+
+/**
+ * Wikilink resolver facet. The host reconfigures it (via a compartment) whenever the vault tree
+ * changes, so `[[links]]` render as resolved (link-styled, navigable) or unresolved (muted).
+ * Default resolves nothing — every link renders unresolved until the host wires the tree.
+ */
+export const wikiResolver = Facet.define<WikiResolve, WikiResolve>({
+  combine: (vals) => (vals.length ? vals[vals.length - 1] : () => undefined),
 });
 
 /** Shared empty active-line set for reading mode (read-only, never mutated). */
@@ -105,6 +118,46 @@ class FrontmatterWidget extends WidgetType {
       view.focus();
     });
     return pill;
+  }
+  ignoreEvent() {
+    return false;
+  }
+}
+
+/**
+ * Wikilink widget — replaces `[[target|alias]]` source with its label on inactive lines, styled as
+ * a link. Resolved links carry the destination path in `data-wikilink-path` (read by the editor's
+ * click handler); unresolved links render muted with no path. The on-disk source is never modified.
+ */
+class WikiLinkWidget extends WidgetType {
+  constructor(
+    readonly label: string,
+    readonly target: string,
+    readonly heading: string | undefined,
+    readonly resolved: string | undefined,
+    readonly embed: boolean,
+  ) {
+    super();
+  }
+  eq(other: WikiLinkWidget) {
+    return (
+      other.label === this.label &&
+      other.target === this.target &&
+      other.heading === this.heading &&
+      other.resolved === this.resolved &&
+      other.embed === this.embed
+    );
+  }
+  toDOM(): HTMLElement {
+    const el = document.createElement("span");
+    el.className =
+      this.resolved === undefined ? "cm-lp-wikilink cm-lp-wikilink-unresolved" : "cm-lp-wikilink";
+    el.textContent = this.label;
+    el.dataset.wikilinkTarget = this.target;
+    if (this.heading) el.dataset.wikilinkHeading = this.heading;
+    if (this.resolved !== undefined) el.dataset.wikilinkPath = this.resolved;
+    el.title = this.resolved ? this.resolved : `Unresolved note: ${this.target}`;
+    return el;
   }
   ignoreEvent() {
     return false;
@@ -222,6 +275,46 @@ function buildDecorations(view: EditorView): DecorationSet {
   const bodyStart = frontmatterBodyStart(state);
   const fmFolded = isFrontmatterFolded(state, bodyStart);
 
+  // Pre-pass: collect code spans/blocks. `[[x]]` inside `code` is literal, so the wikilink pass
+  // skips it. Gathered before the main pass so the link decisions below are final.
+  const codeRanges: [number, number][] = [];
+  for (const { from, to } of view.visibleRanges) {
+    syntaxTree(state).iterate({
+      from,
+      to,
+      enter: (node) => {
+        if (node.name === "InlineCode" || node.name === "FencedCode" || node.name === "CodeBlock")
+          codeRanges.push([node.from, node.to]);
+      },
+    });
+  }
+
+  // Decide which wikilinks render as widgets, resolved against the live tree. On the cursor's line,
+  // inside code, or within folded frontmatter the raw source is kept instead. Computed before the
+  // main pass so markdown *inside* a rendered link is left undecorated — its marker-hide replaces
+  // would otherwise overlap the link's replace widget (e.g. `[[a **b** c]]`) and break the RangeSet.
+  const resolve = state.facet(wikiResolver);
+  const wikiSpans: { from: number; to: number; widget: WikiLinkWidget }[] = [];
+  for (const { from, to } of view.visibleRanges) {
+    const text = state.doc.sliceString(from, to);
+    const isExcluded = (sFrom: number): boolean => {
+      const absFrom = from + sFrom;
+      if (fmFolded && absFrom < bodyStart) return true;
+      if (active.has(state.doc.lineAt(absFrom).number)) return true;
+      for (const [cf, ct] of codeRanges) if (absFrom >= cf && absFrom < ct) return true;
+      return false;
+    };
+    for (const span of wikiRenderSpans(text, resolve, isExcluded)) {
+      wikiSpans.push({
+        from: from + span.from,
+        to: from + span.to,
+        widget: new WikiLinkWidget(span.label, span.target, span.heading, span.resolved, span.embed),
+      });
+    }
+  }
+  // True when a position sits inside a rendered wikilink — its inner markdown is not decorated.
+  const insideWiki = (pos: number): boolean => wikiSpans.some((w) => pos >= w.from && pos < w.to);
+
   for (const { from, to } of view.visibleRanges) {
     syntaxTree(state).iterate({
       from,
@@ -229,6 +322,8 @@ function buildDecorations(view: EditorView): DecorationSet {
       enter: (node) => {
         // Skip nodes inside the folded frontmatter block — the block-replace decoration owns that range.
         if (fmFolded && node.from < bodyStart) return;
+        // Skip nodes inside a rendered wikilink — the link's widget owns that range.
+        if (insideWiki(node.from)) return;
         const name = node.name;
 
         // Heading: size decoration over the whole line (size is kept even on the cursor line — same as Obsidian).
@@ -300,6 +395,12 @@ function buildDecorations(view: EditorView): DecorationSet {
     });
   }
 
+  // Append the wikilink widgets (computed up front). `[[note]]` is not markdown, so the syntax tree
+  // never yields it — these come from a textual scan and replace the source with a clickable label.
+  for (const w of wikiSpans) {
+    ranges.push(Decoration.replace({ widget: w.widget }).range(w.from, w.to));
+  }
+
   // Delegate sorting (sort=true) — sorts safely even when line/mark/replace are mixed.
   return Decoration.set(ranges, true);
 }
@@ -318,7 +419,8 @@ const livePreviewPlugin = ViewPlugin.fromClass(
         u.docChanged ||
         u.viewportChanged ||
         u.selectionSet ||
-        u.startState.facet(readingMode) !== u.state.facet(readingMode)
+        u.startState.facet(readingMode) !== u.state.facet(readingMode) ||
+        u.startState.facet(wikiResolver) !== u.state.facet(wikiResolver)
       ) {
         this.decorations = buildDecorations(u.view);
       }
@@ -350,6 +452,13 @@ const lpTheme = EditorView.theme({
     borderRadius: "var(--radius-s)",
   },
   ".cm-lp-link": { color: "var(--accent)", textDecoration: "underline", cursor: "pointer" },
+  // Wikilinks: resolved = accent link; unresolved = muted with a dotted underline (the note is
+  // missing, but the link is still typed/navigable-to-create later).
+  ".cm-lp-wikilink": { color: "var(--accent)", textDecoration: "underline", cursor: "pointer" },
+  ".cm-lp-wikilink-unresolved": {
+    color: "var(--text-muted)",
+    textDecoration: "underline dotted",
+  },
   ".cm-lp-quote": {
     borderLeft: "3px solid var(--border-strong)",
     paddingLeft: "var(--sp-3)",

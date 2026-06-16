@@ -21,10 +21,13 @@
     type SearchHit,
   } from "$lib/ipc";
   import { startSync } from "$lib/sync";
+  import { buildWikiResolver } from "$lib/wikilink.helpers";
+  import { backlinks } from "$lib/backlinkStore.svelte";
   import { theme } from "$lib/theme.svelte";
   import { layout } from "$lib/layout.svelte";
   import TreeView, { DRAG_MIME } from "$lib/TreeView.svelte";
   import Editor from "$lib/Editor.svelte";
+  import Backlinks from "$lib/Backlinks.svelte";
   import PageHeader from "$lib/PageHeader.svelte";
   import { parseFrontmatter, getField } from "$lib/frontmatter.helpers";
   import { palette } from "$lib/paletteStore.svelte";
@@ -47,6 +50,9 @@
   let reading = $state(false);
   let activeName = $state("");
   let activePath = $state<string | null>(null);
+  // Heading to scroll to after the next note load (set by a `[[note#heading]]` click; cleared on any
+  // other open so a later plain navigation does not re-scroll).
+  let pendingHeading = $state<string | null>(null);
   let dirty = $state(false);
   let saveError = $state<string | null>(null);
 
@@ -82,6 +88,7 @@
     const job = pending;
     try {
       await writeNote(root, job.path, job.text);
+      backlinks.updateSource(job.path, job.text); // refresh links from the just-saved note (cheap, no re-read)
       // Switch to clean state only if no newer edit accumulated during the save.
       if (pending === job) {
         pending = null;
@@ -119,6 +126,7 @@
     closeEditor();
     selectedNode = null;
     cancelMode();
+    backlinks.clear(); // drop the previous vault's index (the $effect below rebuilds it)
     await nav.load(path); // load favorites/order sidecar
   }
 
@@ -200,6 +208,7 @@
   async function handleSelect(node: TreeNode) {
     selectedNode = node; // structure-edit target (including folders)
     if (!root || !node.body_path) return; // do not open containers without a body
+    pendingHeading = null; // a direct open does not scroll to a heading (cleared before the open)
     await flush(); // preserve unsaved edits of the previous note
     content = await readNote(root, node.body_path);
     activeName = node.name;
@@ -538,6 +547,64 @@
 
   let fileIndex = $derived<FileEntry[]>(flattenTree(tree));
 
+  /** Collect every note's vault-relative `.md` path: leaf=own path, container=its folder note. */
+  function collectNotePaths(nodes: TreeNode[], acc: string[] = []): string[] {
+    for (const n of nodes) {
+      if (n.kind === "leaf") acc.push(n.path);
+      else if (n.body_path) acc.push(n.body_path);
+      if (n.children?.length) collectNotePaths(n.children, acc);
+    }
+    return acc;
+  }
+
+  /** Wikilink resolution targets — passed to the editor so `[[links]]` resolve against the live tree. */
+  let notePaths = $derived<string[]>(collectNotePaths(tree));
+
+  /** Find the tree node whose body is the given vault-relative `.md` path (leaf path or folder note). */
+  function findNodeByNotePath(nodes: TreeNode[], notePath: string): TreeNode | null {
+    for (const n of nodes) {
+      if (n.body_path === notePath || (n.kind === "leaf" && n.path === notePath)) return n;
+      const found = n.children?.length ? findNodeByNotePath(n.children, notePath) : null;
+      if (found) return found;
+    }
+    return null;
+  }
+
+  /**
+   * Open the note a wikilink resolves to. Reuses `handleSelect` (flush, read, selection follow) so
+   * navigation behaves exactly like clicking the note in the tree. Heading scroll is a follow-up.
+   */
+  async function handleWikiLink(path: string, heading: string | undefined) {
+    const node = findNodeByNotePath(tree, path);
+    if (!node) return;
+    await handleSelect(node); // clears pendingHeading, then opens (recreates the editor)
+    // Set after handleSelect so the editor recreation picks it up and scrolls once on load.
+    pendingHeading = heading ?? null;
+  }
+
+  /**
+   * Rebuild the vault-wide backlink index by reading every note's body once. Frontend scan (no new
+   * IPC); the simplicity beats a Rust link graph at this scale (constitution: simplicity > perf).
+   * A failed read degrades that note to empty rather than aborting the whole index.
+   */
+  async function rebuildBacklinks() {
+    const r = root;
+    if (!r) return;
+    const paths = notePaths;
+    const resolve = buildWikiResolver(paths).resolve;
+    const notes = await Promise.all(
+      paths.map(async (p) => ({ path: p, body: await readNote(r, p).catch(() => "") })),
+    );
+    backlinks.rebuild(notes, resolve);
+  }
+
+  // Rebuild the backlink index whenever the note set changes (vault load, create/rename/move/delete).
+  // Edits to the open note are handled incrementally on save (see flush); this covers structure.
+  $effect(() => {
+    void notePaths;
+    if (root) void rebuildBacklinks();
+  });
+
   const actions: PaletteActions = {
     openVault: () => { void chooseVault(); },
     toggleTheme: () => { theme.toggle(); },
@@ -857,13 +924,21 @@
           icon={getField(frontmatter.data, "icon") ?? ""}
           title={getField(frontmatter.data, "title") ?? ""}
         />
-        <Editor
-          docKey={`${activePath}@${reloadVersion}`}
-          initialDoc={content}
-          {reading}
-          onchange={handleEdit}
-          onImagePaste={handleImagePaste}
-        />
+        <div class="note-body">
+          <div class="editor-pane">
+            <Editor
+              docKey={`${activePath}@${reloadVersion}`}
+              initialDoc={content}
+              {reading}
+              {notePaths}
+              scrollToHeading={pendingHeading}
+              onchange={handleEdit}
+              onImagePaste={handleImagePaste}
+              onWikiLink={handleWikiLink}
+            />
+          </div>
+          <Backlinks links={backlinks.for(activePath)} onOpen={(p) => handleWikiLink(p, undefined)} />
+        </div>
       {/if}
     {:else}
       <p class="hint">Select a note.</p>
@@ -924,6 +999,17 @@
     flex-direction: column;
     overflow: hidden;
     background: var(--bg-primary);
+  }
+  /* Editor + backlinks column. The editor pane grows and scrolls; the backlinks panel sits below. */
+  .note-body {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+  }
+  .editor-pane {
+    flex: 1;
+    min-height: 0;
   }
   .title {
     display: flex;

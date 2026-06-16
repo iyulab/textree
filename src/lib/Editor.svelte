@@ -4,8 +4,10 @@
   import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
   import { markdown } from "@codemirror/lang-markdown";
   import { GFM } from "@lezer/markdown";
-  import { livePreview, readingMode } from "./livePreview";
+  import { livePreview, readingMode, wikiResolver } from "./livePreview";
   import { parseFrontmatter } from "./frontmatter.helpers";
+  import { buildWikiResolver, findHeadingOffset } from "./wikilink.helpers";
+  import { wikiAutocomplete } from "./wikiComplete";
   import { untrack } from "svelte";
 
   let {
@@ -13,8 +15,11 @@
     initialDoc = "",
     editable = true,
     reading = false,
+    notePaths = [],
+    scrollToHeading = null,
     onchange,
     onImagePaste,
+    onWikiLink,
   }: {
     /** Identity (path) of the open note. The view is recreated only when this value changes. */
     docKey?: string | null;
@@ -23,10 +28,16 @@
     editable?: boolean;
     /** Reading mode: clean read-only render (all markers hidden, frontmatter folded). */
     reading?: boolean;
+    /** Vault-relative `.md` note paths — wikilink resolution targets. Reconfigured in place on change. */
+    notePaths?: string[];
+    /** Heading to scroll to once this note loads (from a `[[note#heading]]` click). Null = top. */
+    scrollToHeading?: string | null;
     /** Emits the new text when the document changes due to user editing. */
     onchange?: (text: string) => void;
     /** Image paste: receives base64 bytes + extension and returns the markdown link to insert (null on failure). */
     onImagePaste?: (dataBase64: string, ext: string) => Promise<string | null>;
+    /** Wikilink navigation: called with the resolved note path (+ optional heading) when a link is clicked. */
+    onWikiLink?: (path: string, heading: string | undefined) => void;
   } = $props();
 
   let host: HTMLDivElement;
@@ -87,6 +98,43 @@
     return false;
   }
 
+  /** Move the cursor to a heading within this view and scroll it into view. */
+  function scrollToHeadingInView(view: EditorView, heading: string): void {
+    const off = findHeadingOffset(view.state.doc.toString(), heading);
+    if (off === null) return;
+    view.dispatch({
+      selection: { anchor: off },
+      effects: EditorView.scrollIntoView(off, { y: "start" }),
+    });
+  }
+
+  /**
+   * Wikilink click: navigate to the resolved note. Reads the destination from the widget's
+   * `data-wikilink-path` (set by livePreview). A same-document heading link (empty path) scrolls
+   * within this view; an unresolved link (no attribute) falls through to default — clicking moves
+   * the cursor, revealing the raw source for editing.
+   */
+  function handleWikiClick(
+    event: MouseEvent,
+    view: EditorView,
+    onLink?: (path: string, heading: string | undefined) => void,
+  ): boolean {
+    if (!onLink) return false;
+    const start = event.target as HTMLElement | null;
+    const el = start?.closest?.(".cm-lp-wikilink") as HTMLElement | null;
+    if (!el) return false;
+    const path = el.dataset.wikilinkPath;
+    if (path === undefined) return false; // unresolved → fall through (reveal source)
+    event.preventDefault(); // do not place the cursor inside the widget (which would reveal source)
+    const heading = el.dataset.wikilinkHeading;
+    if (path === "") {
+      if (heading) scrollToHeadingInView(view, heading); // same-document heading link
+      return true;
+    }
+    onLink(path, heading);
+    return true;
+  }
+
   // Theme that connects the app design tokens (tokens.css) to CodeMirror. Colors are not
   // hardcoded but reference var(--token), so dark/light switching applies to the editor as well.
   const textreeTheme = EditorView.theme({
@@ -126,12 +174,21 @@
     ];
   }
 
+  // Compartment for the wikilink resolver — reconfigured in place when the vault tree (notePaths)
+  // changes, so links re-resolve without recreating the view (preserving doc + undo history).
+  const wikiConf = new Compartment();
+  function wikiExtension(paths: string[]) {
+    return [wikiResolver.of(buildWikiResolver(paths).resolve), wikiAutocomplete(paths)];
+  }
+
   function makeState(
     doc: string,
     ed: boolean,
     rd: boolean,
+    paths: string[],
     emit?: (t: string) => void,
     onPaste?: (b64: string, ext: string) => Promise<string | null>,
+    onLink?: (path: string, heading: string | undefined) => void,
   ) {
     // Start the cursor at the body (after any frontmatter) so the frontmatter folds by default
     // (a cursor inside the block keeps it expanded). Notes without frontmatter start at offset 0.
@@ -149,8 +206,10 @@
         textreeTheme,
         EditorView.lineWrapping,
         modeConf.of(modeExtensions(ed, rd)),
+        wikiConf.of(wikiExtension(paths)),
         EditorView.domEventHandlers({
           paste: (event, view) => handlePaste(event, view, onPaste),
+          mousedown: (event, view) => handleWikiClick(event, view, onLink),
         }),
         EditorView.updateListener.of((u) => {
           if (u.docChanged) emit?.(u.state.doc.toString());
@@ -170,10 +229,22 @@
     const rd = untrack(() => reading);
     const ed = untrack(() => editable) && !rd;
     const doc = untrack(() => initialDoc);
+    const paths = untrack(() => notePaths);
     const emit = untrack(() => onchange);
     const onPaste = untrack(() => onImagePaste);
-    const v = new EditorView({ state: makeState(doc, ed, rd, emit, onPaste), parent: host });
+    const onLink = untrack(() => onWikiLink);
+    const v = new EditorView({
+      state: makeState(doc, ed, rd, paths, emit, onPaste, onLink),
+      parent: host,
+    });
     view = v;
+    // Scroll to the requested heading once on load (cross-note `[[note#heading]]` navigation).
+    const heading = untrack(() => scrollToHeading);
+    if (heading) {
+      const off = findHeadingOffset(doc, heading);
+      if (off !== null)
+        v.dispatch({ selection: { anchor: off }, effects: EditorView.scrollIntoView(off, { y: "start" }) });
+    }
     return () => {
       v.destroy();
       if (view === v) view = undefined;
@@ -186,6 +257,13 @@
     const rd = reading;
     const ed = editable && !rd;
     view?.dispatch({ effects: modeConf.reconfigure(modeExtensions(ed, rd)) });
+  });
+
+  // Reconfigure the wikilink resolver when the vault tree changes (notes added/renamed/removed), so
+  // links re-resolve live without recreating the view.
+  $effect(() => {
+    const paths = notePaths;
+    view?.dispatch({ effects: wikiConf.reconfigure(wikiExtension(paths)) });
   });
 </script>
 
