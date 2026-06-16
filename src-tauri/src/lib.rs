@@ -1,6 +1,7 @@
 pub(crate) mod commands;
 pub(crate) mod fs_ops;
 pub(crate) mod pathsafe;
+pub(crate) mod publish;
 pub(crate) mod search;
 pub(crate) mod self_write;
 pub(crate) mod vault;
@@ -36,7 +37,8 @@ pub fn run() {
             commands::read_sidecar,
             commands::write_sidecar,
             commands::search_content,
-            commands::rebuild_index
+            commands::rebuild_index,
+            commands::publish_site
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

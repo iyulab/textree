@@ -249,6 +249,45 @@ pub fn rebuild_index(
     }
 }
 
+/// Resolves how to invoke canopy. Dev/E2E: the `TEXTREE_CANOPY_CLI` env var (path to the CLI script
+/// or exe) — a `.js` path is run via `node`. Production: the bundled single-exe sidecar in the
+/// resource dir (its build/bundling lands in a later cycle).
+fn resolve_canopy(app: &AppHandle) -> Result<crate::publish::CanopyInvocation, String> {
+    use crate::publish::CanopyInvocation;
+    if let Ok(p) = std::env::var("TEXTREE_CANOPY_CLI") {
+        let path = PathBuf::from(&p);
+        if path.extension().and_then(|e| e.to_str()) == Some("js") {
+            return Ok(CanopyInvocation {
+                program: "node".into(),
+                prefix_args: vec![path.into_os_string()],
+            });
+        }
+        return Ok(CanopyInvocation { program: path.into_os_string(), prefix_args: vec![] });
+    }
+    let resource = app.path().resource_dir().map_err(|e| e.to_string())?;
+    let exe = resource.join(if cfg!(windows) { "canopy.exe" } else { "canopy" });
+    if exe.exists() {
+        return Ok(CanopyInvocation { program: exe.into_os_string(), prefix_args: vec![] });
+    }
+    Err("the canopy renderer is not available (set TEXTREE_CANOPY_CLI in dev, or bundle the sidecar)"
+        .into())
+}
+
+/// Publishes the open vault to a static site by spawning canopy. Read-only over the source (D13):
+/// the vault `.md` is never mutated; only `out_dir` (which must lie outside the vault) is written.
+#[tauri::command]
+pub fn publish_site(
+    app: AppHandle,
+    vault_path: String,
+    out_dir: String,
+    options: crate::publish::PublishOptions,
+) -> Result<crate::publish::PublishResult, String> {
+    let vault = PathBuf::from(&vault_path);
+    let out = PathBuf::from(&out_dir);
+    let canopy = resolve_canopy(&app)?;
+    crate::publish::run_publish(&vault, &out, &options, &canopy)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
