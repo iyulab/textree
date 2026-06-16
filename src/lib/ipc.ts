@@ -141,3 +141,29 @@ export async function searchContent(
 export async function rebuildIndex(root: string): Promise<void> {
   return invoke<void>("rebuild_index", { root });
 }
+
+// ── Publishing (P2 — render the vault to a static site via canopy) ─────────
+
+export interface PublishOptions {
+  /** Overrides the site title (defaults to the vault folder name). */
+  siteTitle?: string;
+  /** Design-token CSS content injected so the published site matches the app. */
+  tokensCss?: string;
+}
+
+export interface PublishResult {
+  pageCount: number;
+  outDir: string;
+}
+
+/**
+ * Publish the vault to a static site at `outDir` (which must be outside the vault). Read-only over
+ * the source: the vault `.md` is never mutated. Spawns the canopy renderer in the backend.
+ */
+export async function publishSite(
+  vaultPath: string,
+  outDir: string,
+  options: PublishOptions = {},
+): Promise<PublishResult> {
+  return invoke<PublishResult>("publish_site", { vaultPath, outDir, options });
+}

@@ -27,6 +27,8 @@ export interface PaletteActions {
   moveSelectedUp: () => void;
   moveSelectedDown: () => void;
   rebuildIndex: () => void;
+  hasVault: () => boolean;
+  publishSite: () => void;
 }
 
 export function buildCommands(a: PaletteActions): Command[] {
@@ -45,6 +47,7 @@ export function buildCommands(a: PaletteActions): Command[] {
     { id: "node.moveUp", title: "Move selected node up", run: a.moveSelectedUp, when: sel },
     { id: "node.moveDown", title: "Move selected node down", run: a.moveSelectedDown, when: sel },
     { id: "search.rebuild", title: "Rebuild content index", run: a.rebuildIndex },
+    { id: "vault.publish", title: "Publish site…", run: a.publishSite, when: a.hasVault },
   ];
 }
 

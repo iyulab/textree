@@ -17,9 +17,12 @@
     saveAttachment,
     searchContent,
     rebuildIndex,
+    publishSite,
     type TreeNode,
     type SearchHit,
   } from "$lib/ipc";
+  import { toPublishTokens } from "$lib/publish.helpers";
+  import tokensCssRaw from "$lib/styles/tokens.css?raw";
   import { startSync } from "$lib/sync";
   import { buildWikiResolver } from "$lib/wikilink.helpers";
   import { backlinks } from "$lib/backlinkStore.svelte";
@@ -55,6 +58,7 @@
   let pendingHeading = $state<string | null>(null);
   let dirty = $state(false);
   let saveError = $state<string | null>(null);
+  let publishNotice = $state<{ kind: "ok" | "error"; text: string } | null>(null);
 
   // External change (M3) state.
   let reloadVersion = $state(0); // bump on external reload → force Editor re-creation
@@ -104,6 +108,7 @@
   function scheduleSave(path: string, text: string) {
     pending = { path, text };
     dirty = true;
+    publishNotice = null; // an edit supersedes the last publish notice (the site is now stale)
     if (saveTimer) clearTimeout(saveTimer);
     saveTimer = setTimeout(() => {
       void flush();
@@ -133,6 +138,37 @@
   async function chooseVault() {
     const selected = await open({ directory: true, multiple: false });
     if (typeof selected === "string") await loadVault(selected);
+  }
+
+  /**
+   * Publish the open vault to a static site at `out` (outside the vault). Read-only over the
+   * source. The app's tokens are rewritten for prefers-color-scheme so the site auto-themes.
+   * Split from the folder picker so the E2E bridge can drive it without the native dialog.
+   */
+  async function publishToDir(out: string) {
+    if (!root) return;
+    publishNotice = null;
+    try {
+      const result = await publishSite(root, out, {
+        tokensCss: toPublishTokens(tokensCssRaw),
+      });
+      publishNotice = {
+        kind: "ok",
+        text: `Published ${result.pageCount} page(s) → ${result.outDir}. Upload this folder to GitHub Pages or Cloudflare Pages to put it online.`,
+      };
+    } catch (e) {
+      publishNotice = { kind: "error", text: `Publish failed: ${String(e)}` };
+    }
+  }
+
+  async function choosePublishTarget() {
+    if (!root) return;
+    const out = await open({
+      directory: true,
+      multiple: false,
+      title: "Choose an empty folder to publish the site into",
+    });
+    if (typeof out === "string") await publishToDir(out);
   }
 
   // ── Inline title editing (D5) ──────────────────────────────────────
@@ -647,6 +683,8 @@
     rebuildIndex: () => {
       if (root) void rebuildIndex(root);
     },
+    hasVault: () => root !== null,
+    publishSite: () => { void choosePublishTarget(); },
   };
 
   let commands = $derived(activeCommands(buildCommands(actions)));
@@ -731,6 +769,7 @@
     if (import.meta.env.DEV) {
       (window as unknown as { __textreeTest?: unknown }).__textreeTest = {
         loadVault,
+        publishTo: publishToDir,
       };
     }
 
@@ -881,6 +920,16 @@
   ></div>
   {/if}
   <main class="content">
+    {#if publishNotice}
+      <div class="publish-banner {publishNotice.kind}" role="status">
+        <span>{publishNotice.kind === "ok" ? "✓" : "⚠"} {publishNotice.text}</span>
+        <button
+          class="banner-dismiss"
+          onclick={() => (publishNotice = null)}
+          aria-label="Dismiss"
+        >×</button>
+      </div>
+    {/if}
     {#if !root}
       <div class="empty-state">
         <h1 class="empty-brand">Textree</h1>
@@ -1103,6 +1152,33 @@
   }
   .status.error {
     color: var(--text-error);
+  }
+  .publish-banner {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-2);
+    padding: var(--sp-2) var(--sp-3);
+    font-size: var(--font-size-small);
+    border-bottom: 1px solid var(--border);
+    background: var(--bg-secondary);
+  }
+  .publish-banner.ok {
+    color: var(--accent);
+  }
+  .publish-banner.error {
+    color: var(--text-error);
+  }
+  .publish-banner span {
+    flex: 1;
+  }
+  .banner-dismiss {
+    border: none;
+    background: none;
+    color: inherit;
+    cursor: pointer;
+    font-size: var(--font-size-ui);
+    line-height: 1;
+    padding: 0 var(--sp-1);
   }
   .banner {
     display: flex;
