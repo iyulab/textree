@@ -26,13 +26,25 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
+    "targets": ["nsis"],
+    "createUpdaterArtifacts": true,
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "windows": {
+      "signCommand": "pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/sign-windows.ps1 \"%1\""
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEQ3Nzc4NkI0RDI2NjA0QzgKUldUSUJHYlN0SVozMTZyVU1XMjlVc0I5R0J3dGxpejR2WUdrd21FMHlHSlFOM3ZSRGhkR29Cb1EK",
+      "endpoints": [
+        "https://github.com/iyulab/textree/releases/latest/download/latest.json"
+      ]
+    }
   }
 }
