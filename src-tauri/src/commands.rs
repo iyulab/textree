@@ -309,6 +309,56 @@ pub fn restore_node(root: String, trash_name: String) -> Result<String, String> 
 }
 
 #[tauri::command]
+pub fn list_trash(root: String) -> Result<Vec<TrashItem>, String> {
+    let root_p = Path::new(&root);
+    let trash_dir = root_p.join(".textree").join("trash");
+    let mut items = read_trash_manifest(root_p);
+    // Drop stale entries (manifest points to a file the user removed externally).
+    items.retain(|it| trash_dir.join(&it.trash_name).exists());
+    // Surface orphan files (in trash dir but absent from the manifest) as unknown-origin.
+    let known: std::collections::HashSet<String> =
+        items.iter().map(|it| it.trash_name.clone()).collect();
+    if let Ok(entries) = std::fs::read_dir(&trash_dir) {
+        for e in entries.flatten() {
+            let name = e.file_name().to_string_lossy().to_string();
+            if !known.contains(&name) {
+                let is_dir = e.path().is_dir();
+                items.push(TrashItem { trash_name: name.clone(), original_rel: name, deleted_at: 0, is_dir });
+            }
+        }
+    }
+    Ok(items)
+}
+
+#[tauri::command]
+pub fn purge_trash(root: String, trash_name: Option<String>) -> Result<(), String> {
+    let root_p = Path::new(&root);
+    let trash_dir = root_p.join(".textree").join("trash");
+    match trash_name {
+        Some(name) => {
+            if !crate::pathsafe::is_valid_name(&name) {
+                return Err("invalid trash name".into());
+            }
+            let p = trash_dir.join(&name);
+            if p.is_dir() {
+                std::fs::remove_dir_all(&p).map_err(|e| e.to_string())?;
+            } else if p.exists() {
+                std::fs::remove_file(&p).map_err(|e| e.to_string())?;
+            }
+            let mut items = read_trash_manifest(root_p);
+            items.retain(|it| it.trash_name != name);
+            write_trash_manifest(root_p, &items)
+        }
+        None => {
+            if trash_dir.exists() {
+                std::fs::remove_dir_all(&trash_dir).map_err(|e| e.to_string())?;
+            }
+            write_trash_manifest(root_p, &[])
+        }
+    }
+}
+
+#[tauri::command]
 pub fn rename_node(root: String, path: String, name: String) -> Result<String, String> {
     let p = crate::fs_ops::rename_node(Path::new(&root), Path::new(&path), &name)
         .map_err(|e| e.to_string())?;
@@ -557,5 +607,46 @@ mod tests {
         // The recorded trash_name actually exists in the trash dir.
         let trashed = tmp.path().join(".textree").join("trash").join(&items[0].trash_name);
         assert!(trashed.is_file());
+    }
+
+    #[test]
+    fn list_trash_merges_manifest_and_orphans_drops_stale() {
+        let tmp = TempDir::new().unwrap();
+        let trash = tmp.path().join(".textree").join("trash");
+        std::fs::create_dir_all(&trash).unwrap();
+        std::fs::write(trash.join("known.md"), "x").unwrap();
+        std::fs::write(trash.join("orphan.md"), "x").unwrap(); // on disk, not in manifest
+        let items = vec![
+            TrashItem { trash_name: "known.md".into(), original_rel: "known.md".into(), deleted_at: 5, is_dir: false },
+            TrashItem { trash_name: "ghost.md".into(), original_rel: "ghost.md".into(), deleted_at: 9, is_dir: false }, // stale: no file
+        ];
+        write_trash_manifest(tmp.path(), &items).unwrap();
+
+        let listed = list_trash(tmp.path().to_string_lossy().into()).unwrap();
+        let names: std::collections::HashSet<_> = listed.iter().map(|i| i.trash_name.as_str()).collect();
+        assert!(names.contains("known.md"));
+        assert!(names.contains("orphan.md"), "orphan file surfaced");
+        assert!(!names.contains("ghost.md"), "stale manifest entry dropped");
+    }
+
+    #[test]
+    fn purge_individual_and_all() {
+        let tmp = TempDir::new().unwrap();
+        let trash = tmp.path().join(".textree").join("trash");
+        std::fs::create_dir_all(&trash).unwrap();
+        std::fs::write(trash.join("a.md"), "x").unwrap();
+        std::fs::write(trash.join("b.md"), "x").unwrap();
+        write_trash_manifest(tmp.path(), &[
+            TrashItem { trash_name: "a.md".into(), original_rel: "a.md".into(), deleted_at: 0, is_dir: false },
+            TrashItem { trash_name: "b.md".into(), original_rel: "b.md".into(), deleted_at: 0, is_dir: false },
+        ]).unwrap();
+
+        purge_trash(tmp.path().to_string_lossy().into(), Some("a.md".into())).unwrap();
+        assert!(!trash.join("a.md").exists());
+        assert_eq!(read_trash_manifest(tmp.path()).len(), 1);
+
+        purge_trash(tmp.path().to_string_lossy().into(), None).unwrap();
+        assert!(!trash.join("b.md").exists());
+        assert!(read_trash_manifest(tmp.path()).is_empty());
     }
 }
