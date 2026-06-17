@@ -41,7 +41,8 @@ pub fn run() {
             commands::rebuild_index,
             commands::publish_site,
             commands::list_trash,
-            commands::purge_trash
+            commands::purge_trash,
+            commands::ensure_default_vault
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

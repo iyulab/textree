@@ -27,6 +27,55 @@ fn atomic_write(path: &Path, content: &str) -> io::Result<()> {
     Ok(())
 }
 
+/// Seed note written into a freshly created default vault. English only (public repo).
+const WELCOME_MD: &str = "---\ntitle: Welcome to Textree\nicon: 🌳\n---\n\n# Welcome to Textree\n\nThis is your vault — a plain folder of Markdown files on your own disk.\nNo account, no lock-in. What you see here is the default look, with no setup.\n\n## A few things to try\n- Edit this note. Everything is just `.md` you fully own.\n- Create notes and folders from the toolbar on the left.\n- **Already keep notes in another folder?** Click 📁 in the sidebar to open\n  any existing vault — Obsidian vaults work too.\n\nYou can delete this note anytime.\n";
+
+/// True if `dir` directly contains at least one `*.md` file.
+fn has_markdown(dir: &Path) -> bool {
+    match std::fs::read_dir(dir) {
+        Ok(entries) => entries.flatten().any(|e| {
+            e.path().extension().and_then(|x| x.to_str()).map(|x| x.eq_ignore_ascii_case("md"))
+                == Some(true)
+        }),
+        Err(_) => false,
+    }
+}
+
+/// Ensures `base/Textree/` exists and, only when it has no Markdown yet, seeds `welcome.md`
+/// atomically. Never overwrites existing content (non-destructive). Returns the vault path.
+fn ensure_vault_at(base: &Path) -> Result<PathBuf, String> {
+    let vault = base.join("Textree");
+    std::fs::create_dir_all(&vault).map_err(|e| e.to_string())?;
+    if !has_markdown(&vault) {
+        atomic_write(&vault.join("welcome.md"), WELCOME_MD).map_err(|e| e.to_string())?;
+    }
+    Ok(vault)
+}
+
+/// Resolves the base directory under which the default `Textree/` vault lives.
+/// Dev/E2E: `TEXTREE_DEFAULT_VAULT_BASE` env var (test isolation, mirrors TEXTREE_CANOPY_CLI).
+/// Production: the OS Documents dir, falling back to the home dir.
+fn default_vault_base(app: &AppHandle) -> Result<PathBuf, String> {
+    if let Ok(p) = std::env::var("TEXTREE_DEFAULT_VAULT_BASE") {
+        if !p.is_empty() {
+            return Ok(PathBuf::from(p));
+        }
+    }
+    if let Ok(dir) = app.path().document_dir() {
+        return Ok(dir);
+    }
+    app.path().home_dir().map_err(|_| "could not resolve a documents or home directory".to_string())
+}
+
+/// Ensures the default vault exists (creating it and seeding `welcome.md` on first run) and
+/// returns its absolute path. The single backend owner of OS-path resolution + seeding.
+#[tauri::command]
+pub fn ensure_default_vault(app: AppHandle) -> Result<String, String> {
+    let base = default_vault_base(&app)?;
+    let vault = ensure_vault_at(&base)?;
+    Ok(vault.display().to_string())
+}
+
 /// Builds the `.textree/<rel>` sidecar path. `rel` is confined under `.textree/`, and
 /// anything other than `Component::Normal` (parent refs, absolute paths, `.`) is rejected → no traversal.
 fn sidecar_path(root: &Path, rel: &str) -> Result<PathBuf, String> {
@@ -695,5 +744,59 @@ mod tests {
         purge_trash(tmp.path().to_string_lossy().into(), None).unwrap();
         assert!(!trash.join("b.md").exists());
         assert!(read_trash_manifest(tmp.path()).is_empty());
+    }
+}
+
+#[cfg(test)]
+mod onboarding_tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[test]
+    fn seeds_welcome_in_fresh_vault() {
+        let base = tempdir().unwrap();
+        let vault = ensure_vault_at(base.path()).unwrap();
+        assert_eq!(vault, base.path().join("Textree"));
+        let welcome = vault.join("welcome.md");
+        assert!(welcome.is_file(), "welcome.md should be seeded in a fresh vault");
+        let body = std::fs::read_to_string(&welcome).unwrap();
+        assert!(body.contains("Welcome to Textree"));
+    }
+
+    #[test]
+    fn does_not_seed_when_markdown_already_exists() {
+        let base = tempdir().unwrap();
+        let vault_dir = base.path().join("Textree");
+        std::fs::create_dir_all(&vault_dir).unwrap();
+        std::fs::write(vault_dir.join("note.md"), "my own note").unwrap();
+        let vault = ensure_vault_at(base.path()).unwrap();
+        assert!(!vault.join("welcome.md").exists(), "must not seed into a non-empty vault");
+        // existing file untouched (non-destructive)
+        assert_eq!(std::fs::read_to_string(vault_dir.join("note.md")).unwrap(), "my own note");
+    }
+
+    #[test]
+    fn does_not_overwrite_existing_welcome() {
+        let base = tempdir().unwrap();
+        let vault_dir = base.path().join("Textree");
+        std::fs::create_dir_all(&vault_dir).unwrap();
+        std::fs::write(vault_dir.join("welcome.md"), "user edited welcome").unwrap();
+        ensure_vault_at(base.path()).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(vault_dir.join("welcome.md")).unwrap(),
+            "user edited welcome",
+            "an existing welcome.md must never be overwritten"
+        );
+    }
+
+    #[test]
+    fn is_idempotent_on_second_call() {
+        let base = tempdir().unwrap();
+        ensure_vault_at(base.path()).unwrap();
+        // user deletes the seed, then app restarts → must NOT re-seed (welcome was intentional, once)
+        std::fs::write(base.path().join("Textree").join("keep.md"), "x").unwrap();
+        std::fs::remove_file(base.path().join("Textree").join("welcome.md")).unwrap();
+        ensure_vault_at(base.path()).unwrap();
+        assert!(!base.path().join("Textree").join("welcome.md").exists());
     }
 }

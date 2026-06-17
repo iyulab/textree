@@ -4,6 +4,7 @@
   import { onMount } from "svelte";
   import {
     openVault,
+    ensureDefaultVault,
     listTree,
     readNote,
     writeNote,
@@ -21,6 +22,7 @@
     type TreeNode,
     type SearchHit,
   } from "$lib/ipc";
+  import { decideStartup, LAST_VAULT_KEY } from "$lib/startup.helpers";
   import { toPublishTokens } from "$lib/publish.helpers";
   import tokensCssRaw from "$lib/styles/tokens.css?raw";
   import { startSync } from "$lib/sync";
@@ -59,6 +61,7 @@
   let pendingHeading = $state<string | null>(null);
   let dirty = $state(false);
   let saveError = $state<string | null>(null);
+  let startupError = $state<string | null>(null);
   let publishNotice = $state<{ kind: "ok" | "error"; text: string } | null>(null);
   let showTrash = $state(false);
 
@@ -776,6 +779,26 @@
       };
     }
 
+    // Decide the startup vault: restore the last one, or create/open the default on first run.
+    // Effects (localStorage, IPC) live here; the decision itself is the pure decideStartup().
+    void (async () => {
+      const plan = decideStartup(localStorage.getItem(LAST_VAULT_KEY));
+      try {
+        if (plan.action === "restore") {
+          await loadVault(plan.path);
+        } else {
+          await loadVault(await ensureDefaultVault());
+        }
+        if (root) localStorage.setItem(LAST_VAULT_KEY, root);
+      } catch (e) {
+        // The stored vault was moved/deleted, or the default could not be created.
+        // Do NOT force the default over a user's intended vault — fall back to the empty state.
+        // Reset root so {#if !root} renders the empty state and startupError becomes visible.
+        root = null;
+        startupError = String(e);
+      }
+    })();
+
     const win = getCurrentWindow();
     const unlistenClose = win.onCloseRequested(async (event) => {
       if (!pending) return; // nothing to save → proceed with default close
@@ -938,6 +961,9 @@
         <h1 class="empty-brand">Textree</h1>
         <p class="empty-sub">Open a local Markdown vault to get started.</p>
         <button class="open-cta" onclick={chooseVault}>Open vault</button>
+        {#if startupError}
+          <p class="status error">⚠ Could not open vault: {startupError}</p>
+        {/if}
       </div>
     {:else if activePath}
       <header class="title">
