@@ -282,6 +282,15 @@ pub fn save_attachment(
 /// Restores a trashed node to `original_rel` under root. Recreates missing parent dirs,
 /// and on a name collision disambiguates (`name (1)`) — never overwrites (data safety).
 /// Returns the restored path.
+///
+/// SECURITY precondition: callers MUST pre-validate every component of `original_rel`
+/// (Component::Normal + is_valid_name) — this function trusts it for the destination
+/// and does NOT re-check.
+///
+/// NOTE: folder-note restore on a name collision degrades the folder-note mapping.
+/// Example: restoring `journal/` when `journal/` already exists yields `journal (1)/`
+/// containing `journal.md`, which is no longer a valid folder-note (stem mismatch).
+/// This is a known content-safe limitation tracked as a follow-up.
 pub(crate) fn restore_from_trash(root: &Path, trash_path: &Path, original_rel: &str) -> io::Result<PathBuf> {
     if !is_within(root, trash_path) {
         return Err(err("trash path is outside the vault"));

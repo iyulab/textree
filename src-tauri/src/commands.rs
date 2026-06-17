@@ -252,6 +252,9 @@ pub fn delete_node(root: String, path: String) -> Result<(), String> {
         .to_string();
     let mut items = read_trash_manifest(root_p);
     items.push(TrashItem { trash_name, original_rel, deleted_at: now_secs(), is_dir });
+    // NOTE: if write_trash_manifest fails here, the node is already in trash but this command
+    // returns Err. The node is not lost — it surfaces as an unknown-origin orphan in list_trash
+    // and can be restored. This window is data-safe by design; no behavior change intended.
     write_trash_manifest(root_p, &items)
 }
 
@@ -575,6 +578,11 @@ mod tests {
 
         let res = restore_node(tmp.path().to_string_lossy().into(), "evil.md".into());
         assert!(res.is_err(), "path traversal in original_rel must be rejected at the boundary");
+        // The escape destination must not exist — confirm no file was written outside the vault.
+        assert!(
+            !tmp.path().parent().unwrap().join("escape.md").exists(),
+            "the escaped file must not be created outside the vault"
+        );
     }
 
     #[test]
@@ -587,6 +595,45 @@ mod tests {
         let restored = restore_node(tmp.path().to_string_lossy().into(), "orphan.md".into()).unwrap();
         assert_eq!(restored, "orphan.md");
         assert!(tmp.path().join("orphan.md").is_file());
+    }
+
+    /// Covers the `is_dir=true` restore branch: delete a folder-note directory, confirm the manifest
+    /// records it as a directory, then restore it and verify the directory and its folder note are back.
+    #[test]
+    fn restore_node_folder_note_roundtrip() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path().to_string_lossy().to_string();
+
+        // Create a folder-note structure: journal/journal.md
+        let journal_dir = tmp.path().join("journal");
+        std::fs::create_dir(&journal_dir).unwrap();
+        std::fs::write(journal_dir.join("journal.md"), "daily notes").unwrap();
+
+        // Delete the whole journal/ directory.
+        delete_node(root.clone(), journal_dir.to_string_lossy().into()).unwrap();
+        assert!(!journal_dir.exists(), "directory removed from vault after delete");
+
+        // Manifest must record it as a directory with the correct original_rel.
+        let items = read_trash_manifest(tmp.path());
+        assert_eq!(items.len(), 1);
+        assert!(items[0].is_dir, "manifest entry must be marked as a directory");
+        assert_eq!(items[0].original_rel, "journal");
+        let trash_name = items[0].trash_name.clone();
+
+        // Restore: the directory and its folder note should reappear at the original location.
+        let restored_rel = restore_node(root.clone(), trash_name).unwrap();
+        assert_eq!(restored_rel, "journal", "restored to original vault-relative path");
+        assert!(journal_dir.is_dir(), "journal/ directory is back");
+        assert!(
+            journal_dir.join("journal.md").is_file(),
+            "the folder note journal/journal.md is restored inside the directory"
+        );
+        assert_eq!(
+            std::fs::read_to_string(journal_dir.join("journal.md")).unwrap(),
+            "daily notes",
+            "folder note content is preserved"
+        );
+        assert!(read_trash_manifest(tmp.path()).is_empty(), "manifest entry removed after restore");
     }
 
     #[test]
