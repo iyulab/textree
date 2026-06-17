@@ -16,6 +16,14 @@ export async function openVault(root: string): Promise<TreeNode[]> {
   return invoke<TreeNode[]>("open_vault", { root });
 }
 
+/**
+ * Ensures the default vault exists (created + welcome.md seeded on first run) and returns its
+ * absolute path. The backend owns OS-path resolution, folder creation, and seeding.
+ */
+export async function ensureDefaultVault(): Promise<string> {
+  return invoke<string>("ensure_default_vault");
+}
+
 export async function listTree(root: string): Promise<TreeNode[]> {
   return invoke<TreeNode[]>("list_tree", { root });
 }
