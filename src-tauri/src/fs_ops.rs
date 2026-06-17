@@ -80,7 +80,7 @@ pub fn promote_leaf(root: &Path, leaf_md: &Path) -> io::Result<PathBuf> {
 
 /// Finds a non-colliding destination path within the trash (`name`, `name (1)`, …).
 /// Directories are not split on extension (so names like `journal.backup` are not altered).
-fn unique_in(trash: &Path, file_name: &str, is_dir: bool) -> PathBuf {
+pub(crate) fn unique_in(trash: &Path, file_name: &str, is_dir: bool) -> PathBuf {
     let candidate = trash.join(file_name);
     if !candidate.exists() {
         return candidate;
@@ -277,6 +277,25 @@ pub fn save_attachment(
         .and_then(|s| s.to_str())
         .ok_or_else(|| err("cannot read file name"))?;
     Ok(format!("assets/{name}"))
+}
+
+/// Restores a trashed node to `original_rel` under root. Recreates missing parent dirs,
+/// and on a name collision disambiguates (`name (1)`) — never overwrites (data safety).
+/// Returns the restored path.
+pub(crate) fn restore_from_trash(root: &Path, trash_path: &Path, original_rel: &str) -> io::Result<PathBuf> {
+    if !is_within(root, trash_path) {
+        return Err(err("trash path is outside the vault"));
+    }
+    let dest = root.join(original_rel);
+    let parent = dest.parent().ok_or_else(|| err("no parent directory"))?;
+    std::fs::create_dir_all(parent)?;
+    let file_name = dest
+        .file_name()
+        .and_then(|s| s.to_str())
+        .ok_or_else(|| err("cannot read name"))?;
+    let final_dest = unique_in(parent, file_name, trash_path.is_dir());
+    std::fs::rename(trash_path, &final_dest)?;
+    Ok(final_dest)
 }
 
 #[cfg(test)]
@@ -582,6 +601,34 @@ mod tests {
         assert!(rel.starts_with("assets/"), "for a folder note too, the relative link is assets/");
         let name = rel.strip_prefix("assets/").unwrap();
         assert!(dir.join("assets").join(name).is_file(), "assets sits next to the folder note (bar/assets)");
+    }
+
+    #[test]
+    fn restore_returns_to_original_location() {
+        let tmp = TempDir::new().unwrap();
+        let trash = tmp.path().join(".textree").join("trash");
+        std::fs::create_dir_all(&trash).unwrap();
+        let trashed = trash.join("memo.md");
+        std::fs::write(&trashed, "x").unwrap();
+
+        let restored = restore_from_trash(tmp.path(), &trashed, "refs/memo.md").unwrap();
+        assert_eq!(restored, tmp.path().join("refs").join("memo.md"));
+        assert!(restored.is_file(), "parent dir recreated and file restored");
+        assert!(!trashed.exists(), "removed from trash");
+    }
+
+    #[test]
+    fn restore_disambiguates_on_collision_never_overwrites() {
+        let tmp = TempDir::new().unwrap();
+        std::fs::write(tmp.path().join("memo.md"), "original").unwrap(); // occupies the spot
+        let trash = tmp.path().join(".textree").join("trash");
+        std::fs::create_dir_all(&trash).unwrap();
+        let trashed = trash.join("memo.md");
+        std::fs::write(&trashed, "restored").unwrap();
+
+        let restored = restore_from_trash(tmp.path(), &trashed, "memo.md").unwrap();
+        assert_eq!(restored, tmp.path().join("memo (1).md"), "disambiguated, not overwritten");
+        assert_eq!(std::fs::read_to_string(tmp.path().join("memo.md")).unwrap(), "original");
     }
 
     #[test]

@@ -255,6 +255,59 @@ pub fn delete_node(root: String, path: String) -> Result<(), String> {
     write_trash_manifest(root_p, &items)
 }
 
+/// Re-validates a vault-relative path from the (user-editable) manifest: every component must be
+/// Normal and a valid name. "Security at the boundary" — the manifest is not trusted input.
+fn validate_trash_rel(rel: &str) -> Result<(), String> {
+    let p = Path::new(rel);
+    let mut any = false;
+    for comp in p.components() {
+        match comp {
+            Component::Normal(s) => {
+                any = true;
+                if !crate::pathsafe::is_valid_name(&s.to_string_lossy()) {
+                    return Err("invalid path segment in trash entry".into());
+                }
+            }
+            _ => return Err("invalid trash path (non-normal component)".into()),
+        }
+    }
+    if !any {
+        return Err("empty trash path".into());
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn restore_node(root: String, trash_name: String) -> Result<String, String> {
+    let root_p = Path::new(&root);
+    // trash_name must be a single safe segment (rejects separators / .. / dotfiles).
+    if !crate::pathsafe::is_valid_name(&trash_name) {
+        return Err("invalid trash name".into());
+    }
+    let trash_path = root_p.join(".textree").join("trash").join(&trash_name);
+    if !trash_path.exists() {
+        return Err("trash item not found".into());
+    }
+    let mut items = read_trash_manifest(root_p);
+    let idx = items.iter().position(|it| it.trash_name == trash_name);
+    let original_rel = match idx {
+        Some(i) => {
+            let rel = items[i].original_rel.clone();
+            validate_trash_rel(&rel)?; // boundary recheck on untrusted manifest
+            rel
+        }
+        None => trash_name.clone(), // unknown origin → restore to vault root (§3 fallback)
+    };
+    let restored = crate::fs_ops::restore_from_trash(root_p, &trash_path, &original_rel)
+        .map_err(|e| e.to_string())?;
+    // Rename succeeded → now drop the manifest entry (rename-first ordering).
+    if let Some(i) = idx {
+        items.remove(i);
+        write_trash_manifest(root_p, &items)?;
+    }
+    rel_to_root(root_p, &restored)
+}
+
 #[tauri::command]
 pub fn rename_node(root: String, path: String, name: String) -> Result<String, String> {
     let p = crate::fs_ops::rename_node(Path::new(&root), Path::new(&path), &name)
@@ -439,6 +492,51 @@ mod tests {
         std::fs::write(dir.join("trash.json"), "{ not valid json").unwrap();
         // Corrupt manifest must not crash — degrade to empty (trash files remain the truth).
         assert!(read_trash_manifest(tmp.path()).is_empty());
+    }
+
+    #[test]
+    fn restore_node_roundtrip_and_clears_manifest() {
+        let tmp = TempDir::new().unwrap();
+        let note = tmp.path().join("memo.md");
+        std::fs::write(&note, "x").unwrap();
+        delete_node(tmp.path().to_string_lossy().into(), note.to_string_lossy().into()).unwrap();
+        let trash_name = read_trash_manifest(tmp.path())[0].trash_name.clone();
+
+        let restored = restore_node(tmp.path().to_string_lossy().into(), trash_name).unwrap();
+        assert_eq!(restored, "memo.md");
+        assert!(note.is_file(), "back at original location");
+        assert!(read_trash_manifest(tmp.path()).is_empty(), "manifest entry removed");
+    }
+
+    #[test]
+    fn restore_node_rejects_tampered_original_rel() {
+        let tmp = TempDir::new().unwrap();
+        let trash = tmp.path().join(".textree").join("trash");
+        std::fs::create_dir_all(&trash).unwrap();
+        std::fs::write(trash.join("evil.md"), "x").unwrap();
+        // A hand-edited manifest tries to escape the vault via the original_rel.
+        let items = vec![TrashItem {
+            trash_name: "evil.md".into(),
+            original_rel: "../escape.md".into(),
+            deleted_at: 0,
+            is_dir: false,
+        }];
+        write_trash_manifest(tmp.path(), &items).unwrap();
+
+        let res = restore_node(tmp.path().to_string_lossy().into(), "evil.md".into());
+        assert!(res.is_err(), "path traversal in original_rel must be rejected at the boundary");
+    }
+
+    #[test]
+    fn restore_node_unknown_origin_goes_to_root() {
+        let tmp = TempDir::new().unwrap();
+        let trash = tmp.path().join(".textree").join("trash");
+        std::fs::create_dir_all(&trash).unwrap();
+        std::fs::write(trash.join("orphan.md"), "x").unwrap(); // no manifest entry
+
+        let restored = restore_node(tmp.path().to_string_lossy().into(), "orphan.md".into()).unwrap();
+        assert_eq!(restored, "orphan.md");
+        assert!(tmp.path().join("orphan.md").is_file());
     }
 
     #[test]

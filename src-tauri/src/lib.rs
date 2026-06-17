@@ -30,6 +30,7 @@ pub fn run() {
             commands::create_folder,
             commands::promote_node,
             commands::delete_node,
+            commands::restore_node,
             commands::rename_node,
             commands::move_node,
             commands::adopt_node,
