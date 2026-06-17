@@ -223,11 +223,36 @@ pub fn promote_node(root: String, path: String) -> Result<String, String> {
     Ok(dir.display().to_string())
 }
 
+/// Vault-root-relative, `/`-separated path of an existing target (for manifest portability).
+fn rel_to_root(root: &Path, target: &Path) -> Result<String, String> {
+    let root_c = root.canonicalize().map_err(|e| e.to_string())?;
+    let target_c = target.canonicalize().map_err(|e| e.to_string())?;
+    target_c
+        .strip_prefix(&root_c)
+        .ok()
+        .and_then(|p| p.to_str())
+        .map(|s| s.replace('\\', "/"))
+        .ok_or_else(|| "target is not within the vault".to_string())
+}
+
 #[tauri::command]
 pub fn delete_node(root: String, path: String) -> Result<(), String> {
-    crate::fs_ops::delete_to_trash(Path::new(&root), Path::new(&path))
-        .map(|_| ())
-        .map_err(|e| e.to_string())
+    let root_p = Path::new(&root);
+    let target = Path::new(&path);
+    // Capture provenance before the move (canonicalize needs the path to still exist).
+    let original_rel = rel_to_root(root_p, target)?;
+    let is_dir = target.is_dir();
+    // Move first (fs_ops validates is_within / root / .textree). Manifest after — a mid-crash
+    // leaves an "unknown-origin" trash file (recoverable) rather than a dangling manifest entry.
+    let dest = crate::fs_ops::delete_to_trash(root_p, target).map_err(|e| e.to_string())?;
+    let trash_name = dest
+        .file_name()
+        .and_then(|s| s.to_str())
+        .ok_or_else(|| "cannot read trashed name".to_string())?
+        .to_string();
+    let mut items = read_trash_manifest(root_p);
+    items.push(TrashItem { trash_name, original_rel, deleted_at: now_secs(), is_dir });
+    write_trash_manifest(root_p, &items)
 }
 
 #[tauri::command]
@@ -414,5 +439,25 @@ mod tests {
         std::fs::write(dir.join("trash.json"), "{ not valid json").unwrap();
         // Corrupt manifest must not crash — degrade to empty (trash files remain the truth).
         assert!(read_trash_manifest(tmp.path()).is_empty());
+    }
+
+    #[test]
+    fn delete_node_records_provenance_in_manifest() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().join("refs");
+        std::fs::create_dir_all(&dir).unwrap();
+        let note = dir.join("memo.md");
+        std::fs::write(&note, "x").unwrap();
+
+        delete_node(tmp.path().to_string_lossy().into(), note.to_string_lossy().into()).unwrap();
+
+        let items = read_trash_manifest(tmp.path());
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].original_rel, "refs/memo.md"); // forward slashes, vault-relative
+        assert!(!items[0].is_dir);
+        assert!(!note.exists(), "original moved to trash");
+        // The recorded trash_name actually exists in the trash dir.
+        let trashed = tmp.path().join(".textree").join("trash").join(&items[0].trash_name);
+        assert!(trashed.is_file());
     }
 }
