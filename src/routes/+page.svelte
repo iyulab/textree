@@ -31,6 +31,7 @@
   import TreeView, { DRAG_MIME } from "$lib/TreeView.svelte";
   import Editor from "$lib/Editor.svelte";
   import Backlinks from "$lib/Backlinks.svelte";
+  import Trash from "$lib/Trash.svelte";
   import PageHeader from "$lib/PageHeader.svelte";
   import { parseFrontmatter, getField } from "$lib/frontmatter.helpers";
   import { palette } from "$lib/paletteStore.svelte";
@@ -59,6 +60,7 @@
   let dirty = $state(false);
   let saveError = $state<string | null>(null);
   let publishNotice = $state<{ kind: "ok" | "error"; text: string } | null>(null);
+  let showTrash = $state(false);
 
   // External change (M3) state.
   let reloadVersion = $state(0); // bump on external reload → force Editor re-creation
@@ -685,6 +687,7 @@
     },
     hasVault: () => root !== null,
     publishSite: () => { void choosePublishTarget(); },
+    openTrash: () => { showTrash = true; },
   };
 
   let commands = $derived(activeCommands(buildCommands(actions)));
@@ -1014,6 +1017,13 @@
       {/if}
     {:else}
       <p class="hint">Select a note.</p>
+    {/if}
+    {#if showTrash && root}
+      <Trash
+        {root}
+        onclose={() => { showTrash = false; }}
+        onrestored={refreshTree}
+      />
     {/if}
   </main>
   {#if layout.collapsed}

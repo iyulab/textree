@@ -29,6 +29,7 @@ export interface PaletteActions {
   rebuildIndex: () => void;
   hasVault: () => boolean;
   publishSite: () => void;
+  openTrash: () => void;
 }
 
 export function buildCommands(a: PaletteActions): Command[] {
@@ -48,6 +49,7 @@ export function buildCommands(a: PaletteActions): Command[] {
     { id: "node.moveDown", title: "Move selected node down", run: a.moveSelectedDown, when: sel },
     { id: "search.rebuild", title: "Rebuild content index", run: a.rebuildIndex },
     { id: "vault.publish", title: "Publish site…", run: a.publishSite, when: a.hasVault },
+    { id: "vault.trash", title: "Trash…", run: a.openTrash, when: a.hasVault },
   ];
 }
 
