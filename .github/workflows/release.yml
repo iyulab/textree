@@ -1,0 +1,57 @@
+name: Release
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install frontend dependencies
+        working-directory: textree
+        run: npm ci
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v3
+        with:
+          client-id: 293d5452-469f-4988-93c9-0aee0f2d0846
+          tenant-id: 66683f75-fa9e-4325-84e1-9253c1fc8cb7
+          allow-no-subscriptions: true
+
+      - name: Install AzureSignTool
+        run: dotnet tool install --global AzureSignTool
+
+      - name: Acquire Key Vault access token
+        shell: pwsh
+        run: |
+          $token = az account get-access-token --resource https://vault.azure.net --query accessToken -o tsv
+          echo "AZURE_KV_TOKEN=$token" >> $env:GITHUB_ENV
+
+      - name: Build, sign, and release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          AZURE_KV_URL: https://kv-codesign-iyulab.vault.azure.net/
+          AZURE_KV_CERT: globalsign-ev-codesign
+          AZURE_TIMESTAMP_URL: http://timestamp.globalsign.com/tsa/r6advanced1
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: textree
+          tagName: ${{ github.ref_name }}
+          releaseName: 'Textree ${{ github.ref_name }}'
+          releaseDraft: true
+          prerelease: false
+          args: --target x86_64-pc-windows-msvc
