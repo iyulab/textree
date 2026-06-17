@@ -17,6 +17,13 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_process::init())
+        .setup(|app| {
+            #[cfg(windows)]
+            app.handle()
+                .plugin(tauri_plugin_updater::Builder::new().build())?;
+            Ok(())
+        })
         // Managed via Arc so the watcher thread and the write_note command share one registry.
         .manage(Arc::new(SelfWrites::default()))
         .manage(WatcherHandle::default())
