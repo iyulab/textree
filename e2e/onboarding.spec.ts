@@ -34,6 +34,28 @@ test.afterAll(async () => {
   await browser?.close();
 });
 
+test("restore failure: falls back to empty state and shows error when last vault is missing", async () => {
+  // Plant a path that cannot possibly exist so openVault throws on the restore branch.
+  await page.evaluate(
+    ([key, path]) => localStorage.setItem(key, path),
+    [LAST_VAULT_KEY, "Z:\\nonexistent-textree-vault"] as [string, string],
+  );
+  await page.reload();
+
+  // The empty state must render (root resets to null in the startup catch) and the CTA must be visible.
+  await expect(
+    page.getByRole("button", { name: /open vault/i }),
+  ).toBeVisible({ timeout: 30_000 });
+
+  // The error paragraph must contain the generic error prefix (covers both failure branches).
+  await expect(
+    page.getByText(/Could not open vault/),
+  ).toBeVisible({ timeout: 5_000 });
+
+  // Cleanup: remove the bad key so the next test starts clean.
+  await page.evaluate((key) => localStorage.removeItem(key), LAST_VAULT_KEY);
+});
+
 test("first run: onMount auto-opens default vault and seeds welcome.md", async () => {
   // Simulate a fresh install: clear the last-vault key and reload.
   // onMount will see no stored path → call ensureDefaultVault() automatically.

@@ -793,6 +793,8 @@
       } catch (e) {
         // The stored vault was moved/deleted, or the default could not be created.
         // Do NOT force the default over a user's intended vault — fall back to the empty state.
+        // Reset root so {#if !root} renders the empty state and startupError becomes visible.
+        root = null;
         startupError = String(e);
       }
     })();
@@ -960,7 +962,7 @@
         <p class="empty-sub">Open a local Markdown vault to get started.</p>
         <button class="open-cta" onclick={chooseVault}>Open vault</button>
         {#if startupError}
-          <p class="status error">⚠ Could not open the last vault: {startupError}</p>
+          <p class="status error">⚠ Could not open vault: {startupError}</p>
         {/if}
       </div>
     {:else if activePath}
