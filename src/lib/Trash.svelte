@@ -25,23 +25,39 @@
   }
 
   async function refresh() {
-    items = sortTrash(await listTrash(root));
+    try {
+      items = sortTrash(await listTrash(root));
+    } catch (e) {
+      console.error("listTrash failed", e);
+    }
   }
 
   async function handleRestore(trashName: string) {
-    await restoreNode(root, trashName);
-    onrestored();
-    await refresh();
+    try {
+      await restoreNode(root, trashName);
+      onrestored();
+      await refresh();
+    } catch (e) {
+      console.error("restoreNode failed", e);
+    }
   }
 
   async function handlePurge(trashName: string) {
-    await purgeTrash(root, trashName);
-    await refresh();
+    try {
+      await purgeTrash(root, trashName);
+      await refresh();
+    } catch (e) {
+      console.error("purgeTrash failed", e);
+    }
   }
 
   async function handleEmpty() {
-    await purgeTrash(root);
-    await refresh();
+    try {
+      await purgeTrash(root);
+      await refresh();
+    } catch (e) {
+      console.error("purgeTrash (empty) failed", e);
+    }
   }
 
   onMount(() => {
@@ -185,7 +201,7 @@
   .action-btn {
     font: inherit;
     font-size: var(--font-size-smaller);
-    padding: 2px var(--sp-2);
+    padding: var(--sp-1) var(--sp-2);
     cursor: pointer;
     border: 1px solid var(--border);
     border-radius: var(--radius-s);
