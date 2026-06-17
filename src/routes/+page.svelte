@@ -41,8 +41,11 @@
   import { buildCommands, activeCommands, type PaletteActions } from "$lib/commands";
   import { mergeOrder, nav } from "$lib/nav.svelte";
   import { moveInArray } from "$lib/nav.helpers";
+  import { checkForUpdate, type UpdateInfo } from "$lib/updater";
+  import UpdateBanner from "$lib/UpdateBanner.svelte";
 
   let root = $state<string | null>(null);
+  let updateInfo = $state<UpdateInfo | null>(null);
   let tree = $state<TreeNode[]>([]);
   let content = $state("");
   // Live document text — mirrors `content` on note load, then tracks edits so the page header
@@ -829,6 +832,10 @@
       },
     });
 
+    checkForUpdate().then((info) => {
+      updateInfo = info;
+    });
+
     return () => {
       void unlistenClose.then((un) => un());
       void unlistenSyncP.then((un) => un());
@@ -946,6 +953,9 @@
   ></div>
   {/if}
   <main class="content">
+    {#if updateInfo}
+      <UpdateBanner info={updateInfo} />
+    {/if}
     {#if publishNotice}
       <div class="publish-banner {publishNotice.kind}" role="status">
         <span>{publishNotice.kind === "ok" ? "✓" : "⚠"} {publishNotice.text}</span>
