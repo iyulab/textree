@@ -39,7 +39,9 @@ pub fn run() {
             commands::write_sidecar,
             commands::search_content,
             commands::rebuild_index,
-            commands::publish_site
+            commands::publish_site,
+            commands::list_trash,
+            commands::purge_trash
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

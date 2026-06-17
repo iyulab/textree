@@ -167,3 +167,24 @@ export async function publishSite(
 ): Promise<PublishResult> {
   return invoke<PublishResult>("publish_site", { vaultPath, outDir, options });
 }
+
+// ── Trash (B1) ───────────────────────────────────────────────────────────────
+
+export type TrashItem = {
+  trashName: string;
+  originalRel: string;
+  deletedAt: number;
+  isDir: boolean;
+};
+
+export async function listTrash(root: string): Promise<TrashItem[]> {
+  return invoke<TrashItem[]>("list_trash", { root });
+}
+
+export async function restoreNode(root: string, trashName: string): Promise<string> {
+  return invoke<string>("restore_node", { root, trashName });
+}
+
+export async function purgeTrash(root: string, trashName?: string): Promise<void> {
+  return invoke<void>("purge_trash", { root, trashName: trashName ?? null });
+}
