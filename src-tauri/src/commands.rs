@@ -52,6 +52,30 @@ fn ensure_vault_at(base: &Path) -> Result<PathBuf, String> {
     Ok(vault)
 }
 
+/// Resolves the base directory under which the default `Textree/` vault lives.
+/// Dev/E2E: `TEXTREE_DEFAULT_VAULT_BASE` env var (test isolation, mirrors TEXTREE_CANOPY_CLI).
+/// Production: the OS Documents dir, falling back to the home dir.
+fn default_vault_base(app: &AppHandle) -> Result<PathBuf, String> {
+    if let Ok(p) = std::env::var("TEXTREE_DEFAULT_VAULT_BASE") {
+        if !p.is_empty() {
+            return Ok(PathBuf::from(p));
+        }
+    }
+    if let Ok(dir) = app.path().document_dir() {
+        return Ok(dir);
+    }
+    app.path().home_dir().map_err(|_| "could not resolve a documents or home directory".to_string())
+}
+
+/// Ensures the default vault exists (creating it and seeding `welcome.md` on first run) and
+/// returns its absolute path. The single backend owner of OS-path resolution + seeding.
+#[tauri::command]
+pub fn ensure_default_vault(app: AppHandle) -> Result<String, String> {
+    let base = default_vault_base(&app)?;
+    let vault = ensure_vault_at(&base)?;
+    Ok(vault.display().to_string())
+}
+
 /// Builds the `.textree/<rel>` sidecar path. `rel` is confined under `.textree/`, and
 /// anything other than `Component::Normal` (parent refs, absolute paths, `.`) is rejected → no traversal.
 fn sidecar_path(root: &Path, rel: &str) -> Result<PathBuf, String> {
