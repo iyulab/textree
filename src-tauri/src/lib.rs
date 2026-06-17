@@ -30,6 +30,7 @@ pub fn run() {
             commands::create_folder,
             commands::promote_node,
             commands::delete_node,
+            commands::restore_node,
             commands::rename_node,
             commands::move_node,
             commands::adopt_node,
@@ -38,7 +39,9 @@ pub fn run() {
             commands::write_sidecar,
             commands::search_content,
             commands::rebuild_index,
-            commands::publish_site
+            commands::publish_site,
+            commands::list_trash,
+            commands::purge_trash
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
