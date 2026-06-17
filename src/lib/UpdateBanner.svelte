@@ -20,7 +20,7 @@
 </script>
 
 {#if !dismissed}
-  <div class="update-banner">
+  <div class="update-banner" role="status">
     <span>New version {info.version} available.</span>
     {#if error}<span class="err">{error}</span>{/if}
     <button onclick={install} disabled={busy}>
