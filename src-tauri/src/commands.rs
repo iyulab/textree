@@ -3,9 +3,11 @@ use crate::search::{IndexHandle, IndexState, SearchHit};
 use crate::self_write::SelfWrites;
 use crate::vault::{self, TreeNode};
 use crate::watcher::{self, WatcherHandle};
+use serde::{Deserialize, Serialize};
 use std::io::{self, Write};
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Manager, State};
 use tempfile::NamedTempFile;
 
@@ -38,6 +40,48 @@ fn sidecar_path(root: &Path, rel: &str) -> Result<PathBuf, String> {
         }
     }
     Ok(root.join(".textree").join(rel_path))
+}
+
+const TRASH_MANIFEST: &str = "trash.json";
+
+/// One trashed node's provenance. Lives in `.textree/trash.json` (sidecar, regeneratable
+/// in spirit: if lost, the trash files themselves remain the truth — §1.4 / D17).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TrashItem {
+    /// Actual file/dir name inside `.textree/trash/` (collision-disambiguated).
+    pub trash_name: String,
+    /// Vault-root-relative original path, `/`-separated (portable across OS).
+    pub original_rel: String,
+    /// Unix epoch seconds at deletion.
+    pub deleted_at: u64,
+    pub is_dir: bool,
+}
+
+/// Reads `.textree/trash.json`. Absent or corrupt → empty (graceful; trash files are the truth).
+fn read_trash_manifest(root: &Path) -> Vec<TrashItem> {
+    let path = match sidecar_path(root, TRASH_MANIFEST) {
+        Ok(p) => p,
+        Err(_) => return Vec::new(),
+    };
+    match std::fs::read_to_string(&path) {
+        Ok(s) => serde_json::from_str(&s).unwrap_or_default(),
+        Err(_) => Vec::new(),
+    }
+}
+
+/// Atomically rewrites the manifest (temp→fsync→rename via atomic_write).
+fn write_trash_manifest(root: &Path, items: &[TrashItem]) -> Result<(), String> {
+    let path = sidecar_path(root, TRASH_MANIFEST)?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let json = serde_json::to_string_pretty(items).map_err(|e| e.to_string())?;
+    atomic_write(&path, &json).map_err(|e| e.to_string())
+}
+
+fn now_secs() -> u64 {
+    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
 }
 
 /// Reads the `.textree/<rel>` sidecar. Returns `None` if absent (normal flow).
@@ -341,5 +385,34 @@ mod tests {
         let f = tmp.path().join("fresh.md");
         atomic_write(&f, "hi").unwrap();
         assert_eq!(std::fs::read_to_string(&f).unwrap(), "hi");
+    }
+
+    #[test]
+    fn trash_manifest_roundtrips_and_is_empty_when_absent() {
+        let tmp = TempDir::new().unwrap();
+        // Absent manifest reads as empty (graceful — the FS is the truth).
+        assert!(read_trash_manifest(tmp.path()).is_empty());
+
+        let items = vec![TrashItem {
+            trash_name: "memo (1).md".into(),
+            original_rel: "refs/memo.md".into(),
+            deleted_at: 1718600000,
+            is_dir: false,
+        }];
+        write_trash_manifest(tmp.path(), &items).unwrap();
+        let read = read_trash_manifest(tmp.path());
+        assert_eq!(read, items);
+        // Written under .textree/ (sidecar).
+        assert!(tmp.path().join(".textree").join("trash.json").is_file());
+    }
+
+    #[test]
+    fn trash_manifest_corrupt_reads_as_empty() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().join(".textree");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("trash.json"), "{ not valid json").unwrap();
+        // Corrupt manifest must not crash — degrade to empty (trash files remain the truth).
+        assert!(read_trash_manifest(tmp.path()).is_empty());
     }
 }
