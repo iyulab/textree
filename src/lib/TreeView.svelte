@@ -10,6 +10,7 @@
 <script lang="ts">
   import type { TreeNode } from "./ipc";
   import { tree } from "./tree.svelte";
+  import Icon from "./Icon.svelte";
   import { mergeOrder, nav } from "./nav.svelte";
   import Self from "./TreeView.svelte";
 
@@ -221,7 +222,7 @@
             }}
             aria-label={open ? "Collapse" : "Expand"}
             tabindex="-1"
-          >▸</button>
+          ><Icon name="chevron-right" size={14} /></button>
         {:else}
           <span class="chevron-spacer"></span>
         {/if}
@@ -242,7 +243,7 @@
           onfocus={() => tree.setFocused(node.path)}
           onkeydown={(e) => onKeydown(e, node)}
         >
-          <span class="icon">{node.kind === "container" ? "📁" : "📄"}</span>
+          <span class="icon"><Icon name={node.kind === "container" ? "folder" : "file-text"} size={15} /></span>
           <span class="label">{node.name}</span>
         </button>
         <button
@@ -255,7 +256,7 @@
           tabindex="-1"
           aria-label={fav ? "Remove from favorites" : "Add to favorites"}
           aria-pressed={fav}
-        >{fav ? "★" : "☆"}</button>
+        ><Icon name="star" size={14} /></button>
       </div>
       {#if hasChildren && open}
         <Self
@@ -355,7 +356,10 @@
   }
   .icon {
     flex-shrink: 0;
-    font-size: 0.9em;
+    display: inline-flex;
+    align-items: center;
+    /* Node glyphs recede a step from the label so the name reads first. */
+    color: var(--text-muted);
   }
   .label {
     overflow: hidden;
@@ -393,6 +397,10 @@
   .fav.is-fav {
     opacity: 1;
     color: var(--accent);
+  }
+  /* Favorited: fill the star (CSS overrides the svg's fill="none" presentation attribute). */
+  .fav.is-fav :global(svg) {
+    fill: currentColor;
   }
   .fav:hover {
     color: var(--accent);
