@@ -85,13 +85,15 @@
   --text-on-accent: #ffffff;
   --text-error: #c0392b;
 
-  --accent: #4a6cf0;
-  --accent-hover: #3a5be0;
+  /* Brand emerald (matches the logo's green). Deep enough to carry white CTA text and to read as
+     link/active text on the white surface (~4.4:1, on par with the prior accent's contrast tier). */
+  --accent: #0a8a57;
+  --accent-hover: #097a4b;
 
   /* Selection/drop highlights derive from accent's alpha (auto-harmonize across themes). */
-  --selection-bg: rgba(74, 108, 240, 0.16);
-  --drop-bg: rgba(74, 108, 240, 0.1);
-  --drop-border: rgba(74, 108, 240, 0.7);
+  --selection-bg: rgba(10, 138, 87, 0.15);
+  --drop-bg: rgba(10, 138, 87, 0.1);
+  --drop-border: rgba(10, 138, 87, 0.7);
 
   --border: rgba(0, 0, 0, 0.1);
   --border-strong: rgba(0, 0, 0, 0.18);
@@ -115,15 +117,17 @@
   --text-normal: #dadde2;
   --text-muted: #9aa0aa;
   --text-faint: #6b7178;
-  --text-on-accent: #ffffff;
+  /* On the bright dark-theme emerald, dark text (not white) clears contrast — used by the CTA fill. */
+  --text-on-accent: #06241a;
   --text-error: #ff6b5e;
 
-  --accent: #6d8bff;
-  --accent-hover: #859dff;
+  /* Brighter emerald for the dark surface (vivid on near-black, ample contrast for link/active text). */
+  --accent: #34d399;
+  --accent-hover: #5ce0a9;
 
-  --selection-bg: rgba(109, 139, 255, 0.22);
-  --drop-bg: rgba(109, 139, 255, 0.16);
-  --drop-border: rgba(109, 139, 255, 0.8);
+  --selection-bg: rgba(52, 211, 153, 0.2);
+  --drop-bg: rgba(52, 211, 153, 0.16);
+  --drop-border: rgba(52, 211, 153, 0.8);
 
   --border: rgba(255, 255, 255, 0.1);
   --border-strong: rgba(255, 255, 255, 0.18);

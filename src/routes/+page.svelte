@@ -46,6 +46,7 @@
   import { detectSyncConflicts } from "$lib/syncConflict.helpers";
   import { buildFolderTable, type FolderTable } from "$lib/folderTable.helpers";
   import FolderTableView from "$lib/FolderTable.svelte";
+  import Icon from "$lib/Icon.svelte";
 
   let root = $state<string | null>(null);
   let updateInfo = $state<UpdateInfo | null>(null);
@@ -919,7 +920,7 @@
           class="vault-name"
           onclick={chooseVault}
           title={`Switch vault — current: ${root}`}
-        >📁 {vaultName(root)}</button>
+        ><Icon name="folder" /><span class="vault-label">{vaultName(root)}</span></button>
       {:else}
         <span class="brand">Textree</span>
       {/if}
@@ -928,25 +929,30 @@
         onclick={() => theme.toggle()}
         title={theme.resolved === "dark" ? "Switch to light theme" : "Switch to dark theme"}
         aria-label="Toggle theme"
-      >{theme.resolved === "dark" ? "☀" : "☾"}</button>
+      ><Icon name={theme.resolved === "dark" ? "sun" : "moon"} /></button>
       <button
         class="icon-btn"
         onclick={() => layout.toggleCollapsed()}
         title="Collapse sidebar"
         aria-label="Collapse sidebar"
-      >⟨</button>
+      ><Icon name="panel-left-close" /></button>
     </div>
     {#if root}
-      <div class="toolbar">
-        <button onclick={() => startMode("new-note")} title="New note">＋Note</button>
-        <button onclick={() => startMode("new-folder")} title="New folder">＋Folder</button>
+      <div class="toolbar" role="toolbar" aria-label="Note actions">
+        <button onclick={() => startMode("new-note")} title="New note" aria-label="New note"
+          ><Icon name="file-plus" /></button>
+        <button onclick={() => startMode("new-folder")} title="New folder" aria-label="New folder"
+          ><Icon name="folder-plus" /></button>
         <button
           onclick={startAddChild}
           disabled={selectedNode?.kind !== "leaf"}
           title="Promote the selected note to a folder and add a child note inside it"
-        >＋Child</button>
-        <button onclick={() => startMode("rename")} disabled={!selectedNode}>Rename</button>
-        <button onclick={deleteSelected} disabled={!selectedNode}>Delete</button>
+          aria-label="Add child note"><Icon name="add-child" /></button>
+        <span class="toolbar-sep" aria-hidden="true"></span>
+        <button onclick={() => startMode("rename")} disabled={!selectedNode} title="Rename"
+          aria-label="Rename"><Icon name="pencil" /></button>
+        <button onclick={deleteSelected} disabled={!selectedNode} title="Delete"
+          aria-label="Delete"><Icon name="trash" /></button>
       </div>
       {#if mode !== "none"}
         <div class="name-edit">
@@ -1021,7 +1027,7 @@
           class="banner-dismiss"
           onclick={() => (publishNotice = null)}
           aria-label="Dismiss"
-        >×</button>
+        ><Icon name="x" size={14} /></button>
       </div>
     {/if}
     {#if root && showSyncConflicts}
@@ -1093,7 +1099,7 @@
           title={reading ? "Switch to editing" : "Switch to reading view"}
           aria-label={reading ? "Switch to editing" : "Switch to reading view"}
           aria-pressed={reading}
-        >{reading ? "✏" : "📖"}</button>
+        ><Icon name={reading ? "pencil" : "book-open"} /></button>
       </header>
       {#if conflictDisk !== null}
         <div class="banner" role="alert">
@@ -1153,7 +1159,7 @@
       onclick={() => layout.toggleCollapsed()}
       title="Expand sidebar"
       aria-label="Expand sidebar"
-    >⟩</button>
+    ><Icon name="panel-left-open" /></button>
   {/if}
 </div>
 
@@ -1303,13 +1309,21 @@
     flex: 1;
   }
   .banner-dismiss {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
     border: none;
     background: none;
     color: inherit;
     cursor: pointer;
-    font-size: var(--font-size-ui);
     line-height: 1;
-    padding: 0 var(--sp-1);
+    padding: var(--sp-1);
+    border-radius: var(--radius-s);
+    opacity: 0.7;
+    transition: opacity var(--transition-fast);
+  }
+  .banner-dismiss:hover {
+    opacity: 1;
   }
   .banner {
     display: flex;
@@ -1403,6 +1417,16 @@
   .vault-name:hover {
     background: var(--bg-hover);
   }
+  .vault-name :global(svg) {
+    flex-shrink: 0;
+    color: var(--text-muted);
+  }
+  .vault-label {
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
   .brand {
     flex: 1;
     font-size: var(--font-size-small);
@@ -1495,27 +1519,49 @@
   }
   .toolbar {
     display: flex;
-    flex-wrap: wrap;
+    align-items: center;
     gap: var(--sp-1);
     margin-bottom: var(--sp-2);
   }
   .toolbar button {
-    font: inherit;
-    font-size: var(--font-size-smaller);
-    padding: 2px var(--sp-2);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
     cursor: pointer;
-    color: var(--text-normal);
-    background: var(--bg-primary);
-    border: 1px solid var(--border);
+    color: var(--text-muted);
+    background: none;
+    border: none;
     border-radius: var(--radius-s);
-    transition: background var(--transition-fast);
+    transition:
+      background var(--transition-fast),
+      color var(--transition-fast);
   }
   .toolbar button:hover:not(:disabled) {
     background: var(--bg-hover);
+    color: var(--text-normal);
   }
   .toolbar button:disabled {
-    opacity: 0.4;
+    opacity: 0.35;
     cursor: default;
+  }
+  /* Divides creation actions (note/folder/child) from edit actions (rename/delete). */
+  .toolbar-sep {
+    width: 1px;
+    align-self: stretch;
+    margin: var(--sp-1) var(--sp-1);
+    background: var(--border);
+  }
+  /* Visible keyboard focus for the icon-only chrome controls (quality floor). */
+  .toolbar button:focus-visible,
+  .icon-btn:focus-visible,
+  .expand-btn:focus-visible,
+  .vault-name:focus-visible,
+  .banner-dismiss:focus-visible,
+  .read-toggle:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
   }
   .name-edit {
     display: flex;

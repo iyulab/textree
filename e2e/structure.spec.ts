@@ -26,7 +26,7 @@ test("＋note → create .md on disk + appears in tree", async () => {
   const vault = createTempVault({ "기존.md": "x\n" });
   try {
     await loadVault(page, vault);
-    await page.getByRole("button", { name: "＋Note" }).click();
+    await page.getByRole("button", { name: "New note" }).click();
     await page.locator(".name-input").fill("새노트");
     await page.locator(".name-input").press("Enter");
 
@@ -41,7 +41,7 @@ test("＋folder → create directory on disk", async () => {
   const vault = createTempVault({ "기존.md": "x\n" });
   try {
     await loadVault(page, vault);
-    await page.getByRole("button", { name: "＋Folder" }).click();
+    await page.getByRole("button", { name: "New folder" }).click();
     await page.locator(".name-input").fill("새폴더");
     await page.locator(".name-input").press("Enter");
 
@@ -94,7 +94,7 @@ test("create after vault switch targets new vault — stale selection isolation 
     await expect(page.locator(".cm-content")).toBeVisible();
 
     await loadVault(page, v2); // vault switch — previous selection must be invalidated
-    await page.getByRole("button", { name: "＋Note" }).click();
+    await page.getByRole("button", { name: "New note" }).click();
     await page.locator(".name-input").fill("새것");
     await page.locator(".name-input").press("Enter");
 
@@ -130,7 +130,7 @@ test("＋child → promote leaf then create child note", async () => {
   try {
     await loadVault(page, vault);
     await page.getByRole("treeitem", { name: /부모/ }).click();
-    await page.getByRole("button", { name: "＋Child" }).click();
+    await page.getByRole("button", { name: "Add child note" }).click();
     await page.locator(".name-input").fill("자식");
     await page.locator(".name-input").press("Enter");
 
