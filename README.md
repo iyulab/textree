@@ -99,7 +99,7 @@ my-vault/
 - [x] **Wikilinks** — `[[note]]`, aliases `[[note|label]]`, headings `[[note#heading]]`, block anchors `[[note#^id]]` (Obsidian-compatible syntax); rendered in live preview, click to navigate, with `[[` autocomplete
 - [x] **Backlinks** — a panel listing every note that links to the current one
 - [x] **Obsidian vault interoperability** — open a standard `.md` vault as-is; `.obsidian/` and `.canvas` files are left untouched, and editing is byte-lossless (CRLF line endings are preserved), so two apps can take turns on the same vault
-- [x] **Sync-folder safety** — atomic writes stage in `.textree/tmp/` (out of your content folders, swept on open) so a sync client isn't churned by transient files; and conflicted copies a sync tool leaves behind (OneDrive / Dropbox / Syncthing) are surfaced non-destructively — nothing is changed or deleted, so a divergent edit isn't silently lost
+- [x] **Sync-folder safety** — atomic writes stage in `.textree/tmp/` (out of your content folders, swept on open) so a sync client isn't churned by transient files; and conflicted copies a sync tool leaves behind (Dropbox / Syncthing) are surfaced non-destructively — nothing is changed or deleted, so a divergent edit isn't silently lost
 
 ### In progress — frictionless publish
 

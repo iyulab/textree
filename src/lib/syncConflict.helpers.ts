@@ -28,8 +28,10 @@ export interface SyncConflict {
   source: SyncConflictSource;
 }
 
-// Dropbox (and the same wording OneDrive uses): `name (Someone's conflicted copy 2026-06-18)`.
-// The stable, locale-independent-enough marker across versions is the phrase "conflicted copy".
+// Dropbox: `name (Someone's conflicted copy 2026-06-18)`. The stable, locale-independent-enough
+// marker across versions is the phrase "conflicted copy". (OneDrive does NOT use this wording — it
+// appends the machine name, `name-COMPUTERNAME.ext`, which is too ambiguous to flag safely; see the
+// precision-over-recall note above. So OneDrive's conflict copies are intentionally not surfaced.)
 const DROPBOX_MARKER = /conflicted copy/i;
 // Syncthing: `name.sync-conflict-YYYYMMDD-HHMMSS-DEVICEID.ext`.
 const SYNCTHING_MARKER = /\.sync-conflict-\d{8}-\d{6}/i;
