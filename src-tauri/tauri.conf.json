@@ -36,7 +36,7 @@
       "icons/icon.ico"
     ],
     "windows": {
-      "signCommand": "pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/sign-windows.ps1 \"%1\""
+      "signCommand": "pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/sign-windows.ps1 %1"
     }
   },
   "plugins": {

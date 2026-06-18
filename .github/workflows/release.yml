@@ -19,6 +19,13 @@ jobs:
         with:
           node-version: 22
 
+      # Speeds up recurring builds; on a cold first run a cache is still saved (even if the job
+      # later fails), so a re-trigger finishes well within the Key Vault token TTL (~60-90 min).
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
       - name: Install frontend dependencies
         run: npm ci
 
