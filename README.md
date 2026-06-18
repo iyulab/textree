@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="static/logo.jpg" alt="Textree" width="320">
+</p>
+
 # Textree
 
 > Your own local Notion, living directly on the filesystem.
