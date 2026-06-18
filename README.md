@@ -99,11 +99,16 @@ my-vault/
 - [x] **Wikilinks** — `[[note]]`, aliases `[[note|label]]`, headings `[[note#heading]]`, block anchors `[[note#^id]]` (Obsidian-compatible syntax); rendered in live preview, click to navigate, with `[[` autocomplete
 - [x] **Backlinks** — a panel listing every note that links to the current one
 - [x] **Obsidian vault interoperability** — open a standard `.md` vault as-is; `.obsidian/` and `.canvas` files are left untouched, and editing is byte-lossless (CRLF line endings are preserved), so two apps can take turns on the same vault
+- [x] **Sync-folder safety** — atomic writes stage in `.textree/tmp/` (out of your content folders, swept on open) so a sync client isn't churned by transient files; and conflicted copies a sync tool leaves behind (OneDrive / Dropbox / Syncthing) are surfaced non-destructively — nothing is changed or deleted, so a divergent edit isn't silently lost
 
 ### In progress — frictionless publish
 
 - [x] **Publishing renderer** ([canopy](https://github.com/iyulab/canopy), a separate MIT tool) — `npx canopy build <vault>` turns your tree into a deployable static site today (self-host on GitHub / Cloudflare Pages)
 - [ ] **One-click in-app publish** — a "Publish site…" command (renders via canopy, injecting the app's theme) is wired and verified in development; bundling the renderer into packaged builds for offline one-click publish is in progress
+
+### Done — frontmatter table (read-only)
+
+- [x] **Frontmatter table view** — select a folder to see its child notes as a read-only table: frontmatter keys become sortable columns, one row per note (folder = database, `.md` = row). Built in memory from the notes themselves — no separate database
 
 ### Next — free local AI
 
@@ -112,7 +117,7 @@ my-vault/
 ### Later
 
 - [ ] Tree-topology AI (amplification layer) — search/write scoped by where you are in the tree
-- [ ] frontmatter database / table, board, calendar views
+- [ ] frontmatter database — saved/custom views, filters, board & calendar, inline cell editing
 - [ ] Slash commands / rich block editing
 
 ---

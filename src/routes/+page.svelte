@@ -43,6 +43,9 @@
   import { moveInArray } from "$lib/nav.helpers";
   import { checkForUpdate, type UpdateInfo } from "$lib/updater";
   import UpdateBanner from "$lib/UpdateBanner.svelte";
+  import { detectSyncConflicts } from "$lib/syncConflict.helpers";
+  import { buildFolderTable, type FolderTable } from "$lib/folderTable.helpers";
+  import FolderTableView from "$lib/FolderTable.svelte";
 
   let root = $state<string | null>(null);
   let updateInfo = $state<UpdateInfo | null>(null);
@@ -67,6 +70,15 @@
   let startupError = $state<string | null>(null);
   let publishNotice = $state<{ kind: "ok" | "error"; text: string } | null>(null);
   let showTrash = $state(false);
+
+  // Sync-conflict surfacing — derived from the live tree (no IPC). Non-destructive: we only
+  // flag the duplicate copies a sync tool left behind; the user decides what to do (D18 guard).
+  let syncConflicts = $derived(detectSyncConflicts(tree));
+  let conflictSig = $derived(syncConflicts.map((c) => c.path).join("|"));
+  // Dismissal is keyed by the conflict set's signature, so the banner reappears if a NEW
+  // conflict shows up after the user dismissed an earlier set.
+  let dismissedConflictSig = $state("");
+  let showSyncConflicts = $derived(syncConflicts.length > 0 && conflictSig !== dismissedConflictSig);
 
   // External change (M3) state.
   let reloadVersion = $state(0); // bump on external reload → force Editor re-creation
@@ -251,9 +263,20 @@
 
   async function handleSelect(node: TreeNode) {
     selectedNode = node; // structure-edit target (including folders)
-    if (!root || !node.body_path) return; // do not open containers without a body
+    if (!root) return;
     pendingHeading = null; // a direct open does not scroll to a heading (cleared before the open)
-    await flush(); // preserve unsaved edits of the previous note
+    await flush(); // preserve unsaved edits of the previous note before navigating anywhere
+    if (!node.body_path) {
+      // A container with no folder note → show only its table; clear any stale open note so an
+      // unrelated note doesn't linger above the folder's table.
+      activePath = null;
+      activeName = "";
+      content = "";
+      dirty = false;
+      removed = false;
+      conflictDisk = null;
+      return;
+    }
     content = await readNote(root, node.body_path);
     activeName = node.name;
     activePath = node.body_path;
@@ -669,6 +692,41 @@
     if (root) void rebuildBacklinks();
   });
 
+  // ── Frontmatter table (folder = DB, .md = row) — read-only first slice ────
+  // Built from already-parsed frontmatter (no backend leakage; in-memory, D17). Reads each direct
+  // child note's body once via the existing readNote IPC — same frontend-scan precedent as backlinks.
+  let folderTable = $state<FolderTable | null>(null);
+  async function buildFolderTableFor(node: TreeNode): Promise<void> {
+    const r = root;
+    if (!r) {
+      folderTable = null;
+      return;
+    }
+    const children = node.children.filter((c) => c.kind === "leaf" || c.body_path);
+    const notes = await Promise.all(
+      children.map(async (c) => {
+        const notePath = c.kind === "leaf" ? c.path : (c.body_path as string);
+        const body = await readNote(r, notePath).catch(() => "");
+        return { name: c.name, path: notePath, frontmatter: parseFrontmatter(body).data };
+      }),
+    );
+    // Guard a stale async result: if the selection moved on while we read, don't commit (a slower
+    // earlier read could otherwise overwrite a newer folder's table).
+    if (selectedNode?.path !== node.path) return;
+    folderTable = buildFolderTable(notes);
+  }
+  // Recompute when the selection changes to a folder, or when the tree changes underneath it
+  // (child added/renamed/deleted). Look the node up in the live tree to avoid a stale children ref.
+  $effect(() => {
+    const sel = selectedNode;
+    void tree;
+    if (root && sel && sel.kind === "container") {
+      void buildFolderTableFor(findNode(tree, sel.path) ?? sel);
+    } else {
+      folderTable = null;
+    }
+  });
+
   const actions: PaletteActions = {
     openVault: () => { void chooseVault(); },
     toggleTheme: () => { theme.toggle(); },
@@ -966,6 +1024,27 @@
         >×</button>
       </div>
     {/if}
+    {#if root && showSyncConflicts}
+      <div class="conflict-banner" role="status" aria-label="Possible sync conflicts">
+        <div class="conflict-head">
+          <span>⚠ Possible sync conflicts — your sync tool kept duplicate copies. Nothing was changed; review them.</span>
+          <button
+            class="banner-dismiss"
+            onclick={() => (dismissedConflictSig = conflictSig)}
+            aria-label="Dismiss"
+          >×</button>
+        </div>
+        <ul class="conflict-list">
+          {#each syncConflicts as c (c.path)}
+            <li>
+              <button class="conflict-item" onclick={() => openFileFromPalette(c.path)} title={c.path}>
+                {c.name}
+              </button>
+            </li>
+          {/each}
+        </ul>
+      </div>
+    {/if}
     {#if !root}
       <div class="empty-state">
         <h1 class="empty-brand">Textree</h1>
@@ -1051,8 +1130,14 @@
           />
         </div>
       {/if}
-    {:else}
+    {:else if selectedNode?.kind !== "container"}
       <p class="hint">Select a note.</p>
+    {/if}
+    {#if selectedNode?.kind === "container" && folderTable}
+      <!-- Key by folder path so the (ephemeral) sort state resets when switching folders. -->
+      {#key selectedNode.path}
+        <FolderTableView table={folderTable} onOpen={openFileFromPalette} />
+      {/key}
     {/if}
     {#if showTrash && root}
       <Trash
@@ -1252,6 +1337,45 @@
     color: var(--text-normal);
   }
   .banner-actions button:hover {
+    background: var(--bg-hover);
+  }
+  .conflict-banner {
+    padding: var(--sp-2) var(--sp-3);
+    background: var(--warning-bg);
+    border-bottom: 1px solid var(--warning-border);
+    font-size: var(--font-size-small);
+    color: var(--warning-text);
+  }
+  .conflict-head {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-2);
+  }
+  .conflict-head span {
+    flex: 1;
+  }
+  .conflict-list {
+    list-style: none;
+    margin: var(--sp-1) 0 0;
+    padding: 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--sp-1) var(--sp-2);
+  }
+  .conflict-item {
+    font: inherit;
+    cursor: pointer;
+    padding: 0 var(--sp-2);
+    border: 1px solid var(--warning-border);
+    border-radius: var(--radius-s);
+    background: var(--bg-primary);
+    color: var(--text-normal);
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .conflict-item:hover {
     background: var(--bg-hover);
   }
   /* Vault name (compact header) — click to switch vault. Full path is the title tooltip. */

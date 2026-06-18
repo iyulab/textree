@@ -11,18 +11,38 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Manager, State};
 use tempfile::NamedTempFile;
 
-/// Atomic file write: write to a temp file in the same directory, then rename to the target path.
+/// The staging directory for atomic writes: `<root>/.textree/tmp/`. Confining temp files here
+/// (instead of beside each target) keeps the user's content folders free of transient `.tmpXXXX`
+/// files — a sync client (OneDrive/Dropbox) otherwise churns on every autosave. It stays under the
+/// vault root, so `persist` is still a same-volume rename (atomic); `.textree/` is already excluded
+/// from the tree, search, and the watcher, and is sync-ignorable as one path.
+fn temp_dir(root: &Path) -> PathBuf {
+    root.join(".textree").join("tmp")
+}
+
+/// Best-effort removal of orphaned temp files left under `<root>/.textree/tmp/` — e.g. a crash or
+/// power loss between create and rename. Without this they would linger (and sync) forever. Called
+/// on vault open. Errors are ignored (an in-flight temp held open by another instance simply stays).
+fn clear_temp_dir(root: &Path) {
+    if let Ok(entries) = std::fs::read_dir(temp_dir(root)) {
+        for entry in entries.flatten() {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
+}
+
+/// Atomic file write: write to a temp file under `<root>/.textree/tmp/`, then rename to the target.
 /// Even if a crash/power loss happens mid-write, the target file is not truncated ("the FS is the truth").
-fn atomic_write(path: &Path, content: &str) -> io::Result<()> {
-    let dir = path.parent().ok_or_else(|| {
-        io::Error::new(io::ErrorKind::InvalidInput, "target path has no parent directory")
-    })?;
-    let mut tmp = NamedTempFile::new_in(dir)?;
+fn atomic_write(root: &Path, path: &Path, content: &str) -> io::Result<()> {
+    let dir = temp_dir(root);
+    std::fs::create_dir_all(&dir)?;
+    let mut tmp = NamedTempFile::new_in(&dir)?;
     tmp.write_all(content.as_bytes())?;
     // Flush down to physical storage, not just the OS buffer (fsync). Only then is the
     // content guaranteed after the rename even under power loss — persist alone has no durability.
     tmp.as_file().sync_all()?;
-    // persist is a rename within the same volume, so it is atomic and replaces the existing file.
+    // persist is a rename within the same volume (both under the vault root), so it is atomic and
+    // replaces the existing file.
     tmp.persist(path).map_err(|e| e.error)?;
     Ok(())
 }
@@ -47,7 +67,7 @@ fn ensure_vault_at(base: &Path) -> Result<PathBuf, String> {
     let vault = base.join("Textree");
     std::fs::create_dir_all(&vault).map_err(|e| e.to_string())?;
     if !has_markdown(&vault) {
-        atomic_write(&vault.join("welcome.md"), WELCOME_MD).map_err(|e| e.to_string())?;
+        atomic_write(&vault, &vault.join("welcome.md"), WELCOME_MD).map_err(|e| e.to_string())?;
     }
     Ok(vault)
 }
@@ -126,7 +146,7 @@ fn write_trash_manifest(root: &Path, items: &[TrashItem]) -> Result<(), String> 
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
     let json = serde_json::to_string_pretty(items).map_err(|e| e.to_string())?;
-    atomic_write(&path, &json).map_err(|e| e.to_string())
+    atomic_write(root, &path, &json).map_err(|e| e.to_string())
 }
 
 fn now_secs() -> u64 {
@@ -148,11 +168,12 @@ pub fn read_sidecar(root: String, rel: String) -> Result<Option<String>, String>
 /// `.textree/` is ignored by the watcher (watcher::is_ignored), so self-write registration is unnecessary.
 #[tauri::command]
 pub fn write_sidecar(root: String, rel: String, content: String) -> Result<(), String> {
-    let path = sidecar_path(Path::new(&root), &rel)?;
+    let root_p = Path::new(&root);
+    let path = sidecar_path(root_p, &rel)?;
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
-    atomic_write(&path, &content).map_err(|e| e.to_string())
+    atomic_write(root_p, &path, &content).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -186,7 +207,7 @@ pub fn write_note(
     // Must register "just before" writing: if the watcher receives the event before
     // record runs right after the write hits disk, an echo loop forms (design §4.1).
     self_writes.record(&path, &content);
-    match atomic_write(&path, &content) {
+    match atomic_write(&root, &path, &content) {
         Ok(()) => {
             // The watcher suppresses self-writes, so in-app edits update the index here.
             // An index failure does not fail the save (index = derived cache, graceful).
@@ -213,6 +234,8 @@ pub fn open_vault(
     index: State<'_, Arc<IndexHandle>>,
 ) -> Result<Vec<TreeNode>, String> {
     let root_path = PathBuf::from(&root);
+    // Sweep orphaned atomic-write temps (crash/power-loss leftovers) so they don't linger and sync.
+    clear_temp_dir(&root_path);
     let tree = vault::build_tree(&root_path).map_err(|e| e.to_string())?;
 
     // Install the index (app data directory, per-vault hash). On failure only search is disabled —
@@ -552,19 +575,60 @@ mod tests {
 
     #[test]
     fn atomic_write_replaces_existing_content() {
-        let tmp = TempDir::new().unwrap();
-        let f = tmp.path().join("note.md");
+        let root = TempDir::new().unwrap();
+        let f = root.path().join("note.md");
         std::fs::write(&f, "old").unwrap();
-        atomic_write(&f, "new content").unwrap();
+        atomic_write(root.path(), &f, "new content").unwrap();
         assert_eq!(std::fs::read_to_string(&f).unwrap(), "new content");
     }
 
     #[test]
     fn atomic_write_creates_when_absent() {
-        let tmp = TempDir::new().unwrap();
-        let f = tmp.path().join("fresh.md");
-        atomic_write(&f, "hi").unwrap();
+        let root = TempDir::new().unwrap();
+        let f = root.path().join("fresh.md");
+        atomic_write(root.path(), &f, "hi").unwrap();
         assert_eq!(std::fs::read_to_string(&f).unwrap(), "hi");
+    }
+
+    #[test]
+    fn temp_dir_is_confined_to_dot_textree() {
+        let root = Path::new("/vault");
+        assert_eq!(temp_dir(root), Path::new("/vault/.textree/tmp"));
+    }
+
+    #[test]
+    fn atomic_write_stages_temp_in_dot_textree_not_the_content_dir() {
+        // Temp files must not litter the user's content folders (sync tools churn on them).
+        let root = TempDir::new().unwrap();
+        let notes = root.path().join("notes");
+        std::fs::create_dir(&notes).unwrap();
+        let f = notes.join("foo.md");
+        atomic_write(root.path(), &f, "body").unwrap();
+
+        assert_eq!(std::fs::read_to_string(&f).unwrap(), "body");
+        // The content dir holds only the target — no `.tmpXXXX` sibling left behind.
+        let entries: Vec<_> = std::fs::read_dir(&notes).unwrap().flatten().collect();
+        assert_eq!(entries.len(), 1, "only foo.md, no temp litter");
+        // The staging dir lives under `.textree/` (watcher- and search-excluded; sync-ignorable).
+        assert!(root.path().join(".textree").join("tmp").is_dir());
+    }
+
+    #[test]
+    fn clear_temp_dir_removes_orphaned_temps() {
+        // A crash mid-write can orphan a temp; it would otherwise sync forever. Cleared on open.
+        let root = TempDir::new().unwrap();
+        let tmp = temp_dir(root.path());
+        std::fs::create_dir_all(&tmp).unwrap();
+        std::fs::write(tmp.join(".tmpOrphan"), "stale").unwrap();
+        clear_temp_dir(root.path());
+        assert_eq!(std::fs::read_dir(&tmp).unwrap().flatten().count(), 0);
+    }
+
+    #[test]
+    fn clear_temp_dir_is_graceful_when_absent() {
+        // No temp dir yet (fresh vault) → no error, no panic.
+        let root = TempDir::new().unwrap();
+        clear_temp_dir(root.path());
     }
 
     #[test]
