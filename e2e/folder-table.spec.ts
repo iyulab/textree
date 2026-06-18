@@ -1,5 +1,11 @@
 import { test, expect, type Browser, type Page } from "@playwright/test";
-import { connectToApp, loadVault, createTempVault, removeTempVault } from "./helpers";
+import {
+  connectToApp,
+  loadVault,
+  createTempVault,
+  removeTempVault,
+  readVaultFile,
+} from "./helpers";
 
 /**
  * Frontmatter table (folder = DB, .md = row) — read-only first slice.
@@ -67,6 +73,60 @@ test("folder table: selecting a folder shows its notes' frontmatter as a table",
     // Clicking a row opens that note.
     await table.getByRole("button", { name: "alpha" }).click();
     await expect(page.locator(".note-name")).toContainText("alpha");
+  } finally {
+    removeTempVault(vault);
+  }
+});
+
+test("folder table: filter, save a named view, persist, reselect, delete", async () => {
+  const vault = createTempVault({
+    "tasks/alpha.md": "---\nstatus: done\n---\n# Alpha\n",
+    "tasks/beta.md": "---\nstatus: wip\n---\n# Beta\n",
+    "tasks/gamma.md": "---\nstatus: done\n---\n# Gamma\n",
+  });
+
+  try {
+    await loadVault(page, vault);
+    await page.getByRole("treeitem", { name: /tasks/ }).click();
+
+    const table = page.getByRole("region", { name: "Folder table" });
+    await expect(table).toBeVisible();
+    await expect(table.locator("tbody .row-open")).toHaveText(["alpha", "beta", "gamma"]);
+
+    // Add a filter: status contains "done" → alpha, gamma (beta is wip).
+    await table.getByRole("button", { name: "+ Filter" }).click();
+    await table.getByRole("textbox", { name: "Filter value" }).fill("done");
+    await expect(table.locator("tbody .row-open")).toHaveText(["alpha", "gamma"]);
+
+    // Save the current view as "Done".
+    await table.getByRole("button", { name: "Save view" }).click();
+    await table.getByRole("textbox", { name: "View name" }).fill("Done");
+    await table.getByRole("button", { name: "Save", exact: true }).click();
+
+    // It persists to .textree/views.json on disk (folder-keyed; new IPC 0, reuses write_sidecar).
+    await expect
+      .poll(() => {
+        try {
+          return readVaultFile(vault, ".textree/views.json");
+        } catch {
+          return "";
+        }
+      })
+      .toContain("Done");
+
+    // "All" returns to the unfiltered view.
+    await table.getByRole("button", { name: "All", exact: true }).click();
+    await expect(table.locator("tbody .row-open")).toHaveText(["alpha", "beta", "gamma"]);
+
+    // Reload the vault → the saved view loads from disk and re-applies on click.
+    await loadVault(page, vault);
+    await page.getByRole("treeitem", { name: /tasks/ }).click();
+    await table.getByRole("button", { name: "Done", exact: true }).click();
+    await expect(table.locator("tbody .row-open")).toHaveText(["alpha", "gamma"]);
+
+    // Delete the view → its chip disappears.
+    await table.getByRole("button", { name: "Delete view Done" }).click();
+    await expect(table.getByRole("button", { name: "Done", exact: true })).toHaveCount(0);
   } finally {
     removeTempVault(vault);
   }

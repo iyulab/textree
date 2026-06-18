@@ -45,6 +45,7 @@
   import UpdateBanner from "$lib/UpdateBanner.svelte";
   import { detectSyncConflicts } from "$lib/syncConflict.helpers";
   import { buildFolderTable, type FolderTable } from "$lib/folderTable.helpers";
+  import { views } from "$lib/views.svelte";
   import FolderTableView from "$lib/FolderTable.svelte";
   import Icon from "$lib/Icon.svelte";
 
@@ -154,6 +155,7 @@
     cancelMode();
     backlinks.clear(); // drop the previous vault's index (the $effect below rebuilds it)
     await nav.load(path); // load favorites/order sidecar
+    await views.load(path); // load saved folder views (.textree/views.json)
   }
 
   async function chooseVault() {
@@ -1142,7 +1144,11 @@
     {#if selectedNode?.kind === "container" && folderTable}
       <!-- Key by folder path so the (ephemeral) sort state resets when switching folders. -->
       {#key selectedNode.path}
-        <FolderTableView table={folderTable} onOpen={openFileFromPalette} />
+        <FolderTableView
+          table={folderTable}
+          folder={selectedNode.path}
+          onOpen={openFileFromPalette}
+        />
       {/key}
     {/if}
     {#if showTrash && root}

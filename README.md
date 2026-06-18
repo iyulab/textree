@@ -110,9 +110,10 @@ my-vault/
 - [x] **Publishing renderer** ([canopy](https://github.com/iyulab/canopy), a separate MIT tool) — `npx canopy build <vault>` turns your tree into a deployable static site today (self-host on GitHub / Cloudflare Pages)
 - [ ] **One-click in-app publish** — a "Publish site…" command (renders via canopy, injecting the app's theme) is wired and verified in development; bundling the renderer into packaged builds for offline one-click publish is in progress
 
-### Done — frontmatter table (read-only)
+### Done — frontmatter table & saved views
 
-- [x] **Frontmatter table view** — select a folder to see its child notes as a read-only table: frontmatter keys become sortable columns, one row per note (folder = database, `.md` = row). Built in memory from the notes themselves — no separate database
+- [x] **Frontmatter table view** — select a folder to see its child notes as a table: frontmatter keys become sortable columns, one row per note (folder = database, `.md` = row). Built in memory from the notes themselves — no separate database
+- [x] **Filters & saved views** — filter rows by a field (contains / is / exists / missing), then save the lens as a named view per folder. Views persist to `.textree/views.json` (a regeneratable sidecar — the `.md` frontmatter stays the source of truth). The table is a read-only lens; cell editing is out of scope for now
 
 ### Next — free local AI
 
