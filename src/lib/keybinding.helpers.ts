@@ -1,0 +1,49 @@
+/*
+ * Keybinding pure helpers — matching keyboard events to bindings and formatting them for display.
+ * Bindings are normalized strings: tokens joined by "+", e.g. "mod+n" or "mod+shift+n".
+ * "mod" is the platform accelerator (Ctrl on Windows/Linux, Cmd on macOS); the rest are
+ * "shift"/"alt" modifiers and a single key token. Kept pure (no DOM) so vitest can cover it.
+ */
+
+/** Minimal shape of a KeyboardEvent this module reads (so tests need no real DOM events). */
+export interface KeyEventLike {
+  ctrlKey: boolean;
+  metaKey: boolean;
+  shiftKey: boolean;
+  altKey: boolean;
+  key: string;
+}
+
+function parts(binding: string): string[] {
+  return binding.toLowerCase().split("+");
+}
+
+/** True iff the event exactly satisfies the binding (modifiers must match precisely, not just include). */
+export function matchKeybinding(binding: string, e: KeyEventLike): boolean {
+  const tokens = parts(binding);
+  const needMod = tokens.includes("mod");
+  const needShift = tokens.includes("shift");
+  const needAlt = tokens.includes("alt");
+  const keyToken = tokens.find((t) => t !== "mod" && t !== "shift" && t !== "alt");
+
+  const modOk = needMod ? e.ctrlKey || e.metaKey : !e.ctrlKey && !e.metaKey;
+  return (
+    modOk &&
+    e.shiftKey === needShift &&
+    e.altKey === needAlt &&
+    keyToken !== undefined &&
+    e.key.toLowerCase() === keyToken
+  );
+}
+
+/** Renders a binding as a Windows-first label, e.g. "mod+shift+n" → "Ctrl+Shift+N". */
+export function formatKeybinding(binding: string): string {
+  const tokens = parts(binding);
+  const out: string[] = [];
+  if (tokens.includes("mod")) out.push("Ctrl");
+  if (tokens.includes("shift")) out.push("Shift");
+  if (tokens.includes("alt")) out.push("Alt");
+  const keyToken = tokens.find((t) => t !== "mod" && t !== "shift" && t !== "alt");
+  if (keyToken) out.push(keyToken.length === 1 ? keyToken.toUpperCase() : keyToken);
+  return out.join("+");
+}

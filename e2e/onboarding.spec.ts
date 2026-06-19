@@ -69,6 +69,11 @@ test("first run: onMount auto-opens default vault and seeds welcome.md", async (
     page.getByRole("treeitem", { name: /welcome/i }),
   ).toBeVisible({ timeout: 30_000 });
 
+  // A1: the first note (the seeded welcome) is auto-selected on startup, so the app opens to
+  // content — not the "Select a note." empty hint. The welcome body must be rendered.
+  await expect(page.getByText(/This is your vault/)).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByText("Select a note.")).toHaveCount(0);
+
   // The startup code sets LAST_VAULT_KEY after the vault loads.
   // By the time the treeitem is visible, setItem has already run.
   const stored = await page.evaluate(

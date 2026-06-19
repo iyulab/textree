@@ -3,8 +3,33 @@
  * Separated from nav.svelte.ts (the runes store) to test safely under vitest (node environment).
  */
 
+import type { TreeNode } from "./ipc";
+
 /** Upper bound for the recent list. */
 export const RECENT_MAX = 20;
+
+/**
+ * Finds the first openable note in display order (pure), used to auto-select a note on startup.
+ * "Openable" means body_path is set (a leaf .md, or a container with a folder-note) — matching
+ * handleSelect, which shows only a table for a bodyless container. Walks siblings in the same
+ * merged order the tree renders (respecting nav.order per parent), descending depth-first into
+ * bodyless folders. Returns null when nothing is openable.
+ */
+export function findFirstOpenableNote(
+  nodes: TreeNode[],
+  parentPath: string,
+  order: Record<string, string[]>,
+): TreeNode | null {
+  const ordered = mergeOrder(nodes, order[parentPath] ?? [], (n) => n.path);
+  for (const n of ordered) {
+    if (n.body_path) return n; // openable: leaf or folder-note container
+    if (n.children.length > 0) {
+      const found = findFirstOpenableNote(n.children, n.path, order);
+      if (found) return found;
+    }
+  }
+  return null;
+}
 
 /**
  * Merge-sorts sibling nodes according to the order array (pure function).

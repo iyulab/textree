@@ -39,8 +39,9 @@
   import { palette } from "$lib/paletteStore.svelte";
   import Palette from "$lib/Palette.svelte";
   import { buildCommands, activeCommands, type PaletteActions } from "$lib/commands";
+  import { matchKeybinding } from "$lib/keybinding.helpers";
   import { mergeOrder, nav } from "$lib/nav.svelte";
-  import { moveInArray } from "$lib/nav.helpers";
+  import { moveInArray, findFirstOpenableNote } from "$lib/nav.helpers";
   import { checkForUpdate, type UpdateInfo } from "$lib/updater";
   import UpdateBanner from "$lib/UpdateBanner.svelte";
   import { detectSyncConflicts } from "$lib/syncConflict.helpers";
@@ -829,6 +830,14 @@
     if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === "p") {
       e.preventDefault();
       palette.show();
+      return;
+    }
+    // Global command accelerators (e.g. Ctrl+N new note). Only active commands are matched, so a
+    // disabled command's shortcut is inert. `commands` is already when()-filtered.
+    const cmd = commands.find((c) => c.keybinding && matchKeybinding(c.keybinding, e));
+    if (cmd) {
+      e.preventDefault();
+      void cmd.run();
     }
   }
 
@@ -854,6 +863,13 @@
           await loadVault(await ensureDefaultVault());
         }
         if (root) localStorage.setItem(LAST_VAULT_KEY, root);
+        // Auto-select the first note so the app opens to content instead of the "Select a note."
+        // empty state (wedge1 onboarding). Only reached after a successful load — the catch path
+        // resets root and lands on the empty state, so a failed startup never auto-selects.
+        if (root && !activePath) {
+          const first = findFirstOpenableNote(tree, root, nav.order);
+          if (first) await handleSelect(first);
+        }
       } catch (e) {
         // The stored vault was moved/deleted, or the default could not be created.
         // Do NOT force the default over a user's intended vault — fall back to the empty state.

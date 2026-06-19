@@ -9,6 +9,8 @@ export interface Command {
   run: () => void | Promise<void>;
   /** If false, inactive in the current context (excluded from the list). Always active if omitted. */
   when?: () => boolean;
+  /** Global accelerator (e.g. "mod+n"); wired by the global key handler and shown in the palette. */
+  keybinding?: string;
 }
 
 /** Bundle of app actions the palette invokes. +page.svelte implements and injects them. */
@@ -39,8 +41,8 @@ export function buildCommands(a: PaletteActions): Command[] {
     { id: "view.theme", title: "Toggle theme (light/dark)", run: a.toggleTheme },
     { id: "view.sidebar", title: "Toggle sidebar", run: a.toggleSidebar },
     { id: "view.reading", title: "Toggle reading view", run: a.toggleReading },
-    { id: "note.new", title: "New note (root)", run: a.newNoteAtRoot },
-    { id: "folder.new", title: "New folder (root)", run: a.newFolderAtRoot },
+    { id: "note.new", title: "New note (root)", run: a.newNoteAtRoot, keybinding: "mod+n" },
+    { id: "folder.new", title: "New folder (root)", run: a.newFolderAtRoot, keybinding: "mod+shift+n" },
     { id: "node.rename", title: "Rename selected node", run: a.renameSelected, when: sel },
     { id: "node.delete", title: "Delete selected node", run: a.deleteSelected, when: sel },
     { id: "node.promote", title: "Promote selected node", run: a.promoteSelected, when: sel },

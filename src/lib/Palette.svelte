@@ -2,6 +2,7 @@
   import { palette } from "./paletteStore.svelte";
   import { nav } from "./nav.svelte";
   import { fuzzyMatch, type Match } from "./fuzzy";
+  import { formatKeybinding } from "./keybinding.helpers";
   import type { Command } from "./commands";
   import type { SearchHit } from "./ipc";
 
@@ -166,7 +167,7 @@
           {#each cmdMatches as m, i (m.item.id)}
             <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
             <li
-              class="row"
+              class="row cmd"
               class:sel={i === palette.selected}
               data-testid="palette-item"
               onmousedown={() => {
@@ -178,6 +179,9 @@
                 {#each highlight(m.item.title, m.ranges) as seg}<span class:hl={seg.on}>{seg.t}</span
                   >{/each}
               </span>
+              {#if m.item.keybinding}
+                <kbd class="kbd">{formatKeybinding(m.item.keybinding)}</kbd>
+              {/if}
             </li>
           {/each}
         {:else if palette.mode === "content"}
@@ -262,7 +266,21 @@
     /* --selection-bg: derived from accent alpha (selection highlight) */
     background: var(--selection-bg);
   }
+  /* Command rows lay the title and shortcut hint out horizontally (no .sub second line). */
+  .row.cmd { flex-direction: row; align-items: center; justify-content: space-between; }
   .title { color: var(--text-normal); }
+  /* Keyboard shortcut hint shown next to a command (discoverability). */
+  .kbd {
+    flex-shrink: 0;
+    margin-left: 0.6rem;
+    padding: 0.05rem 0.35rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-s);
+    color: var(--text-muted);
+    font-size: 0.72rem;
+    font-family: inherit;
+    white-space: nowrap;
+  }
   /* Favorite marker in the empty-query file list. */
   .fav-mark { color: var(--accent); margin-right: 0.35em; }
   /* --accent: match highlight */
