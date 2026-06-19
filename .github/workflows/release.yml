@@ -30,6 +30,26 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
+      # Acquire canopy at a pinned commit so the sidecar payload is reproducible.
+      # Bump the ref deliberately when picking up new canopy features.
+      - name: Checkout canopy (pinned)
+        uses: actions/checkout@v4
+        with:
+          repository: iyulab/canopy
+          ref: 26bb78813a6bbfe420d2405f88f88e5015f9f263 # pin; bump deliberately
+          path: canopy-src
+
+      # Builds canopy and copies the output into src-tauri/resources/canopy/
+      # so tauri-action bundles it in the installer (Task 3 resources map).
+      - name: Assemble canopy sidecar
+        shell: pwsh
+        run: pwsh -NoProfile -File scripts/assemble-canopy-sidecar.ps1 -CanopyPath ${{ github.workspace }}/canopy-src
+
+      # Guard: runs the gated integration test (Task 4) to confirm the assembled
+      # payload is complete before the build + sign step consumes it.
+      - name: Verify bundled sidecar publishes
+        run: cargo test --manifest-path src-tauri/Cargo.toml -- --ignored run_publish_via_assembled_sidecar
+
       - name: Azure login (OIDC)
         uses: azure/login@v3
         with:
