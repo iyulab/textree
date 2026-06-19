@@ -36,6 +36,23 @@ pub struct CanopyInvocation {
     pub prefix_args: Vec<OsString>,
 }
 
+/// Resolves the bundled canopy sidecar (mechanism B) from a Tauri resource directory. The payload
+/// lives under `<resource>/canopy/`: a pinned `node` runtime plus canopy's `cli.js`. Returns the
+/// invocation `node cli.js`, or `None` if either piece is missing (e.g. an unbundled dev build).
+pub fn canopy_from_resource_dir(resource: &Path) -> Option<CanopyInvocation> {
+    let dir = resource.join("canopy");
+    let node = dir.join(if cfg!(windows) { "node.exe" } else { "node" });
+    let cli = dir.join("cli.js");
+    if node.exists() && cli.exists() {
+        Some(CanopyInvocation {
+            program: node.into_os_string(),
+            prefix_args: vec![cli.into_os_string()],
+        })
+    } else {
+        None
+    }
+}
+
 /// Canonicalizes the longest existing ancestor of `p` and re-appends the non-existing tail, so a
 /// not-yet-created output directory can still be compared against the vault for containment.
 fn resolve_existing_prefix(p: &Path) -> Result<PathBuf, String> {
@@ -205,6 +222,30 @@ mod tests {
         std::fs::write(sub.join("idea.html"), "").unwrap();
         std::fs::write(sub.join("image.png"), "").unwrap();
         assert_eq!(count_html_pages(tmp.path()), 2);
+    }
+
+    #[test]
+    fn canopy_from_resource_dir_finds_bundled_node_and_cli() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().join("canopy");
+        std::fs::create_dir(&dir).unwrap();
+        let node_name = if cfg!(windows) { "node.exe" } else { "node" };
+        std::fs::write(dir.join(node_name), "").unwrap();
+        std::fs::write(dir.join("cli.js"), "").unwrap();
+
+        let inv = canopy_from_resource_dir(tmp.path()).expect("should resolve");
+        assert_eq!(inv.program, dir.join(node_name).into_os_string());
+        assert_eq!(inv.prefix_args, vec![dir.join("cli.js").into_os_string()]);
+    }
+
+    #[test]
+    fn canopy_from_resource_dir_none_when_incomplete() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().join("canopy");
+        std::fs::create_dir(&dir).unwrap();
+        // cli.js present but node missing -> not resolvable.
+        std::fs::write(dir.join("cli.js"), "").unwrap();
+        assert!(canopy_from_resource_dir(tmp.path()).is_none());
     }
 
     /// Runtime integration: actually spawn canopy (via node) and prove the Rust wiring end-to-end —

@@ -497,8 +497,8 @@ pub fn rebuild_index(
 }
 
 /// Resolves how to invoke canopy. Dev/E2E: the `TEXTREE_CANOPY_CLI` env var (path to the CLI script
-/// or exe) — a `.js` path is run via `node`. Production: the bundled single-exe sidecar in the
-/// resource dir (its build/bundling lands in a later cycle).
+/// or exe) — a `.js` path is run via `node`. Production: the bundled canopy sidecar (`node` +
+/// `cli.js`) under `<resource>/canopy/`.
 fn resolve_canopy(app: &AppHandle) -> Result<crate::publish::CanopyInvocation, String> {
     use crate::publish::CanopyInvocation;
     if let Ok(p) = std::env::var("TEXTREE_CANOPY_CLI") {
@@ -512,9 +512,8 @@ fn resolve_canopy(app: &AppHandle) -> Result<crate::publish::CanopyInvocation, S
         return Ok(CanopyInvocation { program: path.into_os_string(), prefix_args: vec![] });
     }
     let resource = app.path().resource_dir().map_err(|e| e.to_string())?;
-    let exe = resource.join(if cfg!(windows) { "canopy.exe" } else { "canopy" });
-    if exe.exists() {
-        return Ok(CanopyInvocation { program: exe.into_os_string(), prefix_args: vec![] });
+    if let Some(inv) = crate::publish::canopy_from_resource_dir(&resource) {
+        return Ok(inv);
     }
     Err("the canopy renderer is not available (set TEXTREE_CANOPY_CLI in dev, or bundle the sidecar)"
         .into())
