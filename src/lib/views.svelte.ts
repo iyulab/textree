@@ -17,7 +17,12 @@
  */
 
 import { readSidecar, writeSidecar } from "./ipc";
-import { removeView, upsertView, type ViewDefinition } from "./view.helpers";
+import {
+  findForeignViewFolders,
+  removeView,
+  upsertView,
+  type ViewDefinition,
+} from "./view.helpers";
 
 const VIEWS_FILE = "views.json";
 
@@ -26,11 +31,18 @@ class ViewsStore {
   private all = $state<Record<string, ViewDefinition[]>>({});
   /** Current vault root (target of persist IPC). null means not loaded. */
   private root: string | null = null;
+  /**
+   * Stored folder keys that don't belong to the current vault root (vault moved or opened on
+   * another device). Surfaced as a non-destructive notice so the views don't appear to vanish
+   * silently. The saved data is untouched — this is detection only.
+   */
+  foreignFolders = $state<string[]>([]);
 
   /** Called on vault open/switch — reloads saved views from the sidecar. */
   async load(root: string): Promise<void> {
     this.root = root;
     this.all = (await readJson<Record<string, ViewDefinition[]>>(root, VIEWS_FILE)) ?? {};
+    this.foreignFolders = findForeignViewFolders(Object.keys(this.all), root);
   }
 
   /** Saved views for a folder, in saved order (empty if none). */

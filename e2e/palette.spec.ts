@@ -72,6 +72,23 @@ test("palette command mode: Ctrl+P → type '>theme' → Enter → theme toggles
   await expect(html).toHaveAttribute("data-theme", opposite(before));
 });
 
+test("palette no-results: a query with no matches shows a 'No matches found' status row", async () => {
+  await loadVault(page, sampleVaultPath());
+
+  await page.keyboard.press("Control+p");
+  await expect(page.getByTestId("palette-overlay")).toBeVisible();
+
+  // A query that matches no file — distinguishes a settled "no matches" from a silent empty list.
+  await page.getByTestId("palette-input").type("zzzznomatchqqq");
+
+  await expect(page.getByTestId("palette-empty")).toBeVisible();
+  // The status row is NOT counted as a selectable item (separate testid → no false matches).
+  await expect(page.getByTestId("palette-item")).toHaveCount(0);
+
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("palette-overlay")).toHaveCount(0);
+});
+
 test("palette Esc: Esc while open → overlay closes", async () => {
   await page.keyboard.press("Control+p");
   await expect(page.getByTestId("palette-overlay")).toBeVisible();

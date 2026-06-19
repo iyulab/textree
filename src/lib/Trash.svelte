@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import { listTrash, restoreNode, purgeTrash, type TrashItem } from "./ipc";
   import { sortTrash, formatDeletedAt, originLabel } from "./trash.helpers";
+  import { friendlyError, type FriendlyError } from "./friendlyError.helpers";
 
   let {
     root,
@@ -17,6 +18,9 @@
   } = $props();
 
   let items = $state<TrashItem[]>([]);
+  // Surface restore/purge failures instead of swallowing them to the console — a silent
+  // no-op on a destructive/recovery action reads as "nothing happened" (data-safety visibility).
+  let actionError = $state<FriendlyError | null>(null);
 
   /** Last component of a path (file/folder name), separator-tolerant. */
   function displayName(p: string): string {
@@ -28,35 +32,38 @@
     try {
       items = sortTrash(await listTrash(root));
     } catch (e) {
-      console.error("listTrash failed", e);
+      actionError = friendlyError(e);
     }
   }
 
   async function handleRestore(trashName: string) {
+    actionError = null;
     try {
       await restoreNode(root, trashName);
       onrestored();
       await refresh();
     } catch (e) {
-      console.error("restoreNode failed", e);
+      actionError = friendlyError(e);
     }
   }
 
   async function handlePurge(trashName: string) {
+    actionError = null;
     try {
       await purgeTrash(root, trashName);
       await refresh();
     } catch (e) {
-      console.error("purgeTrash failed", e);
+      actionError = friendlyError(e);
     }
   }
 
   async function handleEmpty() {
+    actionError = null;
     try {
       await purgeTrash(root);
       await refresh();
     } catch (e) {
-      console.error("purgeTrash (empty) failed", e);
+      actionError = friendlyError(e);
     }
   }
 
@@ -70,6 +77,10 @@
     <h2 class="trash-title">Trash</h2>
     <button class="close-btn" onclick={onclose} aria-label="Close trash">×</button>
   </header>
+
+  {#if actionError}
+    <p class="trash-error" role="status" title={actionError.raw !== actionError.summary ? actionError.raw : undefined} data-testid="trash-error">⚠ {actionError.summary}</p>
+  {/if}
 
   {#if items.length === 0}
     <p class="empty-state">Trash is empty</p>
@@ -149,6 +160,14 @@
     font-size: var(--font-size-small);
     margin: 0;
     padding: var(--sp-2) 0;
+  }
+  .trash-error {
+    color: var(--text-error);
+    font-size: var(--font-size-smaller);
+    margin: 0 0 var(--sp-2);
+    padding: var(--sp-1) var(--sp-2);
+    border-radius: var(--radius-s);
+    background: var(--bg-secondary-alt);
   }
   .trash-list {
     list-style: none;

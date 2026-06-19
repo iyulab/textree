@@ -3,6 +3,7 @@
   import { nav } from "./nav.svelte";
   import { fuzzyMatch, type Match } from "./fuzzy";
   import { formatKeybinding } from "./keybinding.helpers";
+  import { paletteListState } from "./palette.helpers";
   import type { Command } from "./commands";
   import type { SearchHit } from "./ipc";
 
@@ -46,22 +47,36 @@
   // Content search uses the backend IPC (async) — debounce + apply only the last response (race prevention).
   let contentHits = $state<SearchHit[]>([]);
   let searchSeq = 0;
+  // True while a content query is debouncing/in flight — lets the list distinguish "searching"
+  // from a settled "no matches" (both would otherwise render zero rows).
+  let searching = $state(false);
 
   $effect(() => {
     if (palette.mode !== "content") {
       contentHits = [];
+      searching = false;
       return;
     }
     const term = palette.term;
     if (term === "") {
       contentHits = [];
+      searching = false;
       return;
     }
+    searching = true;
     const seq = ++searchSeq;
     const t = setTimeout(() => {
-      void onSearchContent(term).then((hits) => {
-        if (seq === searchSeq) contentHits = hits; // apply only the latest request
-      });
+      void onSearchContent(term)
+        .then((hits) => {
+          if (seq === searchSeq) {
+            contentHits = hits; // apply only the latest request
+            searching = false;
+          }
+        })
+        .catch(() => {
+          // On a search failure, clear the in-flight flag so the row doesn't stick on "Searching…".
+          if (seq === searchSeq) searching = false;
+        });
     }, 120);
     return () => clearTimeout(t);
   });
@@ -72,6 +87,9 @@
       : palette.mode === "command"
         ? cmdMatches.length
         : contentHits.length,
+  );
+  let listState = $derived(
+    paletteListState({ mode: palette.mode, term: palette.term, count, searching }),
   );
 
   function highlight(text: string, ranges: [number, number][]): { t: string; on: boolean }[] {
@@ -205,6 +223,11 @@
             </li>
           {/each}
         {/if}
+        {#if listState === "searching"}
+          <li class="status-row" role="status">Searching…</li>
+        {:else if listState === "no-results"}
+          <li class="status-row" role="status" data-testid="palette-empty">No matches found</li>
+        {/if}
       </ul>
     </div>
   </div>
@@ -288,4 +311,11 @@
   /* --text-muted: secondary path text */
   .sub { color: var(--text-muted); font-size: 0.8rem; }
   .snippet { color: var(--text-normal); font-size: 0.85rem; }
+  /* Non-interactive status row (searching / no matches) — muted, not selectable. */
+  .status-row {
+    padding: 0.4rem 0.6rem;
+    color: var(--text-muted);
+    font-size: 0.85rem;
+    cursor: default;
+  }
 </style>

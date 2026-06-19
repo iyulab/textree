@@ -65,3 +65,18 @@ test("publish renders the vault to an auto-theming static site, source untouched
     removeTempVault(out);
   }
 });
+
+test("publish into the vault is rejected with friendly, actionable guidance", async () => {
+  // Publishing into the vault itself violates the read-only-outward boundary (D13). canopy is
+  // resolved before the boundary check, so this (like the test above) needs TEXTREE_CANOPY_CLI.
+  // The raw backend error ("the output directory must be outside the vault") is rewritten by
+  // friendlyError to actionable guidance — verifies the domain string matches the mapping key.
+  const vault = createTempVault({ "note.md": "# Hi\n" });
+  try {
+    await loadVault(page, vault);
+    await publishTo(page, vault);
+    await expect(page.locator(".publish-banner.error")).toContainText("outside your vault");
+  } finally {
+    removeTempVault(vault);
+  }
+});

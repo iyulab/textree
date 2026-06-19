@@ -49,6 +49,8 @@
   import { views } from "$lib/views.svelte";
   import FolderTableView from "$lib/FolderTable.svelte";
   import Icon from "$lib/Icon.svelte";
+  import { friendlyError, type FriendlyError } from "$lib/friendlyError.helpers";
+  import { NO_VAULT_HINT, NO_VAULT_PROMPT, NO_NOTE_PROMPT } from "$lib/emptyState";
 
   let root = $state<string | null>(null);
   let updateInfo = $state<UpdateInfo | null>(null);
@@ -69,9 +71,9 @@
   // other open so a later plain navigation does not re-scroll).
   let pendingHeading = $state<string | null>(null);
   let dirty = $state(false);
-  let saveError = $state<string | null>(null);
+  let saveError = $state<FriendlyError | null>(null);
   let startupError = $state<string | null>(null);
-  let publishNotice = $state<{ kind: "ok" | "error"; text: string } | null>(null);
+  let publishNotice = $state<{ kind: "ok" | "error"; text: string; detail?: string } | null>(null);
   let showTrash = $state(false);
 
   // Sync-conflict surfacing — derived from the live tree (no IPC). Non-destructive: we only
@@ -83,6 +85,11 @@
   let dismissedConflictSig = $state("");
   let showSyncConflicts = $derived(syncConflicts.length > 0 && conflictSig !== dismissedConflictSig);
 
+  // Saved views whose folder key doesn't belong to this vault root (moved vault / other device).
+  // Surfaced so the views don't appear to silently vanish; reset per vault load.
+  let dismissedForeignViews = $state(false);
+  let showForeignViews = $derived(views.foreignFolders.length > 0 && !dismissedForeignViews);
+
   // External change (M3) state.
   let reloadVersion = $state(0); // bump on external reload → force Editor re-creation
   let removed = $state(false); // open note was externally deleted/moved
@@ -92,7 +99,7 @@
   let selectedNode = $state<TreeNode | null>(null);
   let mode = $state<"none" | "new-note" | "new-folder" | "rename">("none");
   let nameInput = $state("");
-  let opError = $state<string | null>(null);
+  let opError = $state<FriendlyError | null>(null);
   // Explicit create-target override (e.g. new container after leaf promote). When set, used instead of selection-based inference.
   let createParent = $state<string | null>(null);
 
@@ -123,8 +130,8 @@
       }
       saveError = null;
     } catch (e) {
-      // Keep pending → retryable. Surface to the user.
-      saveError = String(e);
+      // Keep pending → retryable. Surface to the user (friendly summary, raw kept for diagnosis).
+      saveError = friendlyError(e);
     }
   }
 
@@ -157,6 +164,7 @@
     backlinks.clear(); // drop the previous vault's index (the $effect below rebuilds it)
     await nav.load(path); // load favorites/order sidecar
     await views.load(path); // load saved folder views (.textree/views.json)
+    dismissedForeignViews = false; // re-evaluate the foreign-views notice for the new vault
   }
 
   async function chooseVault() {
@@ -181,7 +189,12 @@
         text: `Published ${result.pageCount} page(s) → ${result.outDir}. Upload this folder to GitHub Pages or Cloudflare Pages to put it online.`,
       };
     } catch (e) {
-      publishNotice = { kind: "error", text: `Publish failed: ${String(e)}` };
+      const fe = friendlyError(e);
+      publishNotice = {
+        kind: "error",
+        text: `Publish failed: ${fe.summary}`,
+        detail: fe.raw !== fe.summary ? fe.raw : undefined,
+      };
     }
   }
 
@@ -234,7 +247,7 @@
     if (!node) return;
     await flush(); // preserve unsaved edits before rename
     if (pending) {
-      saveError = "Rename canceled — could not save your unsaved edits.";
+      saveError = friendlyError("Rename canceled — could not save your unsaved edits.");
       return;
     }
     try {
@@ -249,7 +262,7 @@
       selectedNode = null;
       opError = null;
     } catch (e) {
-      opError = String(e);
+      opError = friendlyError(e);
     }
   }
 
@@ -380,7 +393,7 @@
     const leaf = selectedNode.path;
     await flush(); // preserve current edits before promote
     if (pending) {
-      opError = "Operation canceled — could not save your unsaved edits.";
+      opError = friendlyError("Operation canceled — could not save your unsaved edits.");
       return;
     }
     const wasActive = activePath !== null && samePath(activePath, leaf);
@@ -392,7 +405,7 @@
       selectedNode = null;
       startMode("new-note", newDir); // target the new container
     } catch (e) {
-      opError = String(e);
+      opError = friendlyError(e);
     }
   }
 
@@ -409,7 +422,7 @@
     if (!name) return;
     await flush(); // preserve current edits before structure change
     if (pending) {
-      opError = "Operation canceled — could not save your unsaved edits.";
+      opError = friendlyError("Operation canceled — could not save your unsaved edits.");
       return;
     }
     try {
@@ -438,7 +451,7 @@
       nameInput = "";
       createParent = null;
     } catch (e) {
-      opError = String(e); // keep mode/createParent → retryable with the same target
+      opError = friendlyError(e); // keep mode/createParent → retryable with the same target
     }
   }
 
@@ -448,7 +461,7 @@
     const affectsOpen = activePath !== null && pathInside(activePath, target);
     await flush();
     if (pending) {
-      opError = "Delete canceled — could not save your unsaved edits.";
+      opError = friendlyError("Delete canceled — could not save your unsaved edits.");
       return;
     }
     try {
@@ -458,7 +471,7 @@
       selectedNode = null;
       opError = null;
     } catch (e) {
-      opError = String(e);
+      opError = friendlyError(e);
     }
   }
 
@@ -471,12 +484,12 @@
     if (samePath(src, destDir)) return; // dropped onto itself — no-op
     if (samePath(parentDir(src), destDir)) return; // already in that folder — no-op
     if (pathInside(destDir, src)) {
-      opError = "Cannot move a node into its own subfolder.";
+      opError = friendlyError("Cannot move a node into its own subfolder.");
       return;
     }
     await flush(); // preserve current edits before move
     if (pending) {
-      opError = "Move canceled — could not save your unsaved edits.";
+      opError = friendlyError("Move canceled — could not save your unsaved edits.");
       return;
     }
     const affectsOpen = activePath !== null && pathInside(activePath, src);
@@ -488,7 +501,7 @@
       selectedNode = null;
       opError = null;
     } catch (e) {
-      opError = String(e);
+      opError = friendlyError(e);
     }
   }
 
@@ -501,12 +514,12 @@
     if (!root) return;
     if (samePath(src, leaf)) return; // dropped onto itself — no-op
     if (pathInside(leaf, src)) {
-      opError = "Cannot move a node into its own descendant.";
+      opError = friendlyError("Cannot move a node into its own descendant.");
       return;
     }
     await flush();
     if (pending) {
-      opError = "Operation canceled — could not save your unsaved edits.";
+      opError = friendlyError("Operation canceled — could not save your unsaved edits.");
       return;
     }
     const wasActiveLeaf = activePath !== null && samePath(activePath, leaf);
@@ -525,7 +538,7 @@
       selectedNode = null;
       opError = null;
     } catch (e) {
-      opError = String(e);
+      opError = friendlyError(e);
     }
   }
 
@@ -540,7 +553,7 @@
       saveError = null;
       return `![](${rel})`;
     } catch (e) {
-      saveError = String(e);
+      saveError = friendlyError(e);
       return null;
     }
   }
@@ -991,7 +1004,10 @@
         </div>
       {/if}
       {#if opError}
-        <p class="op-error">⚠ {opError}</p>
+        <p
+          class="op-error"
+          title={opError.raw !== opError.summary ? opError.raw : undefined}
+        >⚠ {opError.summary}</p>
       {/if}
       <!-- Dropping outside a node (empty area) moves it to the vault root. Node drops are stopPropagation'd.
            This area is the "vault root drop zone" wrapping the tree, so it is marked as a group. -->
@@ -1023,7 +1039,7 @@
         />
       </div>
     {:else}
-      <p class="hint">No vault is open.</p>
+      <p class="hint">{NO_VAULT_HINT}</p>
     {/if}
   </aside>
   <div
@@ -1040,7 +1056,7 @@
     {/if}
     {#if publishNotice}
       <div class="publish-banner {publishNotice.kind}" role="status">
-        <span>{publishNotice.kind === "ok" ? "✓" : "⚠"} {publishNotice.text}</span>
+        <span title={publishNotice.detail}>{publishNotice.kind === "ok" ? "✓" : "⚠"} {publishNotice.text}</span>
         <button
           class="banner-dismiss"
           onclick={() => (publishNotice = null)}
@@ -1069,10 +1085,22 @@
         </ul>
       </div>
     {/if}
+    {#if root && showForeignViews}
+      <div class="conflict-banner" role="status" aria-label="Saved views from another location">
+        <div class="conflict-head">
+          <span>⚠ {views.foreignFolders.length} saved table view group(s) were created in a different vault location and aren't shown here. Saved views are tied to the folder path, so moving the vault or opening it on another device unlinks them. Nothing was deleted.</span>
+          <button
+            class="banner-dismiss"
+            onclick={() => (dismissedForeignViews = true)}
+            aria-label="Dismiss"
+          >×</button>
+        </div>
+      </div>
+    {/if}
     {#if !root}
       <div class="empty-state">
         <h1 class="empty-brand">Textree</h1>
-        <p class="empty-sub">Open a local Markdown vault to get started.</p>
+        <p class="empty-sub">{NO_VAULT_PROMPT}</p>
         <button class="open-cta" onclick={chooseVault}>Open vault</button>
         {#if startupError}
           <p class="status error">⚠ Could not open vault: {startupError}</p>
@@ -1105,7 +1133,10 @@
           {/if}
         </span>
         {#if saveError}
-          <span class="status error">⚠ Save failed: {saveError}</span>
+          <span
+            class="status error"
+            title={saveError.raw !== saveError.summary ? saveError.raw : undefined}
+          >⚠ Save failed: {saveError.summary}</span>
         {:else if removed}
           <span class="status error">⚠ Moved/deleted externally</span>
         {:else}
@@ -1155,7 +1186,7 @@
         </div>
       {/if}
     {:else if selectedNode?.kind !== "container"}
-      <p class="hint">Select a note.</p>
+      <p class="hint">{NO_NOTE_PROMPT}</p>
     {/if}
     {#if selectedNode?.kind === "container" && folderTable}
       <!-- Key by folder path so the (ephemeral) sort state resets when switching folders. -->

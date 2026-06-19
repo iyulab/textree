@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { FolderTable, FolderTableRow } from "./folderTable.helpers";
 import {
   applyView,
+  findForeignViewFolders,
   matchesFilters,
   removeView,
   upsertView,
@@ -154,5 +155,45 @@ describe("upsertView / removeView", () => {
 
   it("removing a missing name is a no-op", () => {
     expect(removeView([v("A")], "Z").map((x) => x.name)).toEqual(["A"]);
+  });
+});
+
+describe("findForeignViewFolders", () => {
+  it("returns nothing when every stored key lives under the current vault root", () => {
+    const keys = ["D:/vault/diary", "D:/vault/sub/notes"];
+    expect(findForeignViewFolders(keys, "D:/vault")).toEqual([]);
+  });
+
+  it("flags keys that belong to a different absolute location (vault moved / other device)", () => {
+    const keys = ["C:/old-vault/diary", "D:/vault/diary"];
+    expect(findForeignViewFolders(keys, "D:/vault")).toEqual(["C:/old-vault/diary"]);
+  });
+
+  it("normalizes mixed path separators before comparing (Windows backslashes)", () => {
+    // views.json keys can mix separators (e.g. `D:/vault\diary`); root may use backslashes
+    const keys = ["D:/vault\\diary"];
+    expect(findForeignViewFolders(keys, "D:\\vault")).toEqual([]);
+  });
+
+  it("does not flag the root folder itself", () => {
+    expect(findForeignViewFolders(["D:/vault"], "D:/vault")).toEqual([]);
+  });
+
+  it("tolerates a trailing slash on the root", () => {
+    expect(findForeignViewFolders(["D:/vault/diary"], "D:/vault/")).toEqual([]);
+  });
+
+  it("treats a sibling folder with a shared prefix as foreign (not a real descendant)", () => {
+    // "D:/vault2" starts with "D:/vault" textually but is a different folder
+    expect(findForeignViewFolders(["D:/vault2/diary"], "D:/vault")).toEqual(["D:/vault2/diary"]);
+  });
+
+  it("treats drive-letter / path case differences as the same location (Windows is case-insensitive)", () => {
+    // root from openVault and keys from selectedNode.path can differ only in case — not foreign
+    expect(findForeignViewFolders(["D:/Vault/Diary"], "d:/vault")).toEqual([]);
+  });
+
+  it("returns nothing for an empty key set", () => {
+    expect(findForeignViewFolders([], "D:/vault")).toEqual([]);
   });
 });

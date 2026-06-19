@@ -255,6 +255,7 @@
           }}
           tabindex="-1"
           aria-label={fav ? "Remove from favorites" : "Add to favorites"}
+          title={fav ? "Remove from favorites" : "Add to favorites"}
           aria-pressed={fav}
         ><Icon name="star" size={14} /></button>
       </div>

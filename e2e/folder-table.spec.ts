@@ -120,6 +120,10 @@ test("folder table: filter, save a named view, persist, reselect, delete", async
 
     // Reload the vault → the saved view loads from disk and re-applies on click.
     await loadVault(page, vault);
+    // The view was saved with THIS vault's own folder key, so reopening the SAME vault must NOT
+    // raise the "foreign views" notice (guards against path-shape false positives — drive-letter
+    // case, separators, canonicalization between openVault's root and the stored selectedNode.path).
+    await expect(page.locator('[aria-label="Saved views from another location"]')).toHaveCount(0);
     await page.getByRole("treeitem", { name: /tasks/ }).click();
     await table.getByRole("button", { name: "Done", exact: true }).click();
     await expect(table.locator("tbody .row-open")).toHaveText(["alpha", "gamma"]);
@@ -127,6 +131,36 @@ test("folder table: filter, save a named view, persist, reselect, delete", async
     // Delete the view → its chip disappears.
     await table.getByRole("button", { name: "Delete view Done" }).click();
     await expect(table.getByRole("button", { name: "Done", exact: true })).toHaveCount(0);
+  } finally {
+    removeTempVault(vault);
+  }
+});
+
+test("folder table: saved views from a different vault location surface a dismissible notice", async () => {
+  // Pre-seed views.json with a key that belongs to ANOTHER absolute location (vault moved or
+  // opened on another device). The views can't resolve here, so instead of vanishing silently
+  // the app raises a non-destructive notice. The saved data is never rewritten or deleted.
+  const foreignKey = "C:/some-old-location/tasks";
+  const vault = createTempVault({
+    "tasks/alpha.md": "---\nstatus: done\n---\n# Alpha\n",
+    ".textree/views.json": JSON.stringify({
+      [foreignKey]: [
+        { version: 1, name: "Old", folder: foreignKey, columns: null, sort: null, filters: [] },
+      ],
+    }),
+  });
+  const banner = page.locator('[aria-label="Saved views from another location"]');
+
+  try {
+    await loadVault(page, vault);
+    await expect(banner).toBeVisible();
+
+    // Dismissible (D18: non-destructive — surface + let the user decide).
+    await banner.getByRole("button", { name: "Dismiss" }).click();
+    await expect(banner).toHaveCount(0);
+
+    // The foreign view data is still on disk, untouched.
+    expect(readVaultFile(vault, ".textree/views.json")).toContain("some-old-location");
   } finally {
     removeTempVault(vault);
   }
