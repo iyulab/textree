@@ -4,10 +4,10 @@
 
 # Textree
 
-> Your own local Notion, living directly on the filesystem.
+> A pretty, free, local-first note app — Notion's polish and Obsidian's ownership, living directly on your filesystem.
 
-**Textree** mirrors the Notion experience, but as a **local-only desktop app** instead of a SaaS.
-There is no separate database — **the local filesystem itself is the single source of truth**.
+**Textree** gives you tidy, good-looking notes **by default**, a tree that mirrors your folders, and **one-click web publishing** — all as plain `.md` files on your own disk.
+There is no separate database and no cloud lock-in: **the local filesystem itself is the single source of truth**.
 The tree view on the left maps to your folder structure, and the editor on the right syncs **bidirectionally, 1:1** with the underlying markdown files.
 
 Your notes are not trapped in some cloud table. They sit right on your disk, as ordinary `.md` files.
@@ -19,14 +19,26 @@ Your notes are not trapped in some cloud table. They sit right on your disk, as 
 **Text** — pure, unprocessed text. Not bound to any database; an `.md` file that opens in Notepad even after you delete the app.
 **Tree** — mirrors your filesystem's folder/directory tree. Scattered notes grow into a single tree of knowledge.
 
-True to its name, Textree is **plain text on top of a tree-structured filesystem**.
+True to its name, Textree is **plain text on top of a tree-structured filesystem** — absorbing what's good about Notion (no-code databases, a tidy result) and Obsidian (local files, full ownership, portability), on a single-user, offline, MIT core that is **free forever**.
+
+---
+
+## What makes it different
+
+Three things Notion and Obsidian each do only halfway, or skip on purpose:
+
+- **Pretty by default** — opinionated defaults (title, an emoji icon, a typographic scale, consistent spacing) so a note looks tidy *without* you styling anything. Notion's free tier gates polish; Obsidian hands you raw tools and expects you to theme them. Textree just looks reasonable out of the box.
+- **Free local AI** *(planned)* — a small local model by default, with graceful degradation: editing, the tree, and search all work fully without it. Elevate with your own API key (or an OpenAI-compatible endpoint) when you want more. No mandatory subscription to make AI useful.
+- **Frictionless publish** — turn your tree into a clean, read-only static website in one move (via [canopy](https://github.com/iyulab/canopy)). Local notes, on the web, without surrendering the local-source-of-truth model.
+
+> The folder tree is a **structural principle** — the basis for scope and organization — not a feature sold on its own.
 
 ---
 
 ## Core Philosophy
 
 1. **The filesystem is the database.**
-   No hidden DB, no index files, no proprietary format. Folders are folders, notes are `.md` files.
+   No hidden DB, no proprietary format. Folders are folders, notes are `.md` files. (Indexes are regeneratable caches, never the source of truth.)
 2. **Full ownership.**
    Delete the app and your data remains. Open it with VS Code, Obsidian, `vim`, or `cat` — it just reads.
 3. **Offline-first, privacy-first.**
@@ -35,6 +47,8 @@ True to its name, Textree is **plain text on top of a tree-structured filesystem
    Edit a file in an external editor and the app reflects it instantly; edit in the app and it writes to disk instantly. On conflict, **the filesystem always wins.**
 5. **No lock-in.**
    You can pick up your folder and leave at any time.
+6. **Configuration-minimal.**
+   Sensible defaults work immediately; settings reveal themselves only when you need them (progressive disclosure) — Obsidian's expressiveness, Notion's zero-setup start.
 
 ---
 
@@ -78,52 +92,49 @@ my-vault/
 
 ## Features
 
-### Done — MVP + design foundation + local search
+### Editing & navigation
 
-- [x] Open / switch workspace (root folder)
-- [x] Real-time bidirectional sync between folders and the tree view (file watcher)
-- [x] Markdown editor (CodeMirror 6 live preview)
-- [x] Create / rename / move / delete / promote notes → instantly reflected on the filesystem
-- [x] Drag-and-drop tree reordering
-- [x] Paste an image → stored locally + linked via relative path
-- [x] Full-text search (local index, no DB) and a unified command palette / quick switcher
-- [x] Dark/light theme, keyboard navigation, accessibility (ARIA)
+- Markdown editor with live preview (CodeMirror 6)
+- Real-time, bidirectional sync between your folders and the tree view (file watcher)
+- Create / rename / move / delete / promote notes → reflected on the filesystem instantly
+- Drag-and-drop tree reordering
+- Paste an image → stored locally + linked via a relative path
+- Full-text search (local index, no DB) and a unified command palette / quick switcher
+- Dark/light theme, keyboard navigation, accessibility (ARIA)
 
-### Done — pretty-by-default
+### Pretty by default
 
-- [x] **Frontmatter page header** — `title` + emoji `icon` render as a tidy page header above the editor; the raw YAML folds into a compact "properties" pill while you edit (the source `.md` is never rewritten)
-- [x] **Opinionated typography** — a modular heading scale (h1–h6) with spacing-token vertical rhythm, so an unstyled note looks tidy by default
-- [x] **Reading view** — a one-toggle, clean read-only render (all markdown markers hidden, frontmatter folded)
-- [x] **Favorites** — star a note straight from the tree; favorites surface in the tree and at the top of the command palette
+- **Frontmatter page header** — `title` + emoji `icon` render as a tidy page header above the editor; the raw YAML folds into a compact "properties" pill while you edit (the source `.md` is never rewritten)
+- **Opinionated typography** — a modular heading scale (h1–h6) with spacing-token vertical rhythm, so an unstyled note looks tidy by default
+- **Reading view** — a one-toggle, clean read-only render (all markdown markers hidden, frontmatter folded)
+- **Favorites** — star a note straight from the tree; favorites surface in the tree and at the top of the command palette
 
-> Cover banners and image (non-emoji) icons are planned — they need the Tauri asset protocol to display local files.
+### Wikilinks & Obsidian interoperability
 
-### Done — wikilinks & Obsidian interoperability
+- **Wikilinks** — `[[note]]`, aliases `[[note|label]]`, headings `[[note#heading]]`, block anchors `[[note#^id]]` (Obsidian-compatible syntax); rendered in live preview, click to navigate, with `[[` autocomplete
+- **Backlinks** — a panel listing every note that links to the current one
+- **Obsidian vault interoperability** — open a standard `.md` vault as-is; `.obsidian/` and `.canvas` files are left untouched, and editing is byte-lossless (CRLF line endings are preserved), so two apps can take turns on the same vault
+- **Sync-folder safety** — atomic writes stage in `.textree/tmp/` (out of your content folders, swept on open) so a sync client isn't churned by transient files; and conflicted copies a sync tool leaves behind (Dropbox / Syncthing) are surfaced non-destructively — nothing is changed or deleted, so a divergent edit isn't silently lost
 
-- [x] **Wikilinks** — `[[note]]`, aliases `[[note|label]]`, headings `[[note#heading]]`, block anchors `[[note#^id]]` (Obsidian-compatible syntax); rendered in live preview, click to navigate, with `[[` autocomplete
-- [x] **Backlinks** — a panel listing every note that links to the current one
-- [x] **Obsidian vault interoperability** — open a standard `.md` vault as-is; `.obsidian/` and `.canvas` files are left untouched, and editing is byte-lossless (CRLF line endings are preserved), so two apps can take turns on the same vault
-- [x] **Sync-folder safety** — atomic writes stage in `.textree/tmp/` (out of your content folders, swept on open) so a sync client isn't churned by transient files; and conflicted copies a sync tool leaves behind (Dropbox / Syncthing) are surfaced non-destructively — nothing is changed or deleted, so a divergent edit isn't silently lost
+### Frontmatter database
 
-### In progress — frictionless publish
+- **Table view** — select a folder to see its child notes as a table: frontmatter keys become sortable columns, one row per note (folder = database, `.md` = row). Built in memory from the notes themselves — no separate database
+- **Filters & saved views** — filter rows by a field (contains / is / exists / missing), then save the lens as a named view per folder. Views persist to `.textree/views.json` (a regeneratable sidecar — the `.md` frontmatter stays the source of truth). The table is a read-only lens
 
-- [x] **Publishing renderer** ([canopy](https://github.com/iyulab/canopy), a separate MIT tool) — `npx canopy build <vault>` turns your tree into a deployable static site today (self-host on GitHub / Cloudflare Pages)
-- [ ] **One-click in-app publish** — a "Publish site…" command (renders via canopy, injecting the app's theme) is wired and verified in development; bundling the renderer into packaged builds for offline one-click publish is in progress
+### Publishing
 
-### Done — frontmatter table & saved views
+- **Static-site publishing** via [canopy](https://github.com/iyulab/canopy) (a separate MIT tool) — `npx canopy build <vault>` turns your tree into a deployable, read-only static site today (self-host on GitHub / Cloudflare Pages). One-click in-app publish (rendering via canopy with the app's theme) is being wired into packaged builds.
 
-- [x] **Frontmatter table view** — select a folder to see its child notes as a table: frontmatter keys become sortable columns, one row per note (folder = database, `.md` = row). Built in memory from the notes themselves — no separate database
-- [x] **Filters & saved views** — filter rows by a field (contains / is / exists / missing), then save the lens as a named view per folder. Views persist to `.textree/views.json` (a regeneratable sidecar — the `.md` frontmatter stays the source of truth). The table is a read-only lens; cell editing is out of scope for now
+---
 
-### Next — free local AI
+## Roadmap
 
-- [ ] **Free local AI + bring-your-own API key** — a local model by default (graceful degradation: editing/tree/search work without it), cloud elevation with your own key
+Directions, not promises — the local, single-user core stays free and works without any of these:
 
-### Later
-
-- [ ] Tree-topology AI (amplification layer) — search/write scoped by where you are in the tree
-- [ ] frontmatter database — saved/custom views, filters, board & calendar, inline cell editing
-- [ ] Slash commands / rich block editing
+- **Free local AI + bring-your-own key** — a local model by default (graceful degradation), cloud elevation with your own API key or OpenAI-compatible endpoint
+- **Tree-scoped AI** — search and writing scoped by where you are in the tree; an amplification layer you see and click to control
+- **Cover banners & image icons** — pending the Tauri asset protocol (today: text/emoji icons render; image-based ones are skipped)
+- **Richer block editing** — slash commands, board & calendar views, inline cell editing
 
 ---
 
@@ -136,10 +147,11 @@ my-vault/
 | Offline         | Limited             | Fully supported                  |
 | Data ownership  | Vendor-locked       | 100% owned by you                |
 | Format          | Proprietary / needs export | Standard markdown, portable as-is |
-| Collaboration   | Real-time multi-user | Single user (work around with Git, etc.) |
+| Out-of-the-box polish | Polished, but cloud-bound | Pretty by default, on local files |
+| Collaboration   | Real-time multi-user | Single user (share a vault via a sync folder if you like) |
 | External tools  | Low compatibility   | Compatible with every markdown tool |
 
-> Textree trades collaboration for **ownership, portability, and transparency** — a clear positioning of "Notion, just for me."
+> Textree trades real-time collaboration for **ownership, portability, and transparency** — then adds pretty-by-default and one-click publish on top. A Notion you actually own.
 
 ---
 
