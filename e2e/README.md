@@ -59,6 +59,11 @@ npm run test:e2e
   `.md` byte-unchanged, self-host banner). Requires the app to be launched with
   `TEXTREE_CANOPY_CLI` set to canopy's CLI (e.g. `../canopy/dist/cli.js`) so the backend can spawn it.
 
+  > The dev E2E drives publish via `TEXTREE_CANOPY_CLI` (the dev resolution branch). The **production**
+  > path — the bundled `node + cli.js` sidecar under the resource dir — is guarded by the Rust
+  > integration test `run_publish_via_assembled_sidecar` (run after assembling the payload; CI runs it
+  > in the release build). See `scripts/assemble-canopy-sidecar.ps1`.
+
 ## Notes
 
 - `smoke.spec.ts` and `palette.spec.ts` depend on a local `sample-vault/` (gitignored). The rest
