@@ -29,8 +29,10 @@ pub struct PublishResult {
     pub out_dir: String,
 }
 
-/// How to invoke canopy: a program plus any fixed leading args. In production the program is the
-/// bundled single-exe sidecar (empty prefix); in dev/E2E it is `node` with the CLI script path.
+/// How to invoke canopy: a program plus any fixed leading args. In production
+/// (`canopy_from_resource_dir`) the program is the bundled pinned `node` runtime and `prefix_args`
+/// holds the `cli.js` path; in dev/E2E (`TEXTREE_CANOPY_CLI`) it is `node` with the CLI script
+/// path, or a standalone exe.
 pub struct CanopyInvocation {
     pub program: OsString,
     pub prefix_args: Vec<OsString>,
