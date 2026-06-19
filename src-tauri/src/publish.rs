@@ -248,6 +248,36 @@ mod tests {
         assert!(canopy_from_resource_dir(tmp.path()).is_none());
     }
 
+    /// Production-path guard: resolve canopy from the *assembled* sidecar payload (node + cli.js +
+    /// node_modules under `src-tauri/resources/canopy/`) and actually publish a vault through it,
+    /// proving the bundled payload renders AND leaves the source `.md` byte-unchanged (D13). Ignored
+    /// by default because it requires the payload — run `scripts/assemble-canopy-sidecar.ps1` first,
+    /// then `cargo test -- --ignored run_publish_via_assembled_sidecar`. CI does both (release.yml).
+    #[test]
+    #[ignore = "requires assembled canopy sidecar payload (run scripts/assemble-canopy-sidecar.ps1)"]
+    fn run_publish_via_assembled_sidecar() {
+        // resource dir = src-tauri/resources (the helper appends `canopy/`).
+        let resource = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources");
+        let canopy = canopy_from_resource_dir(&resource)
+            .expect("assembled payload missing — run scripts/assemble-canopy-sidecar.ps1");
+
+        let tmp = TempDir::new().unwrap();
+        let vault = tmp.path().join("vault");
+        std::fs::create_dir(&vault).unwrap();
+        let note = vault.join("hello.md");
+        let source = "# Hello\n\nworld\n";
+        std::fs::write(&note, source).unwrap();
+        let out = tmp.path().join("site");
+
+        let result = run_publish(&vault, &out, &PublishOptions { site_title: None, tokens_css: None }, &canopy)
+            .expect("publish should succeed via the assembled sidecar");
+
+        assert!(result.page_count >= 1, "expected at least one published page");
+        assert!(out.join("hello.html").exists(), "expected hello.html in the output");
+        // D13: the source vault note is untouched.
+        assert_eq!(std::fs::read_to_string(&note).unwrap(), source);
+    }
+
     /// Runtime integration: actually spawn canopy (via node) and prove the Rust wiring end-to-end —
     /// the arg vector, the temp-file -> subprocess handoff (a Windows file-sharing risk), exit
     /// status, AND that the source vault is byte-unchanged (D13 read-only). Ignored by default
