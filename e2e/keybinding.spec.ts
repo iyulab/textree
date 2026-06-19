@@ -46,6 +46,24 @@ test("Ctrl+N opens the new-note name editor", async () => {
   await expect(page.locator(".name-input")).toHaveCount(0);
 });
 
+test("Ctrl+N is suppressed while typing in the name input (no clobbering the in-progress action)", async () => {
+  await loadVault(page, sampleVaultPath());
+
+  // Enter new-note mode and start typing a name.
+  await page.keyboard.press("Control+n");
+  const input = page.locator(".name-input");
+  await expect(input).toBeVisible();
+  await input.fill("draft-name");
+
+  // Pressing Ctrl+N again *while the input is focused* must NOT restart new-note mode (which would
+  // reset the field). The window handler skips the accelerator for form-field targets. Guards that.
+  await input.press("Control+n");
+  await expect(input).toHaveValue("draft-name");
+
+  await input.press("Escape");
+  await expect(page.locator(".name-input")).toHaveCount(0);
+});
+
 test("Ctrl+N is suppressed while the palette is open (no layered editor)", async () => {
   await loadVault(page, sampleVaultPath());
 

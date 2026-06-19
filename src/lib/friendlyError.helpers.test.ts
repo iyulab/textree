@@ -21,6 +21,18 @@ describe("friendlyError", () => {
     expect(r.summary).toMatch(/disk space/i);
   });
 
+  it("does not mistake a higher OS error code for not-found (os error 2 prefix collision)", () => {
+    // "os error 21" / "os error 267" contain "os error 2" as a prefix — they must NOT be
+    // mislabeled as the not-found rule. Unrecognized codes pass through verbatim.
+    const notDir = friendlyError("Not a directory (os error 21)");
+    expect(notDir.summary).not.toMatch(/could not be found/i);
+    expect(notDir.summary).toBe("Not a directory (os error 21)");
+
+    const badDir = friendlyError("The directory name is invalid. (os error 267)");
+    expect(badDir.summary).not.toMatch(/could not be found/i);
+    expect(badDir.summary).toBe("The directory name is invalid. (os error 267)");
+  });
+
   it("maps a name-collision domain error to a friendly summary", () => {
     const r = friendlyError("an item with the same name already exists");
     expect(r.summary).toMatch(/already exists/i);

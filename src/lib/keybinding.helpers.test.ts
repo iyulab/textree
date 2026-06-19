@@ -1,5 +1,10 @@
 import { expect, test } from "vitest";
-import { matchKeybinding, formatKeybinding, type KeyEventLike } from "./keybinding.helpers";
+import {
+  matchKeybinding,
+  formatKeybinding,
+  isFormFieldTag,
+  type KeyEventLike,
+} from "./keybinding.helpers";
 
 const ev = (over: Partial<KeyEventLike>): KeyEventLike => ({
   ctrlKey: false,
@@ -42,4 +47,17 @@ test("matchKeybinding: rejects a different key", () => {
 test("formatKeybinding: renders a Windows-first label", () => {
   expect(formatKeybinding("mod+n")).toBe("Ctrl+N");
   expect(formatKeybinding("mod+shift+n")).toBe("Ctrl+Shift+N");
+});
+
+test("isFormFieldTag: native form controls suppress accelerators", () => {
+  expect(isFormFieldTag("INPUT")).toBe(true);
+  expect(isFormFieldTag("textarea")).toBe(true); // case-insensitive
+  expect(isFormFieldTag("SELECT")).toBe(true);
+});
+
+test("isFormFieldTag: the editor and other elements do not (editor Ctrl+N is intentional)", () => {
+  expect(isFormFieldTag("DIV")).toBe(false); // contenteditable editor host
+  expect(isFormFieldTag("BUTTON")).toBe(false);
+  expect(isFormFieldTag(null)).toBe(false);
+  expect(isFormFieldTag(undefined)).toBe(false);
 });

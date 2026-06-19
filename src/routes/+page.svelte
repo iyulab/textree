@@ -39,7 +39,7 @@
   import { palette } from "$lib/paletteStore.svelte";
   import Palette from "$lib/Palette.svelte";
   import { buildCommands, activeCommands, type PaletteActions } from "$lib/commands";
-  import { matchKeybinding } from "$lib/keybinding.helpers";
+  import { matchKeybinding, isFormFieldTag } from "$lib/keybinding.helpers";
   import { mergeOrder, nav } from "$lib/nav.svelte";
   import { moveInArray, findFirstOpenableNote } from "$lib/nav.helpers";
   import { checkForUpdate, type UpdateInfo } from "$lib/updater";
@@ -845,6 +845,10 @@
       palette.show();
       return;
     }
+    // Don't let a command accelerator fire while the user is typing in a form field (the
+    // rename / new-name input) — Ctrl+N there would clobber the in-progress action. The editor
+    // (contenteditable) is intentionally not excluded: starting a new note while writing is the point.
+    if (e.target instanceof HTMLElement && isFormFieldTag(e.target.tagName)) return;
     // Global command accelerators (e.g. Ctrl+N new note). Only active commands are matched, so a
     // disabled command's shortcut is inert. `commands` is already when()-filtered.
     const cmd = commands.find((c) => c.keybinding && matchKeybinding(c.keybinding, e));

@@ -19,19 +19,23 @@ interface Rule {
 }
 
 // Order matters only when substrings could overlap; current rules are disjoint enough.
+// Numeric "os error N" tokens keep their trailing ")" so a code matches whole, not as a prefix of
+// a longer one — without it "os error 2" would also fire on "os error 21" / "os error 267". Rust
+// renders raw OS errors as "<message> (os error N)", so the ")" is always present; the text
+// substrings are the cross-platform fallback when the numeric form is absent.
 const RULES: Rule[] = [
   {
-    match: ["os error 13", "permission denied", "access is denied"],
+    match: ["os error 13)", "permission denied", "access is denied"],
     summary:
       "You don't have permission to write here. Check that the file or folder isn't read-only or open in another program.",
   },
   {
-    match: ["os error 28", "no space left"],
+    match: ["os error 28)", "no space left"],
     summary: "There isn't enough disk space to finish this. Free up some space and try again.",
   },
   {
     // os error 2 (unix) / os error 3 (windows: path not found)
-    match: ["os error 2", "os error 3", "no such file or directory", "cannot find the path"],
+    match: ["os error 2)", "os error 3)", "no such file or directory", "cannot find the path"],
     summary:
       "The file or folder could not be found. It may have been moved or deleted outside the app.",
   },

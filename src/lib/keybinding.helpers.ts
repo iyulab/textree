@@ -36,6 +36,17 @@ export function matchKeybinding(binding: string, e: KeyEventLike): boolean {
   );
 }
 
+/**
+ * True for native form controls where a global command accelerator must be suppressed: typing a
+ * name into the rename / new-name `<input>` must not let Ctrl+N clobber the in-progress action.
+ * Deliberately does NOT cover contenteditable — the editor is a valid place to fire "new note"
+ * (starting a note while writing is the shortcut's purpose), so the editor stays unguarded.
+ */
+export function isFormFieldTag(tagName: string | null | undefined): boolean {
+  const t = (tagName ?? "").toUpperCase();
+  return t === "INPUT" || t === "TEXTAREA" || t === "SELECT";
+}
+
 /** Renders a binding as a Windows-first label, e.g. "mod+shift+n" → "Ctrl+Shift+N". */
 export function formatKeybinding(binding: string): string {
   const tokens = parts(binding);
