@@ -3,6 +3,7 @@ use std::io::{BufRead, BufReader, Write};
 use std::net::TcpListener;
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone, Serialize)]
@@ -49,6 +50,7 @@ pub struct HostHandle {
     status: Mutex<HostStatusCell>,
     port: Mutex<Option<u16>>,
     child: Mutex<Option<Child>>,
+    generation: AtomicU64,
 }
 
 impl HostHandle {
@@ -90,7 +92,8 @@ pub fn spawn_host(handle: Arc<HostHandle>, exe: String, app_data: std::path::Pat
         .env("ASPNETCORE_URLS", &url)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    // .exe vs a node-style launcher: if exe ends in .dll, prepend `dotnet`.
+    // TODO(lifecycle): the published host is framework-dependent — caller must ensure
+    // DOTNET_ROOT is set or publish self-contained, else the exe fails to launch.
     let mut child = match cmd.spawn() {
         Ok(c) => c,
         Err(e) => {
@@ -106,14 +109,17 @@ pub fn spawn_host(handle: Arc<HostHandle>, exe: String, app_data: std::path::Pat
     *handle.child.lock().unwrap_or_else(|e| e.into_inner()) = Some(child);
     handle.set_status(HostStatus::Starting);
 
+    let my_gen = handle.generation.fetch_add(1, Ordering::SeqCst) + 1;
     let h = handle.clone();
-    std::thread::spawn(move || poll_health(h, url));
+    std::thread::spawn(move || poll_health(h, url, my_gen));
 }
 
 fn drain_utf8(stream: Option<impl std::io::Read + Send + 'static>, log: std::path::PathBuf) {
     let Some(stream) = stream else { return };
     std::thread::spawn(move || {
-        let _ = std::fs::create_dir_all(log.parent().unwrap());
+        if let Some(parent) = log.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
         let mut file = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
@@ -128,7 +134,7 @@ fn drain_utf8(stream: Option<impl std::io::Read + Send + 'static>, log: std::pat
     });
 }
 
-fn poll_health(handle: Arc<HostHandle>, base: String) {
+fn poll_health(handle: Arc<HostHandle>, base: String, my_gen: u64) {
     let start = Instant::now();
     let mut announced = false;
     while start.elapsed() < HEALTH_CEILING {
@@ -140,6 +146,9 @@ fn poll_health(handle: Arc<HostHandle>, base: String) {
             if let Ok(body) = resp.into_string() {
                 if let Some(h) = parse_health(&body) {
                     if h.embedder_ready {
+                        if handle.generation.load(Ordering::SeqCst) != my_gen {
+                            return;
+                        }
                         handle.set_status(HostStatus::Ready);
                         return;
                     }
@@ -153,6 +162,9 @@ fn poll_health(handle: Arc<HostHandle>, base: String) {
             );
         }
     }
+    if handle.generation.load(Ordering::SeqCst) != my_gen {
+        return;
+    }
     handle.set_status(HostStatus::Unavailable);
 }
 
@@ -161,6 +173,10 @@ fn poll_health(handle: Arc<HostHandle>, base: String) {
 // ---------------------------------------------------------------------------
 
 pub fn shutdown_host(handle: &HostHandle) {
+    // Invalidate any in-flight poll thread before we proceed; this ensures that a
+    // poll thread whose /health response arrives after we return cannot overwrite
+    // the Unavailable status we set at the end of this function.
+    handle.generation.fetch_add(1, Ordering::SeqCst);
     if let Some(base) = handle.base_url() {
         let _ = ureq::post(&format!("{base}/shutdown"))
             .timeout(Duration::from_millis(800))
@@ -231,5 +247,9 @@ mod tests {
         }
         assert!(matches!(handle.status(), HostStatus::Ready));
         shutdown_host(&handle);
+        assert!(
+            matches!(handle.status(), HostStatus::Unavailable),
+            "status must be Unavailable after shutdown (generation-gate fix)"
+        );
     }
 }
