@@ -177,7 +177,8 @@ public sealed class VaultManager : IDisposable
     public async Task<IReadOnlyList<SearchHit>> SearchAsync(
         string vaultPath, string query, string scopePath, int limit, CancellationToken ct = default)
     {
-        var vault = EnsureVault(vaultPath);
+        var fullVaultPath = Path.GetFullPath(vaultPath);
+        var vault = EnsureVault(fullVaultPath);
         var options = new VaultSearchOptions
         {
             TopK = limit,
@@ -190,7 +191,11 @@ public sealed class VaultManager : IDisposable
         var result = await vault.SearchAsync(query, options, ct);
         return result.Items
             .Select(i => new SearchHit(
-                i.SourcePath,
+                // Return vault-relative POSIX path (e.g. "notes/x.md") rather than the
+                // absolute Windows path stored in the vector index. The Rust/frontend layers
+                // expect vault-relative POSIX paths: absolute paths break self-exclusion in
+                // the Related notes panel and note navigation from semantic search hits.
+                Path.GetRelativePath(fullVaultPath, i.SourcePath).Replace('\\', '/'),
                 Snippet(i.Content),
                 i.Score))
             .ToList();

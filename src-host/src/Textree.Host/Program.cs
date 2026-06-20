@@ -8,7 +8,13 @@ using Textree.Host.Rag;
 // respond on first-run model download (connection-refused → retry). No
 // background-load mechanism needed (YAGNI).
 var opts = new TextreeHostOptions();
-var model = await LocalEmbedder.LoadAsync(opts.EmbeddingModel);
+// Force CPU execution provider: DirectML (the default Auto provider) crashes during
+// inference on this hardware ("LayerNormalization DmlExecutionProvider 0x80070057")
+// and does not fall back to CPU automatically. e5-small is fast enough on CPU for
+// the latencies Textree needs, so CPU is the robust production choice here.
+var model = await LocalEmbedder.LoadAsync(
+    opts.EmbeddingModel,
+    new EmbedderOptions { Provider = LMSupply.ExecutionProvider.Cpu });
 var embedder = new LmSupplyEmbeddingService(model);
 
 // ── DI / builder ──────────────────────────────────────────────────────────────

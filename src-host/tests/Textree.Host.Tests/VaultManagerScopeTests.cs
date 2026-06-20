@@ -30,8 +30,9 @@ public class VaultManagerScopeTests
 
         var sub = await mgr.SearchAsync(vault, "payment refund", Path.Combine(vault, "sub"), 10, default);
         Assert.NotEmpty(sub);
-        Assert.All(sub, h => Assert.Contains(
-            $"{Path.DirectorySeparatorChar}sub{Path.DirectorySeparatorChar}", h.SourcePath));
+        // SearchAsync returns vault-relative POSIX paths (e.g. "sub/sub-note.md"), so the
+        // separator is always '/' regardless of host OS. Assert on POSIX sub-path prefix.
+        Assert.All(sub, h => Assert.StartsWith("sub/", h.SourcePath));
 
         var root = await mgr.SearchAsync(vault, "payment refund", vault, 10, default);
         Assert.Contains(root, h => h.SourcePath.Contains("sub-note"));
