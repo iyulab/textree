@@ -3,6 +3,13 @@ using LMSupply.Embedder;
 
 namespace Textree.Host.Rag;
 
+// NOTE: FluxIndex.Providers.LMSupply.LMSupplyEmbeddingService exists but signature diverged at 0.13.19;
+// revisit. The published adapter (FluxIndex.Providers.LMSupply.Services.LMSupplyEmbeddingService) does
+// not expose a public Dimensions property — only GetEmbeddingDimension() via the interface.
+// VaultManager depends on .Dimensions directly (EmbedderReady and SQLite vector dimension), so
+// dropping this hand-rolled adapter would require refactoring VaultManager as well. Keeping hand-rolled
+// until the published adapter aligns or VaultManager is updated to use GetEmbeddingDimension().
+
 /// <summary>
 /// Adapts LMSupply's <see cref="IEmbeddingModel"/> to FluxIndex's
 /// <c>FluxIndex.Core.Application.Interfaces.IEmbeddingService</c> via the

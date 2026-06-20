@@ -5,5 +5,12 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <LangVersion>latest</LangVersion>
+    <!-- TODO: remove once SQLitePCLRaw ships a patched SQLitePCLRaw.lib.e_sqlite3 (>2.1.11).
+         No patched version exists as of 2026-06-20; tracked: https://github.com/advisories/GHSA-2m69-gcr7-jv3q
+         The transitive pull-in path is Microsoft.Data.Sqlite -> SQLitePCLRaw.bundle_e_sqlite3 -> SQLitePCLRaw.lib.e_sqlite3 2.1.11.
+         Applied solution-wide (Directory.Build.props) because both Textree.Host and Textree.Host.Tests
+         transitively resolve the vulnerable package and NU1903 is project-local — NoWarn in a single csproj
+         would still fail restore for the other project. -->
+    <NoWarn>$(NoWarn);NU1903</NoWarn>
   </PropertyGroup>
 </Project>
