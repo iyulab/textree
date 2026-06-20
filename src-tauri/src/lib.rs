@@ -24,6 +24,15 @@ pub fn run() {
             #[cfg(windows)]
             app.handle()
                 .plugin(tauri_plugin_updater::Builder::new().build())?;
+            // Spawn the local AI host when TEXTREE_HOST_EXE is set (dev/production opt-in).
+            // If the env var is absent the handle stays Unavailable — graceful degradation.
+            if let Ok(exe) = std::env::var("TEXTREE_HOST_EXE") {
+                use tauri::Manager;
+                let handle = app.state::<std::sync::Arc<HostHandle>>().inner().clone();
+                if let Ok(app_data) = app.path().app_data_dir() {
+                    host::spawn_host(handle, exe, app_data);
+                }
+            }
             Ok(())
         })
         // Managed via Arc so the watcher thread and the write_note command share one registry.

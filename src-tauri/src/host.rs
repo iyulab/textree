@@ -261,6 +261,36 @@ pub fn semantic_search(
 }
 
 // ---------------------------------------------------------------------------
+// Step 5: Fire-and-forget indexing helpers
+// ---------------------------------------------------------------------------
+
+/// Fire-and-forget single-note index. Silent on any error (degrade, don't block).
+/// Content-immutable background work — auto-allowed per D18.
+pub fn index_note(handle: &HostHandle, vault: &str, path: &str) {
+    let Some(base) = handle.base_url() else { return };
+    if !matches!(handle.status(), HostStatus::Ready) {
+        return;
+    }
+    let payload = serde_json::json!({ "vaultPath": vault, "path": path });
+    let _ = ureq::post(&format!("{base}/index"))
+        .timeout(Duration::from_secs(10))
+        .send_json(payload);
+}
+
+/// Fire-and-forget full vault reindex. Silent on any error (degrade, don't block).
+/// Content-immutable background work — auto-allowed per D18.
+pub fn reindex_vault(handle: &HostHandle, vault: &str) {
+    let Some(base) = handle.base_url() else { return };
+    if !matches!(handle.status(), HostStatus::Ready) {
+        return;
+    }
+    let payload = serde_json::json!({ "vaultPath": vault });
+    let _ = ureq::post(&format!("{base}/reindex"))
+        .timeout(Duration::from_secs(10))
+        .send_json(payload);
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 

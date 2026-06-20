@@ -1,3 +1,4 @@
+use crate::host;
 use crate::pathsafe::is_within;
 use crate::search::{IndexHandle, IndexState, SearchHit};
 use crate::self_write::SelfWrites;
@@ -198,6 +199,7 @@ pub fn write_note(
     content: String,
     self_writes: State<'_, Arc<SelfWrites>>,
     index: State<'_, Arc<IndexHandle>>,
+    host: State<'_, Arc<host::HostHandle>>,
 ) -> Result<(), String> {
     let root = PathBuf::from(root);
     let path = PathBuf::from(path);
@@ -214,6 +216,12 @@ pub fn write_note(
             if let Some(state) = index.0.lock().unwrap_or_else(|e| e.into_inner()).as_mut() {
                 let _ = state.index_note(&root, &path, &content);
             }
+            // Background semantic index (content-immutable; auto-allowed per D18).
+            let host_arc = host.inner().clone();
+            let (v, p) = (root.to_string_lossy().to_string(), path.to_string_lossy().to_string());
+            tauri::async_runtime::spawn_blocking(move || {
+                host::index_note(&host_arc, &v, &p);
+            });
             Ok(())
         }
         Err(e) => {
@@ -232,6 +240,7 @@ pub fn open_vault(
     self_writes: State<'_, Arc<SelfWrites>>,
     watcher_handle: State<'_, WatcherHandle>,
     index: State<'_, Arc<IndexHandle>>,
+    host: State<'_, Arc<host::HostHandle>>,
 ) -> Result<Vec<TreeNode>, String> {
     let root_path = PathBuf::from(&root);
     // Sweep orphaned atomic-write temps (crash/power-loss leftovers) so they don't linger and sync.
@@ -262,6 +271,13 @@ pub fn open_vault(
             *index.0.lock().unwrap_or_else(|e| e.into_inner()) = None;
         }
     }
+
+    // Background semantic reindex (content-immutable; auto-allowed per D18).
+    let host_arc = host.inner().clone();
+    let vault_str = root.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        host::reindex_vault(&host_arc, &vault_str);
+    });
 
     // Explicitly drop the previous watcher (stop watching) before starting the new one, so that
     // on a vault switch leftover events from the old vault don't bleed into the new vault's processing.
