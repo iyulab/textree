@@ -138,6 +138,11 @@
           ? semanticHits.length
           : contentHits.length,
   );
+  // True while in semantic mode and the host is known to be not ready. Used to suppress
+  // the generic "Searching…" / "No matches found" status rows (the ai-unavailable row takes over).
+  let aiNotReady = $derived(
+    palette.mode === "semantic" && hostState !== null && hostState !== "ready",
+  );
   let listState = $derived(
     paletteListState({ mode: palette.mode, term: palette.term, count, searching }),
   );
@@ -300,9 +305,9 @@
             {/each}
           {/if}
         {/if}
-        {#if listState === "searching"}
+        {#if !aiNotReady && listState === "searching"}
           <li class="status-row" role="status">Searching…</li>
-        {:else if listState === "no-results"}
+        {:else if !aiNotReady && listState === "no-results"}
           <li class="status-row" role="status" data-testid="palette-empty">No matches found</li>
         {/if}
       </ul>
