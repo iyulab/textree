@@ -33,6 +33,8 @@ tantivy = "0.22"
 # 볼트 루트 경로 → 인덱스 디렉터리 식별 해시.
 sha2 = "0.10"
 tauri-plugin-process = "2.3.1"
+# Lightweight blocking HTTP for loopback sidecar health-check; no TLS needed.
+ureq = { version = "2.10", features = ["json"] }
 
 [target."cfg(windows)".dependencies]
 tauri-plugin-updater = "2.10.1"

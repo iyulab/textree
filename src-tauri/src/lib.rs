@@ -1,4 +1,5 @@
 pub(crate) mod commands;
+pub(crate) mod host;
 pub(crate) mod fs_ops;
 pub(crate) mod pathsafe;
 pub(crate) mod publish;
