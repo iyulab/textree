@@ -4,7 +4,7 @@
 
 # Textree
 
-> A pretty, free, local-first note app — Notion's polish and Obsidian's ownership, living directly on your filesystem.
+> A pretty, free, local-first note app — polished notes with full ownership, living directly on your filesystem.
 
 **Textree** gives you tidy, good-looking notes **by default**, a tree that mirrors your folders, and **one-click web publishing** — all as plain `.md` files on your own disk.
 There is no separate database and no cloud lock-in: **the local filesystem itself is the single source of truth**.
@@ -19,15 +19,15 @@ Your notes are not trapped in some cloud table. They sit right on your disk, as 
 **Text** — pure, unprocessed text. Not bound to any database; an `.md` file that opens in Notepad even after you delete the app.
 **Tree** — mirrors your filesystem's folder/directory tree. Scattered notes grow into a single tree of knowledge.
 
-True to its name, Textree is **plain text on top of a tree-structured filesystem** — absorbing what's good about Notion (no-code databases, a tidy result) and Obsidian (local files, full ownership, portability), on a single-user, offline, MIT core that is **free forever**.
+True to its name, Textree is **plain text on top of a tree-structured filesystem** — combining no-code databases and a tidy result with local files, full ownership, and portability, on a single-user, offline, MIT core that is **free forever**.
 
 ---
 
 ## What makes it different
 
-Three things Notion and Obsidian each do only halfway, or skip on purpose:
+Three things most note apps do only halfway, or skip on purpose:
 
-- **Pretty by default** — opinionated defaults (title, an emoji icon, a typographic scale, consistent spacing) so a note looks tidy *without* you styling anything. Notion's free tier gates polish; Obsidian hands you raw tools and expects you to theme them. Textree just looks reasonable out of the box.
+- **Pretty by default** — opinionated defaults (title, an emoji icon, a typographic scale, consistent spacing) so a note looks tidy *without* you styling anything. Cloud apps gate polish behind paid tiers; local editors hand you raw tools and expect you to theme them. Textree just looks reasonable out of the box.
 - **Free local AI** *(planned)* — a small local model by default, with graceful degradation: editing, the tree, and search all work fully without it. Elevate with your own API key (or an OpenAI-compatible endpoint) when you want more. No mandatory subscription to make AI useful.
 - **Frictionless publish** — turn your tree into a clean, read-only static website in one move (via [canopy](https://github.com/iyulab/canopy)). Local notes, on the web, without surrendering the local-source-of-truth model.
 
@@ -40,7 +40,7 @@ Three things Notion and Obsidian each do only halfway, or skip on purpose:
 1. **The filesystem is the database.**
    No hidden DB, no proprietary format. Folders are folders, notes are `.md` files. (Indexes are regeneratable caches, never the source of truth.)
 2. **Full ownership.**
-   Delete the app and your data remains. Open it with VS Code, Obsidian, `vim`, or `cat` — it just reads.
+   Delete the app and your data remains. Open it with VS Code, `vim`, or `cat` — it just reads.
 3. **Offline-first, privacy-first.**
    Works without a network; your data never leaves your machine.
 4. **Bidirectional live sync.**
@@ -48,7 +48,7 @@ Three things Notion and Obsidian each do only halfway, or skip on purpose:
 5. **No lock-in.**
    You can pick up your folder and leave at any time.
 6. **Configuration-minimal.**
-   Sensible defaults work immediately; settings reveal themselves only when you need them (progressive disclosure) — Obsidian's expressiveness, Notion's zero-setup start.
+   Sensible defaults work immediately; settings reveal themselves only when you need them (progressive disclosure) — the expressiveness of a power tool with a no-setup start.
 
 ---
 
@@ -82,7 +82,7 @@ my-vault/
 ```
 
 > **Design decision — the "folder note" pattern**
-> In Notion, every page can have *both* body content *and* sub-pages.
+> Many note apps let a page have *both* body content *and* sub-pages.
 > A pure filesystem has no "node that has both content and children", so
 > Textree expresses this with the **`folder-name/folder-name.md`** convention.
 > Leaf notes stay as plain `.md` files, keeping 100% compatibility with ordinary markdown tools.
@@ -109,11 +109,11 @@ my-vault/
 - **Reading view** — a one-toggle, clean read-only render (all markdown markers hidden, frontmatter folded)
 - **Favorites** — star a note straight from the tree; favorites surface in the tree and at the top of the command palette
 
-### Wikilinks & Obsidian interoperability
+### Wikilinks & vault interoperability
 
-- **Wikilinks** — `[[note]]`, aliases `[[note|label]]`, headings `[[note#heading]]`, block anchors `[[note#^id]]` (Obsidian-compatible syntax); rendered in live preview, click to navigate, with `[[` autocomplete
+- **Wikilinks** — `[[note]]`, aliases `[[note|label]]`, headings `[[note#heading]]`, block anchors `[[note#^id]]` (standard wikilink syntax); rendered in live preview, click to navigate, with `[[` autocomplete
 - **Backlinks** — a panel listing every note that links to the current one
-- **Obsidian vault interoperability** — open a standard `.md` vault as-is; `.obsidian/` and `.canvas` files are left untouched, and editing is byte-lossless (CRLF line endings are preserved), so two apps can take turns on the same vault
+- **Vault interoperability** — open a standard `.md` vault as-is; foreign sidecar folders (e.g. `.obsidian/`) and `.canvas` files are left untouched, and editing is byte-lossless (CRLF line endings are preserved), so two apps can take turns on the same vault
 - **Sync-folder safety** — atomic writes stage in `.textree/tmp/` (out of your content folders, swept on open) so a sync client isn't churned by transient files; and conflicted copies a sync tool leaves behind (Dropbox / Syncthing) are surfaced non-destructively — nothing is changed or deleted, so a divergent edit isn't silently lost
 
 ### Frontmatter database
@@ -138,9 +138,9 @@ Directions, not promises — the local, single-user core stays free and works wi
 
 ---
 
-## How Textree Differs from Notion
+## How Textree Differs from Cloud Note Apps
 
-| Aspect          | Notion              | Textree                          |
+| Aspect          | Typical cloud note app | Textree                       |
 | --------------- | ------------------- | -------------------------------- |
 | Delivery        | Cloud SaaS          | Local desktop app                |
 | Storage         | Proprietary DB (server) | Local filesystem (`.md`)     |
@@ -151,7 +151,7 @@ Directions, not promises — the local, single-user core stays free and works wi
 | Collaboration   | Real-time multi-user | Single user (share a vault via a sync folder if you like) |
 | External tools  | Low compatibility   | Compatible with every markdown tool |
 
-> Textree trades real-time collaboration for **ownership, portability, and transparency** — then adds pretty-by-default and one-click publish on top. A Notion you actually own.
+> Textree trades real-time collaboration for **ownership, portability, and transparency** — then adds pretty-by-default and one-click publish on top. A polished note app you actually own.
 
 ---
 

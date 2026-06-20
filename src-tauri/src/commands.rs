@@ -48,7 +48,7 @@ fn atomic_write(root: &Path, path: &Path, content: &str) -> io::Result<()> {
 }
 
 /// Seed note written into a freshly created default vault. English only (public repo).
-const WELCOME_MD: &str = "---\ntitle: Welcome to Textree\nicon: 🌳\n---\n\n# Welcome to Textree\n\nThis is your vault — a plain folder of Markdown files on your own disk.\nNo account, no lock-in. What you see here is the default look, with no setup.\n\n## A few things to try\n- Edit this note. Everything is just `.md` you fully own.\n- Create notes and folders from the toolbar on the left.\n- **Already keep notes in another folder?** Click 📁 in the sidebar to open\n  any existing vault — Obsidian vaults work too.\n\nYou can delete this note anytime.\n";
+const WELCOME_MD: &str = "---\ntitle: Welcome to Textree\nicon: 🌳\n---\n\n# Welcome to Textree\n\nThis is your vault — a plain folder of Markdown files on your own disk.\nNo account, no lock-in. What you see here is the default look, with no setup.\n\n## A few things to try\n- Edit this note. Everything is just `.md` you fully own.\n- Create notes and folders from the toolbar on the left.\n- **Already keep notes in another folder?** Click 📁 in the sidebar to open\n  any existing standard Markdown vault.\n\nYou can delete this note anytime.\n";
 
 /// True if `dir` directly contains at least one `*.md` file.
 fn has_markdown(dir: &Path) -> bool {
