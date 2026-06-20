@@ -36,7 +36,7 @@ pub fn parse_health(body: &str) -> Option<HealthResponse> {
 }
 
 // ---------------------------------------------------------------------------
-// Step 1: HostHandle and accessors
+// HostHandle and accessors
 // ---------------------------------------------------------------------------
 
 struct HostStatusCell(HostStatus);
@@ -68,7 +68,7 @@ impl HostHandle {
 }
 
 // ---------------------------------------------------------------------------
-// Step 2: spawn + health poll
+// Spawn + health poll
 // ---------------------------------------------------------------------------
 
 const HEALTH_CEILING: Duration = Duration::from_secs(15 * 60); // first-run model download
@@ -170,7 +170,7 @@ fn poll_health(handle: Arc<HostHandle>, base: String, my_gen: u64) {
 }
 
 // ---------------------------------------------------------------------------
-// Step 3: shutdown ladder
+// Shutdown ladder
 // ---------------------------------------------------------------------------
 
 pub fn shutdown_host(handle: &HostHandle) {
@@ -201,7 +201,7 @@ pub fn shutdown_host(handle: &HostHandle) {
 }
 
 // ---------------------------------------------------------------------------
-// Step 4: DTOs, response parser, and IPC commands
+// DTOs, response parser, and IPC commands
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -228,40 +228,55 @@ pub fn host_status(host: State<'_, Arc<HostHandle>>) -> HostStatus {
 }
 
 #[tauri::command]
-pub fn semantic_search(
+pub async fn semantic_search(
     vault: String,
     query: String,
     scope_path: Option<String>,
     limit: u32,
     host: State<'_, Arc<HostHandle>>,
 ) -> Result<Vec<SemanticHit>, String> {
+    // Read cheap mutex fields before entering the blocking closure.
     let Some(base) = host.base_url() else {
         return Ok(Vec::new()); // host not up → empty, caller falls back / shows unavailable
     };
     if !matches!(host.status(), HostStatus::Ready) {
         return Ok(Vec::new());
     }
-    let scope = scope_path.unwrap_or_else(|| vault.clone()); // compute before moving `vault`
-    let payload = serde_json::json!({
-        "vaultPath": vault,
-        "query": query,
-        "scopePath": scope,
-        "limit": limit,
-    });
-    match ureq::post(&format!("{base}/search"))
-        .timeout(Duration::from_secs(30))
-        .send_json(payload)
-    {
-        Ok(resp) => {
-            let body = resp.into_string().map_err(|e| e.to_string())?;
-            Ok(parse_search_response(&body).unwrap_or_default())
+    // N3: reject scope_path that escapes the vault (constitution: security at the edge).
+    // is_within uses canonicalize — both paths must exist; scope defaults to vault root.
+    if let Some(ref sp) = scope_path {
+        if !crate::pathsafe::is_within(
+            std::path::Path::new(&vault),
+            std::path::Path::new(sp),
+        ) {
+            return Err("scope is outside the vault".into());
         }
-        Err(e) => Err(e.to_string()),
     }
+    let scope = scope_path.unwrap_or_else(|| vault.clone()); // compute before moving `vault`
+    tauri::async_runtime::spawn_blocking(move || {
+        let payload = serde_json::json!({
+            "vaultPath": vault,
+            "query": query,
+            "scopePath": scope,
+            "limit": limit,
+        });
+        match ureq::post(&format!("{base}/search"))
+            .timeout(Duration::from_secs(10))
+            .send_json(payload)
+        {
+            Ok(resp) => {
+                let body = resp.into_string().map_err(|e| e.to_string())?;
+                Ok(parse_search_response(&body).unwrap_or_default())
+            }
+            Err(e) => Err(e.to_string()),
+        }
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 // ---------------------------------------------------------------------------
-// Step 5: Fire-and-forget indexing helpers
+// Fire-and-forget indexing helpers
 // ---------------------------------------------------------------------------
 
 /// Fire-and-forget single-note index. Silent on any error (degrade, don't block).

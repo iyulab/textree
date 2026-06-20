@@ -65,6 +65,13 @@ pub fn run() {
             host::host_status,
             host::semantic_search
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app_handle, event| {
+            if let tauri::RunEvent::ExitRequested { .. } = event {
+                use tauri::Manager;
+                let handle = app_handle.state::<std::sync::Arc<HostHandle>>();
+                host::shutdown_host(&handle);
+            }
+        });
 }
