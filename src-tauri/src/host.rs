@@ -5,6 +5,7 @@ use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
+use tauri::State;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -200,6 +201,66 @@ pub fn shutdown_host(handle: &HostHandle) {
 }
 
 // ---------------------------------------------------------------------------
+// Step 4: DTOs, response parser, and IPC commands
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SemanticHit {
+    pub path: String,
+    pub snippet: String,
+    pub score: f32,
+}
+
+#[derive(Deserialize)]
+struct SearchResponseDto {
+    results: Vec<SemanticHit>,
+    #[allow(dead_code)]
+    status: String,
+}
+
+pub fn parse_search_response(body: &str) -> Option<Vec<SemanticHit>> {
+    serde_json::from_str::<SearchResponseDto>(body).ok().map(|r| r.results)
+}
+
+#[tauri::command]
+pub fn host_status(host: State<'_, Arc<HostHandle>>) -> HostStatus {
+    host.status()
+}
+
+#[tauri::command]
+pub fn semantic_search(
+    vault: String,
+    query: String,
+    scope_path: Option<String>,
+    limit: u32,
+    host: State<'_, Arc<HostHandle>>,
+) -> Result<Vec<SemanticHit>, String> {
+    let Some(base) = host.base_url() else {
+        return Ok(Vec::new()); // host not up → empty, caller falls back / shows unavailable
+    };
+    if !matches!(host.status(), HostStatus::Ready) {
+        return Ok(Vec::new());
+    }
+    let scope = scope_path.unwrap_or_else(|| vault.clone()); // compute before moving `vault`
+    let payload = serde_json::json!({
+        "vaultPath": vault,
+        "query": query,
+        "scopePath": scope,
+        "limit": limit,
+    });
+    match ureq::post(&format!("{base}/search"))
+        .timeout(Duration::from_secs(30))
+        .send_json(payload)
+    {
+        Ok(resp) => {
+            let body = resp.into_string().map_err(|e| e.to_string())?;
+            Ok(parse_search_response(&body).unwrap_or_default())
+        }
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -229,6 +290,21 @@ mod tests {
     #[test]
     fn parse_health_rejects_garbage() {
         assert!(parse_health("not json").is_none());
+    }
+
+    #[test]
+    fn parse_search_response_maps_hits() {
+        let body = r#"{"results":[{"path":"a.md","snippet":"hello","score":0.9}],"status":"ok"}"#;
+        let hits = parse_search_response(body).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].path, "a.md");
+        assert!((hits[0].score - 0.9).abs() < 1e-6);
+    }
+
+    #[test]
+    fn parse_search_response_empty_on_no_results() {
+        let hits = parse_search_response(r#"{"results":[],"status":"ok"}"#).unwrap();
+        assert!(hits.is_empty());
     }
 
     #[test]

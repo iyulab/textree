@@ -52,7 +52,9 @@ pub fn run() {
             commands::publish_site,
             commands::list_trash,
             commands::purge_trash,
-            commands::ensure_default_vault
+            commands::ensure_default_vault,
+            host::host_status,
+            host::semantic_search
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
