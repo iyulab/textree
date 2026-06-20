@@ -811,12 +811,40 @@
     return hits.map((h) => ({ ...h, path: byRel.get(h.path) ?? h.path }));
   }
 
-  /** Palette file selection → find the matching TreeNode and delegate to handleSelect. */
+  /**
+   * Scope path for semantic search — the folder the user is currently working in.
+   * Priority: selected folder → parent of the open note → null (whole vault).
+   * Passed as an absolute path; the backend scopes the search to documents under it.
+   */
+  let semanticScopePath = $derived<string | null>(
+    selectedNode?.kind === "container"
+      ? selectedNode.path
+      : activePath
+        ? parentDir(activePath)
+        : null,
+  );
+
+  /** Palette file selection → find the matching TreeNode and delegate to handleSelect.
+   *  Accepts both absolute TreeNode paths (file/command mode) and vault-relative POSIX
+   *  paths (semantic search hits from the sidecar) so all modes converge here. */
   function openFileFromPalette(path: string): void {
-    const node = findNode(tree, path);
+    // Try exact absolute match first (file / content modes).
+    let node = findNode(tree, path);
+    if (!node && root) {
+      // Semantic hits arrive as vault-relative POSIX paths — resolve to absolute via byRel map.
+      const r = root.replace(/\\/g, "/").replace(/\/+$/, "");
+      const byRel = new Map<string, string>();
+      for (const e of fileIndex) {
+        const rel = relPosixOf(e.path, root);
+        byRel.set(rel, e.path);
+        if (e.kind === "container") byRel.set(`${rel}/${e.name}.md`, e.path);
+      }
+      const abs = byRel.get(path) ?? (path.startsWith(r) ? path : null);
+      if (abs) node = findNode(tree, abs);
+    }
     if (node) {
       void handleSelect(node);
-      nav.pushRecent(path);
+      nav.pushRecent(node.path);
     }
   }
 
@@ -944,6 +972,8 @@
   onOpenFile={openFileFromPalette}
   onRunCommand={(c) => c.run()}
   onSearchContent={searchContentFromPalette}
+  vaultRoot={root}
+  scopePath={semanticScopePath}
 />
 
 <div class="app" style="--sidebar-width: {layout.width}px">

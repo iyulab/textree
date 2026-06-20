@@ -5,7 +5,7 @@
   import { formatKeybinding } from "./keybinding.helpers";
   import { paletteListState } from "./palette.helpers";
   import type { Command } from "./commands";
-  import type { SearchHit } from "./ipc";
+  import { semanticSearch, hostStatus, type SearchHit, type SemanticHit, type HostStatus } from "./ipc";
 
   interface FileEntry {
     name: string;
@@ -19,12 +19,16 @@
     onOpenFile,
     onRunCommand,
     onSearchContent,
+    vaultRoot = null,
+    scopePath = null,
   }: {
     files: FileEntry[];
     commands: Command[];
     onOpenFile: (path: string) => void;
     onRunCommand: (cmd: Command) => void;
     onSearchContent: (query: string) => Promise<SearchHit[]>;
+    vaultRoot?: string | null;
+    scopePath?: string | null;
   } = $props();
 
   let fileMatches = $derived<Match<FileEntry>[]>(
@@ -81,12 +85,58 @@
     return () => clearTimeout(t);
   });
 
+  // Semantic search — mirrors content search pattern; guarded by hostState and vaultRoot availability.
+  let semanticHits = $state<SemanticHit[]>([]);
+  let hostState = $state<HostStatus | null>(null);
+
+  $effect(() => {
+    if (palette.mode !== "semantic") {
+      semanticHits = [];
+      searching = false;
+      return;
+    }
+    const term = palette.term;
+    if (term === "") {
+      semanticHits = [];
+      searching = false;
+      return;
+    }
+    // Poll host status once when the user enters semantic mode; refresh on each query change.
+    void hostStatus().then((s) => { hostState = s; });
+    if (!vaultRoot) {
+      searching = false;
+      return;
+    }
+    searching = true;
+    const seq = ++searchSeq;
+    const vault = vaultRoot;
+    const scope = scopePath;
+    const t = setTimeout(() => {
+      void semanticSearch(vault, term, scope, 20)
+        .then((hits) => {
+          if (seq === searchSeq) {
+            semanticHits = hits;
+            searching = false;
+          }
+        })
+        .catch(() => {
+          if (seq === searchSeq) {
+            semanticHits = [];
+            searching = false;
+          }
+        });
+    }, 120);
+    return () => clearTimeout(t);
+  });
+
   let count = $derived(
     palette.mode === "file"
       ? fileMatches.length
       : palette.mode === "command"
         ? cmdMatches.length
-        : contentHits.length,
+        : palette.mode === "semantic"
+          ? semanticHits.length
+          : contentHits.length,
   );
   let listState = $derived(
     paletteListState({ mode: palette.mode, term: palette.term, count, searching }),
@@ -108,6 +158,7 @@
     if (count === 0) return;
     if (palette.mode === "file") onOpenFile(fileMatches[palette.selected].item.path);
     else if (palette.mode === "command") onRunCommand(cmdMatches[palette.selected].item);
+    else if (palette.mode === "semantic") onOpenFile(semanticHits[palette.selected].path);
     else onOpenFile(contentHits[palette.selected].path);
     palette.hide();
   }
@@ -154,7 +205,9 @@
           ? "Run a command…"
           : palette.mode === "content"
             ? "Search content…"
-            : "Search files…  ('>' = commands, '/' = content)"}
+            : palette.mode === "semantic"
+              ? "Semantic search…  (scoped to current folder)"
+              : "Search files…  ('>' = commands, '/' = content, '?' = semantic)"}
         value={palette.query}
         oninput={(e) => palette.setQuery(e.currentTarget.value)}
         onkeydown={onKey}
@@ -222,6 +275,30 @@
               <span class="sub">{h.path}</span>
             </li>
           {/each}
+        {:else if palette.mode === "semantic"}
+          {#if hostState !== null && hostState !== "ready"}
+            <!-- Host not ready: show a calm muted status row instead of results (graceful degradation). -->
+            <li class="status-row ai-unavailable" role="status">
+              {hostState === "starting" ? "Local AI is indexing…" : "Local AI is unavailable"}
+            </li>
+          {:else}
+            {#each semanticHits as h, i (h.path)}
+              <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+              <li
+                class="row"
+                class:sel={i === palette.selected}
+                data-testid="palette-item"
+                onmousedown={() => {
+                  palette.selected = i;
+                  commit();
+                }}
+              >
+                <span class="title">{h.path}</span>
+                <span class="snippet">{h.snippet}</span>
+                <span class="sub">score: {h.score.toFixed(3)}</span>
+              </li>
+            {/each}
+          {/if}
         {/if}
         {#if listState === "searching"}
           <li class="status-row" role="status">Searching…</li>
@@ -317,5 +394,9 @@
     color: var(--text-muted);
     font-size: 0.85rem;
     cursor: default;
+  }
+  /* AI unavailable / indexing — same muted treatment, distinct from error. */
+  .ai-unavailable {
+    font-style: italic;
   }
 </style>

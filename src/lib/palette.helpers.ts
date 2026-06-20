@@ -1,13 +1,14 @@
 /*
  * Palette mode/search-term derivation — pure logic (runes-independent, vitest target).
- * '>' = command, '/' = content search, otherwise = filename fuzzy.
+ * '>' = command, '/' = content search, '?' = semantic search, otherwise = filename fuzzy.
  */
 
-export type PaletteMode = "file" | "command" | "content";
+export type PaletteMode = "file" | "command" | "content" | "semantic";
 
 export function paletteMode(query: string): PaletteMode {
   if (query.startsWith(">")) return "command";
   if (query.startsWith("/")) return "content";
+  if (query.startsWith("?")) return "semantic";
   return "file";
 }
 
@@ -34,7 +35,7 @@ export function paletteListState(args: {
   searching: boolean;
 }): PaletteListState {
   if (args.count > 0) return "results";
-  if (args.mode === "content" && args.searching) return "searching";
+  if ((args.mode === "content" || args.mode === "semantic") && args.searching) return "searching";
   if (args.term !== "") return "no-results";
   return "empty";
 }

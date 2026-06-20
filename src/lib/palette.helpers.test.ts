@@ -61,3 +61,17 @@ describe("paletteListState", () => {
     );
   });
 });
+
+describe("paletteMode semantic", () => {
+  it("treats ? prefix as semantic", () => {
+    expect(paletteMode("?ideas about trees")).toBe("semantic");
+  });
+  it("strips ? for the term", () => {
+    expect(paletteTerm("?ideas")).toBe("ideas");
+  });
+  it("keeps existing modes", () => {
+    expect(paletteMode(">cmd")).toBe("command");
+    expect(paletteMode("/text")).toBe("content");
+    expect(paletteMode("file")).toBe("file");
+  });
+});
