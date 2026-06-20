@@ -28,11 +28,13 @@
   import { startSync } from "$lib/sync";
   import { buildWikiResolver } from "$lib/wikilink.helpers";
   import { backlinks } from "$lib/backlinkStore.svelte";
+  import { relatedNotes } from "$lib/relatedNotesStore.svelte";
   import { theme } from "$lib/theme.svelte";
   import { layout } from "$lib/layout.svelte";
   import TreeView, { DRAG_MIME } from "$lib/TreeView.svelte";
   import Editor from "$lib/Editor.svelte";
   import Backlinks from "$lib/Backlinks.svelte";
+  import RelatedNotes from "$lib/RelatedNotes.svelte";
   import Trash from "$lib/Trash.svelte";
   import PageHeader from "$lib/PageHeader.svelte";
   import { parseFrontmatter, getField } from "$lib/frontmatter.helpers";
@@ -162,6 +164,7 @@
     selectedNode = null;
     cancelMode();
     backlinks.clear(); // drop the previous vault's index (the $effect below rebuilds it)
+    relatedNotes.clear(); // drop the previous vault's related panel
     await nav.load(path); // load favorites/order sidecar
     await views.load(path); // load saved folder views (.textree/views.json)
     dismissedForeignViews = false; // re-evaluate the foreign-views notice for the new vault
@@ -370,6 +373,7 @@
     saveError = null;
     removed = false;
     conflictDisk = null;
+    relatedNotes.clear();
   }
 
   function startMode(
@@ -707,6 +711,21 @@
   $effect(() => {
     void notePaths;
     if (root) void rebuildBacklinks();
+  });
+
+  // Refresh the related-notes panel when the active note or scope changes.
+  // Keyed on activePath + content (note open) + semanticScopePath (scope shift).
+  // Uses `content` (load-only) rather than `liveDoc` to avoid firing on every keystroke.
+  $effect(() => {
+    const path = activePath;
+    const body = content;
+    const scope = semanticScopePath;
+    const r = root;
+    if (r && path) {
+      void relatedNotes.load(r, toRelative(path), body, scope);
+    } else {
+      relatedNotes.clear();
+    }
   });
 
   // ── Frontmatter table (folder = DB, .md = row) — read-only first slice ────
@@ -1215,6 +1234,10 @@
           </div>
           <Backlinks
             links={backlinks.for(activePath ? toRelative(activePath) : null)}
+            onOpen={(p) => handleWikiLink(p, undefined)}
+          />
+          <RelatedNotes
+            related={relatedNotes.items}
             onOpen={(p) => handleWikiLink(p, undefined)}
           />
         </div>
