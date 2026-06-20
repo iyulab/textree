@@ -209,14 +209,21 @@ test.describe("host-present: semantic search wired end-to-end", () => {
 
       // --- Self-exclusion verification (the critical check carried from prior reviews) ---
       // "forest" must NOT appear in its own Related notes panel.
-      // (A note is maximally self-similar; the exclusion works iff host path form == toRelative(activePath).)
+      //
+      // Use .includes() rather than === so the assertion is non-vacuous regardless of
+      // whether the host returns vault-relative paths ("forest") or absolute paths
+      // ("C:\Temp\...\forest" after displayName strips the .md extension).
+      // - Path bug present: button text is the absolute stem "C:\Temp\...\forest" which
+      //   still includes "forest" → selfPresent=true → assertion fails (correctly catches
+      //   self-exclusion failure AND the path bug in one shot).
+      // - Path bug fixed: button text is "forest" → includes("forest") → same correctness.
       const relatedTexts = await relatedItems.allTextContents();
-      const selfPresent = relatedTexts.some((t) => t.trim().toLowerCase() === "forest");
+      const selfPresent = relatedTexts.some((t) => t.trim().toLowerCase().includes("forest"));
       expect(selfPresent).toBe(false);
 
       // Panel must contain at least one of the OTHER notes (non-empty + self-absent pair).
       const othersPresent = relatedTexts.some(
-        (t) => ["ecosystem", "biodiversity"].includes(t.trim().toLowerCase()),
+        (t) => t.trim().toLowerCase().includes("ecosystem") || t.trim().toLowerCase().includes("biodiversity"),
       );
       expect(othersPresent).toBe(true);
     } finally {
