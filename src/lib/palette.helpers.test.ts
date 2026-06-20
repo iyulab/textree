@@ -60,6 +60,10 @@ describe("paletteListState", () => {
       "empty",
     );
   });
+
+  it("reports searching for semantic mode in-flight", () => {
+    expect(paletteListState({ mode: "semantic", term: "ideas", count: 0, searching: true })).toBe("searching");
+  });
 });
 
 describe("paletteMode semantic", () => {

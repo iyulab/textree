@@ -102,7 +102,9 @@
       return;
     }
     // Poll host status once when the user enters semantic mode; refresh on each query change.
-    void hostStatus().then((s) => { hostState = s; });
+    void hostStatus()
+      .then((s) => { hostState = s; })
+      .catch(() => { hostState = "unavailable"; });
     if (!vaultRoot) {
       searching = false;
       return;
