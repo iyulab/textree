@@ -8,6 +8,7 @@ pub(crate) mod self_write;
 pub(crate) mod vault;
 pub(crate) mod watcher;
 
+use host::HostHandle;
 use search::IndexHandle;
 use self_write::SelfWrites;
 use std::sync::Arc;
@@ -29,6 +30,7 @@ pub fn run() {
         .manage(Arc::new(SelfWrites::default()))
         .manage(WatcherHandle::default())
         .manage(Arc::new(IndexHandle::default()))
+        .manage(Arc::new(HostHandle::default()))
         .invoke_handler(tauri::generate_handler![
             commands::open_vault,
             commands::list_tree,
