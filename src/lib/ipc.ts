@@ -196,3 +196,31 @@ export async function restoreNode(root: string, trashName: string): Promise<stri
 export async function purgeTrash(root: string, trashName?: string): Promise<void> {
   return invoke<void>("purge_trash", { root, trashName: trashName ?? null });
 }
+
+// ── Semantic search (AI-sidecar) ──────────────────────────────────────────
+
+export interface SemanticHit {
+  path: string;
+  snippet: string;
+  score: number;
+}
+
+export type HostStatus = "starting" | "ready" | "unavailable";
+
+export async function semanticSearch(
+  vault: string,
+  query: string,
+  scopePath: string | null,
+  limit = 20,
+): Promise<SemanticHit[]> {
+  return invoke<SemanticHit[]>("semantic_search", {
+    vault,
+    query,
+    scopePath,
+    limit,
+  });
+}
+
+export async function hostStatus(): Promise<HostStatus> {
+  return invoke<HostStatus>("host_status");
+}
