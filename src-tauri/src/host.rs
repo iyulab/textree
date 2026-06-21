@@ -21,6 +21,8 @@ pub struct HealthResponse {
     pub status: String,
     #[serde(rename = "embedderReady")]
     pub embedder_ready: bool,
+    #[serde(rename = "generatorReady", default)]
+    pub generator_ready: bool,
 }
 
 /// Bind 127.0.0.1:0 to let the OS pick a free port, then release it so the
@@ -59,6 +61,9 @@ pub struct HostHandle {
     /// every host respawn, and a new ask would invalidate the health poller.
     ask_generation: AtomicU64,
     current_vault: Mutex<Option<String>>,
+    /// Read-only tracking of the host's generatorReady flag (from /health).
+    /// Does NOT gate the Ready transition — embedder_ready controls that.
+    generator_ready: Mutex<bool>,
 }
 
 impl HostHandle {
@@ -86,6 +91,14 @@ impl HostHandle {
     /// Read the current ask generation (used inside spawn_blocking to detect cancellation).
     pub fn ask_generation(&self) -> u64 {
         self.ask_generation.load(Ordering::SeqCst)
+    }
+    /// Returns the last-known value of the host's generatorReady flag.
+    /// Updated on each successful /health poll; does not gate the Ready transition.
+    pub fn generator_ready(&self) -> bool {
+        *self.generator_ready.lock().unwrap_or_else(|e| e.into_inner())
+    }
+    fn set_generator_ready(&self, v: bool) {
+        *self.generator_ready.lock().unwrap_or_else(|e| e.into_inner()) = v;
     }
 }
 
@@ -174,6 +187,8 @@ fn poll_health(handle: Arc<HostHandle>, base: String, my_gen: u64) {
         {
             if let Ok(body) = resp.into_string() {
                 if let Some(h) = parse_health(&body) {
+                    // Track generatorReady on every poll (read-only; does not gate Ready).
+                    handle.set_generator_ready(h.generator_ready);
                     if h.embedder_ready {
                         if handle.generation.load(Ordering::SeqCst) != my_gen {
                             return;
@@ -281,9 +296,40 @@ pub fn parse_search_response(body: &str) -> Option<Vec<SemanticHit>> {
     serde_json::from_str::<SearchResponseDto>(body).ok().map(|r| r.results)
 }
 
+/// Payload returned by the `host_status` IPC command.
+/// `rename_all = "camelCase"` is load-bearing: the frontend expects `generatorReady` (camelCase).
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HostStatusPayload {
+    pub status: HostStatus,
+    pub generator_ready: bool,
+}
+
 #[tauri::command]
-pub fn host_status(host: State<'_, Arc<HostHandle>>) -> HostStatus {
-    host.status()
+pub fn host_status(host: State<'_, Arc<HostHandle>>) -> HostStatusPayload {
+    HostStatusPayload {
+        status: host.status(),
+        generator_ready: host.generator_ready(),
+    }
+}
+
+/// Fire-and-forget: ask the host to warm its generator (model loading, KV cache pre-fill, etc.).
+/// Called by the frontend when the user opens the Ask panel so the first token arrives faster.
+/// Graceful: no-op when the host is not up or not Ready.
+#[tauri::command]
+pub async fn prepare_generation(host: State<'_, Arc<HostHandle>>) -> Result<(), String> {
+    let Some(base) = host.base_url() else { return Ok(()) };
+    if !matches!(host.status(), HostStatus::Ready) {
+        return Ok(());
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        let _ = ureq::post(&format!("{base}/prepare-generation"))
+            .timeout(Duration::from_secs(10))
+            .call();
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 /// User-triggered: spawn the local-AI host now. Called by the frontend after the user consents
@@ -640,6 +686,14 @@ mod tests {
             "assembled host exe not found under {}/host/ — run scripts/assemble-host-sidecar.ps1",
             resource.display()
         );
+    }
+
+    #[test]
+    fn parse_health_reads_generator_ready() {
+        let body = r#"{"status":"ok","embedderReady":true,"generatorReady":false}"#;
+        let h = parse_health(body).unwrap();
+        assert!(h.embedder_ready);
+        assert!(!h.generator_ready);
     }
 
     #[test]
