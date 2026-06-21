@@ -200,12 +200,18 @@ test.describe("host-present: chat streams answers, keeps multi-turn history", ()
 
       const bubblesAfterTurn1 = await panel.locator(".chat-bubble").count();
 
-      // Turn 2 — history must accumulate (more bubbles, prior ones remain).
+      // Turn 2 — a SECOND assistant response must stream in (not just the user bubble),
+      // and prior bubbles must be retained (history accumulates, not replaced).
       await input.fill("And what is the by-product?");
       await page.getByRole("button", { name: /Send question/i }).click();
       await expect
-        .poll(async () => panel.locator(".chat-bubble").count(), { timeout: 4 * 60_000 })
-        .toBeGreaterThan(bubblesAfterTurn1);
+        .poll(async () => panel.locator(".chat-turn.assistant .chat-bubble").count(), {
+          timeout: 4 * 60_000,
+        })
+        .toBeGreaterThanOrEqual(2);
+      await expect(panel.locator(".chat-bubble").count()).resolves.toBeGreaterThan(
+        bubblesAfterTurn1,
+      );
     } finally {
       await clearAiConsent(page);
       removeTempVault(vault);
