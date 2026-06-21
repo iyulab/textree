@@ -71,6 +71,7 @@ class ChatStore {
     try {
       st = await hostStatus();
     } catch {
+      if (seq !== this.seq) return;
       this.status = 'error';
       this.errorMessage = 'Could not reach the local AI host.';
       return;
