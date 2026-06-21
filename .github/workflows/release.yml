@@ -50,6 +50,21 @@ jobs:
       - name: Verify bundled sidecar publishes
         run: cargo test --manifest-path src-tauri/Cargo.toml -- --ignored run_publish_via_assembled_sidecar
 
+      # Publish the .NET host self-contained and stage it under src-tauri/resources/host/
+      # so tauri-action bundles it (Task 4 resources map).
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Assemble host sidecar
+        shell: pwsh
+        run: pwsh -NoProfile -File scripts/assemble-host-sidecar.ps1
+
+      # Guard: confirm the staged host exe resolves before the build + sign step consumes it.
+      - name: Verify bundled host present
+        run: cargo test --manifest-path src-tauri/Cargo.toml -- --ignored run_host_present_via_assembled_sidecar
+
       - name: Azure login (OIDC)
         uses: azure/login@v3
         with:
