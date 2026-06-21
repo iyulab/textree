@@ -273,6 +273,7 @@ pub fn open_vault(
     }
 
     // Background semantic reindex (content-immutable; auto-allowed per D18).
+    host.set_current_vault(root.clone());
     let host_arc = host.inner().clone();
     let vault_str = root.clone();
     tauri::async_runtime::spawn_blocking(move || {

@@ -53,6 +53,7 @@ pub struct HostHandle {
     port: Mutex<Option<u16>>,
     child: Mutex<Option<Child>>,
     generation: AtomicU64,
+    current_vault: Mutex<Option<String>>,
 }
 
 impl HostHandle {
@@ -65,6 +66,12 @@ impl HostHandle {
     pub fn base_url(&self) -> Option<String> {
         let p = *self.port.lock().unwrap_or_else(|e| e.into_inner());
         p.map(|p| format!("http://127.0.0.1:{p}"))
+    }
+    pub fn set_current_vault(&self, vault: String) {
+        *self.current_vault.lock().unwrap_or_else(|e| e.into_inner()) = Some(vault);
+    }
+    pub fn current_vault(&self) -> Option<String> {
+        self.current_vault.lock().unwrap_or_else(|e| e.into_inner()).clone()
     }
 }
 
@@ -157,6 +164,11 @@ fn poll_health(handle: Arc<HostHandle>, base: String, my_gen: u64) {
                             return;
                         }
                         handle.set_status(HostStatus::Ready);
+                        // Re-trigger the reindex the open vault missed while the host was Starting
+                        // (lazy spawn means the host is never Ready at the first open_vault).
+                        if let Some(vault) = handle.current_vault() {
+                            reindex_vault(&handle, &vault);
+                        }
                         return;
                     }
                 }
@@ -434,6 +446,14 @@ mod tests {
             matches!(handle.status(), HostStatus::Ready),
             "guard must prevent re-spawn when already Starting/Ready"
         );
+    }
+
+    #[test]
+    fn current_vault_round_trips() {
+        let handle = HostHandle::default();
+        assert!(handle.current_vault().is_none());
+        handle.set_current_vault("D:/vault".into());
+        assert_eq!(handle.current_vault().as_deref(), Some("D:/vault"));
     }
 
     #[test]
