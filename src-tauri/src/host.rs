@@ -5,7 +5,8 @@ use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
-use tauri::State;
+use std::path::Path;
+use tauri::{AppHandle, Manager, State};
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -201,6 +202,32 @@ pub fn shutdown_host(handle: &HostHandle) {
 }
 
 // ---------------------------------------------------------------------------
+// Host executable resolution (mechanism B — parallel to publish::canopy_from_resource_dir)
+// ---------------------------------------------------------------------------
+
+/// Resolves the bundled host exe from a Tauri resource directory: `<resource>/host/textree-host(.exe)`.
+/// Returns the absolute path, or `None` if it is missing (e.g. an unbundled dev build).
+pub fn host_exe_from_resource_dir(resource: &Path) -> Option<String> {
+    let name = if cfg!(windows) { "textree-host.exe" } else { "textree-host" };
+    let exe = resource.join("host").join(name);
+    if exe.exists() {
+        Some(exe.to_string_lossy().into_owned())
+    } else {
+        None
+    }
+}
+
+/// How to launch the host. Dev/E2E: `TEXTREE_HOST_EXE` env (auto-consent — keeps the existing
+/// dev/test flow eager-spawning). Production: the bundled sidecar under `<resource>/host/`.
+pub fn resolve_host(app: &AppHandle) -> Option<String> {
+    if let Ok(exe) = std::env::var("TEXTREE_HOST_EXE") {
+        return Some(exe);
+    }
+    let resource = app.path().resource_dir().ok()?;
+    host_exe_from_resource_dir(&resource)
+}
+
+// ---------------------------------------------------------------------------
 // DTOs, response parser, and IPC commands
 // ---------------------------------------------------------------------------
 
@@ -350,6 +377,29 @@ mod tests {
     fn parse_search_response_empty_on_no_results() {
         let hits = parse_search_response(r#"{"results":[],"status":"ok"}"#).unwrap();
         assert!(hits.is_empty());
+    }
+
+    #[test]
+    fn host_exe_from_resource_dir_finds_bundled_exe() {
+        let tmp = std::env::temp_dir().join(format!("textree-host-resolve-{}", std::process::id()));
+        let host_dir = tmp.join("host");
+        std::fs::create_dir_all(&host_dir).unwrap();
+        let name = if cfg!(windows) { "textree-host.exe" } else { "textree-host" };
+        let exe = host_dir.join(name);
+        std::fs::write(&exe, b"stub").unwrap();
+
+        let found = host_exe_from_resource_dir(&tmp);
+        assert_eq!(found.as_deref(), exe.to_str());
+
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn host_exe_from_resource_dir_none_when_absent() {
+        let tmp = std::env::temp_dir().join(format!("textree-host-absent-{}", std::process::id()));
+        std::fs::create_dir_all(&tmp).unwrap();
+        assert!(host_exe_from_resource_dir(&tmp).is_none());
+        std::fs::remove_dir_all(&tmp).ok();
     }
 
     #[test]
