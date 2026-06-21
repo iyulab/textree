@@ -248,6 +248,11 @@ export function prepareGeneration(): Promise<void> {
   return invoke<void>('prepare_generation');
 }
 
+/** Fire-and-forget: bump Rust ask_generation so any in-flight ask stream aborts on its next line read. */
+export function cancelAsk(): Promise<void> {
+  return invoke<void>('cancel_ask');
+}
+
 export async function prepareAiModel(): Promise<void> {
   return invoke<void>("prepare_ai_model");
 }

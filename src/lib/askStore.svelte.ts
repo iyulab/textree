@@ -1,6 +1,6 @@
 // Runes orchestration store for the local AI Q&A feature (P3).
 // NOT imported by tests (runes module — test only pure helpers in ask.helpers.ts).
-import { semanticSearch, hostStatus, ask, prepareGeneration } from './ipc';
+import { semanticSearch, hostStatus, ask, prepareGeneration, cancelAsk } from './ipc';
 import {
   selectContext,
   buildAskPrompt,
@@ -100,6 +100,7 @@ class AskStore {
   /** Cancel the active request and fully clear display state (note switch, unmount, etc.). */
   cancel() {
     this.askSeq++;       // invalidates any in-flight stream callbacks
+    void cancelAsk();    // fire-and-forget: bump Rust ask_generation → in-flight ask loop aborts → host stops generating
     this.status = 'idle';
     this.question = '';
     this.answer = '';

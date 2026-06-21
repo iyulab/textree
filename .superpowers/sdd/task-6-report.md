@@ -143,6 +143,56 @@ npm run build:
 
 ---
 
+---
+
+## Final Fix — I1: cancel_ask IPC frees host CPU on panel close / note switch (2026-06-21)
+
+### Bug (I1 — cross-task integration gap)
+`askStore.cancel()` bumped `askSeq` and cleared UI state but made no IPC call. On note-switch / panel-close, the in-flight Rust `ask` streaming loop kept running — the .NET host continued generating, burning CPU until the 120s `ureq` timeout.
+
+### Fix (minimal — 4 touch points)
+
+**`src-tauri/src/host.rs`** — added `cancel_ask` command immediately before `prepare_generation`:
+```rust
+#[tauri::command]
+pub fn cancel_ask(host: State<'_, Arc<HostHandle>>) {
+    host.bump_ask_generation();
+}
+```
+Uses the SAME `bump_ask_generation()` method that `ask` calls at its start, and the same `ask_generation` counter that the streaming loop checks (`handle.ask_generation() != my_gen`). One bump causes any active `ask` loop to return early on its next line read, dropping the reader, closing the TCP connection, and triggering `RequestAborted` on the host side.
+
+**`src-tauri/src/lib.rs`** — registered `host::cancel_ask` in `generate_handler!` alongside `host::ask`.
+
+**`src/lib/ipc.ts`** — added:
+```ts
+export function cancelAsk(): Promise<void> {
+  return invoke<void>('cancel_ask');
+}
+```
+
+**`src/lib/askStore.svelte.ts`** — imported `cancelAsk` and added fire-and-forget call in `cancel()`:
+```ts
+cancel() {
+  this.askSeq++;
+  void cancelAsk();    // fire-and-forget: bump Rust ask_generation → in-flight ask loop aborts → host stops generating
+  this.status = 'idle';
+  // ... rest unchanged
+}
+```
+
+### Causal chain after fix
+note-switch → `AskPanel.$effect` → `askStore.cancel()` → `cancelAsk()` IPC → Rust bumps `ask_generation` → in-flight `ask` loop's `handle.ask_generation() != my_gen` check → returns early → reader dropped → TCP connection closed → .NET host sees `RequestAborted` → stops generating.
+
+### Verification output
+```
+cargo test:   101 passed; 0 failed; 4 ignored  (finished in 0.23s)
+cargo build:  Finished dev profile (1 warning — pre-existing HealthResponse::status dead_code)
+npm run check:  405 FILES  0 ERRORS  0 WARNINGS  0 FILES_WITH_PROBLEMS
+npm run build:  ✓ built in 5.74s  (adapter-static done)
+```
+
+---
+
 ## Self-review
 
 - State machine: three distinct checks before the pipeline runs.

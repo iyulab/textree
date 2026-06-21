@@ -313,6 +313,15 @@ pub fn host_status(host: State<'_, Arc<HostHandle>>) -> HostStatusPayload {
     }
 }
 
+/// Fire-and-forget: bump ask_generation so any in-flight `ask` stream detects the mismatch,
+/// drops its reader, and closes the TCP connection — causing the host to see RequestAborted
+/// and stop generating. Called by the frontend on panel close / note switch.
+/// No params; no return value needed — bumping the counter is the entire effect.
+#[tauri::command]
+pub fn cancel_ask(host: State<'_, Arc<HostHandle>>) {
+    host.bump_ask_generation();
+}
+
 /// Fire-and-forget: ask the host to warm its generator (model loading, KV cache pre-fill, etc.).
 /// Called by the frontend when the user opens the Ask panel so the first token arrives faster.
 /// Graceful: no-op when the host is not up or not Ready.

@@ -66,6 +66,7 @@ pub fn run() {
             host::semantic_search,
             host::prepare_ai_model,
             host::ask,
+            host::cancel_ask,
             host::prepare_generation
         ])
         .build(tauri::generate_context!())
