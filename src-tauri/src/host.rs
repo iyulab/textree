@@ -79,6 +79,11 @@ const POLL_INTERVAL: Duration = Duration::from_secs(1);
 /// Spawn the host on a fresh loopback port and begin health polling on a
 /// background thread. Never panics; on any failure the handle stays Unavailable.
 pub fn spawn_host(handle: Arc<HostHandle>, exe: String, app_data: std::path::PathBuf) {
+    // Idempotent: never double-spawn. A concurrent caller (mount auto-spawn + ? enable, or a
+    // dev eager-spawn racing a manual trigger) must not orphan a child or clobber the port.
+    if matches!(handle.status(), HostStatus::Starting | HostStatus::Ready) {
+        return;
+    }
     let port = match alloc_loopback_port() {
         Ok(p) => p,
         Err(e) => {
@@ -254,6 +259,22 @@ pub fn host_status(host: State<'_, Arc<HostHandle>>) -> HostStatus {
     host.status()
 }
 
+/// User-triggered: spawn the local-AI host now. Called by the frontend after the user consents
+/// (or at mount when the device-local consent flag is set). No-op if already up; graceful (Ok with
+/// no spawn) when no host exe is bundled/available — AI simply stays off.
+#[tauri::command]
+pub fn prepare_ai_model(app: AppHandle, host: State<'_, Arc<HostHandle>>) -> Result<(), String> {
+    if matches!(host.status(), HostStatus::Starting | HostStatus::Ready) {
+        return Ok(());
+    }
+    let Some(exe) = resolve_host(&app) else {
+        return Ok(()); // no host available → graceful degradation
+    };
+    let app_data = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    spawn_host(host.inner().clone(), exe, app_data);
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn semantic_search(
     vault: String,
@@ -400,6 +421,19 @@ mod tests {
         std::fs::create_dir_all(&tmp).unwrap();
         assert!(host_exe_from_resource_dir(&tmp).is_none());
         std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn spawn_host_is_noop_when_already_up() {
+        let handle = Arc::new(HostHandle::default());
+        handle.set_status(HostStatus::Ready); // pretend the host is already running
+        let tmp = std::env::temp_dir().join("textree-host-guard");
+        // A bogus exe would fail to spawn and flip status to Unavailable WITHOUT the guard.
+        spawn_host(handle.clone(), "this-exe-does-not-exist".into(), tmp);
+        assert!(
+            matches!(handle.status(), HostStatus::Ready),
+            "guard must prevent re-spawn when already Starting/Ready"
+        );
     }
 
     #[test]
