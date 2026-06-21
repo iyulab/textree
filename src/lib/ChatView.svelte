@@ -52,6 +52,7 @@
 
   function handleKeydown(e: KeyboardEvent) {
     if (e.key === 'Enter') {
+      if (busy) return;
       clearRetry();
       void sendAndPoll();
     }
