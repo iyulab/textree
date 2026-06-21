@@ -19,9 +19,11 @@
     searchContent,
     rebuildIndex,
     publishSite,
+    prepareAiModel,
     type TreeNode,
     type SearchHit,
   } from "$lib/ipc";
+  import { getAiConsent } from "$lib/aiConsent";
   import { decideStartup, LAST_VAULT_KEY } from "$lib/startup.helpers";
   import { toPublishTokens } from "$lib/publish.helpers";
   import tokensCssRaw from "$lib/styles/tokens.css?raw";
@@ -942,6 +944,10 @@
         startupError = String(e);
       }
     })();
+
+    // Auto-start the local-AI host if the user previously consented (device-local flag). On first
+    // run / no consent the host stays unspawned until enabled in the ? palette.
+    if (getAiConsent()) void prepareAiModel();
 
     const win = getCurrentWindow();
     const unlistenClose = win.onCloseRequested(async (event) => {

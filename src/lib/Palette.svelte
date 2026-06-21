@@ -5,7 +5,9 @@
   import { formatKeybinding } from "./keybinding.helpers";
   import { paletteListState } from "./palette.helpers";
   import type { Command } from "./commands";
-  import { semanticSearch, hostStatus, type SearchHit, type SemanticHit, type HostStatus } from "./ipc";
+  import { semanticSearch, hostStatus, prepareAiModel, type SearchHit, type SemanticHit, type HostStatus } from "./ipc";
+  import { resolveSemanticAiUi } from "./semanticAiUi.helpers";
+  import { getAiConsent, setAiConsent } from "./aiConsent";
 
   interface FileEntry {
     name: string;
@@ -88,6 +90,7 @@
   // Semantic search — mirrors content search pattern; guarded by hostState and vaultRoot availability.
   let semanticHits = $state<SemanticHit[]>([]);
   let hostState = $state<HostStatus | null>(null);
+  let consent = $state(getAiConsent());
 
   $effect(() => {
     if (palette.mode !== "semantic") {
@@ -95,16 +98,17 @@
       searching = false;
       return;
     }
+    // Poll host status on entering semantic mode (even with an empty term) so the consent /
+    // preparing row can render before the user types.
+    void hostStatus()
+      .then((s) => { hostState = s; })
+      .catch(() => { hostState = "unavailable"; });
     const term = palette.term;
     if (term === "") {
       semanticHits = [];
       searching = false;
       return;
     }
-    // Poll host status once when the user enters semantic mode; refresh on each query change.
-    void hostStatus()
-      .then((s) => { hostState = s; })
-      .catch(() => { hostState = "unavailable"; });
     if (!vaultRoot) {
       searching = false;
       return;
@@ -140,11 +144,9 @@
           ? semanticHits.length
           : contentHits.length,
   );
-  // True while in semantic mode and the host is known to be not ready. Used to suppress
-  // the generic "Searching…" / "No matches found" status rows (the ai-unavailable row takes over).
-  let aiNotReady = $derived(
-    palette.mode === "semantic" && hostState !== null && hostState !== "ready",
-  );
+  let aiUi = $derived(resolveSemanticAiUi(consent, hostState));
+  // Suppress the generic "Searching…" / "No matches found" rows while the AI row takes over.
+  let aiNotReady = $derived(palette.mode === "semantic" && aiUi !== "ready");
   let listState = $derived(
     paletteListState({ mode: palette.mode, term: palette.term, count, searching }),
   );
@@ -159,6 +161,16 @@
     }
     if (i < text.length) out.push({ t: text.slice(i), on: false });
     return out;
+  }
+
+  function enableAi() {
+    setAiConsent(true);
+    consent = true;
+    void prepareAiModel();
+    // Re-poll so the row flips prompt → preparing right away.
+    void hostStatus()
+      .then((s) => { hostState = s; })
+      .catch(() => { hostState = "unavailable"; });
   }
 
   function commit(): void {
@@ -283,11 +295,21 @@
             </li>
           {/each}
         {:else if palette.mode === "semantic"}
-          {#if hostState !== null && hostState !== "ready"}
-            <!-- Host not ready: show a calm muted status row instead of results (graceful degradation). -->
-            <li class="status-row ai-unavailable" role="status">
-              {hostState === "starting" ? "Local AI is indexing…" : "Local AI is unavailable"}
-            </li>
+          {#if aiUi !== "ready"}
+            {#if aiUi === "prompt"}
+              <li class="status-row ai-unavailable ai-prompt" role="status">
+                <span>Enable free local AI — downloads a model (~470MB) once.</span>
+                <button type="button" class="ai-enable" data-testid="ai-enable" onclick={enableAi}>
+                  Enable
+                </button>
+              </li>
+            {:else if aiUi === "preparing"}
+              <li class="status-row ai-unavailable" role="status">
+                Local AI is preparing… (first run downloads the model)
+              </li>
+            {:else}
+              <li class="status-row ai-unavailable" role="status">Local AI is unavailable</li>
+            {/if}
           {:else}
             {#each semanticHits as h, i (h.path)}
               <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
@@ -405,5 +427,26 @@
   /* AI unavailable / indexing — same muted treatment, distinct from error. */
   .ai-unavailable {
     font-style: italic;
+  }
+  /* Consent prompt row — spread text and button across the row. */
+  .ai-prompt {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+  }
+  /* Enable button — brand accent, inherits UI font. */
+  .ai-enable {
+    flex: none;
+    padding: 0.2rem 0.6rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-s);
+    background: var(--accent);
+    color: var(--text-on-accent);
+    font: inherit;
+    cursor: pointer;
+  }
+  .ai-enable:hover {
+    background: var(--accent-hover);
   }
 </style>
