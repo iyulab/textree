@@ -224,3 +224,7 @@ export async function semanticSearch(
 export async function hostStatus(): Promise<HostStatus> {
   return invoke<HostStatus>("host_status");
 }
+
+export async function prepareAiModel(): Promise<void> {
+  return invoke<void>("prepare_ai_model");
+}
