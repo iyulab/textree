@@ -106,8 +106,9 @@ pub fn spawn_host(handle: Arc<HostHandle>, exe: String, app_data: std::path::Pat
         .env("ASPNETCORE_URLS", &url)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    // TODO(lifecycle): the published host is framework-dependent — caller must ensure
-    // DOTNET_ROOT is set or publish self-contained, else the exe fails to launch.
+    // The bundled host is published self-contained single-file (assemble-host-sidecar.ps1),
+    // so it carries its own runtime — no DOTNET_ROOT needed. In dev, TEXTREE_HOST_EXE may point
+    // at a framework-dependent build, which then relies on the ambient .NET runtime.
     let mut child = match cmd.spawn() {
         Ok(c) => c,
         Err(e) => {
