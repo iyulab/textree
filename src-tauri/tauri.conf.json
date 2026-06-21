@@ -28,7 +28,8 @@
     "active": true,
     "targets": ["nsis"],
     "resources": {
-      "resources/canopy/": "canopy/"
+      "resources/canopy/": "canopy/",
+      "resources/host/": "host/"
     },
     "createUpdaterArtifacts": true,
     "icon": [

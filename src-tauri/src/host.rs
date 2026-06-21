@@ -457,6 +457,20 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires assemble-host-sidecar.ps1 to have staged the exe under src-tauri/resources/host/"]
+    fn run_host_present_via_assembled_sidecar() {
+        // CARGO_MANIFEST_DIR = src-tauri/. The assembled payload lives under resources/host/.
+        let manifest = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let resource = manifest.join("resources");
+        let found = host_exe_from_resource_dir(&resource);
+        assert!(
+            found.is_some(),
+            "assembled host exe not found under {}/host/ — run scripts/assemble-host-sidecar.ps1",
+            resource.display()
+        );
+    }
+
+    #[test]
     #[ignore = "requires TEXTREE_HOST_EXE pointing at a built host"]
     fn spawn_reaches_ready() {
         let exe = std::env::var("TEXTREE_HOST_EXE").expect("set TEXTREE_HOST_EXE");
