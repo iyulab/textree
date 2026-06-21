@@ -25,9 +25,9 @@ True to its name, Textree is **plain text on top of a tree-structured filesystem
 
 ## What makes it different
 
-Three things most note apps do only halfway, or skip on purpose:
+Three things Textree leans into from the start:
 
-- **Pretty by default** — opinionated defaults (title, an emoji icon, a typographic scale, consistent spacing) so a note looks tidy *without* you styling anything. Cloud apps gate polish behind paid tiers; local editors hand you raw tools and expect you to theme them. Textree just looks reasonable out of the box.
+- **Pretty by default** — opinionated defaults (title, an emoji icon, a typographic scale, consistent spacing) so a note looks tidy *without* you styling anything. No paid tier to unlock polish, no theming homework — Textree just looks reasonable out of the box.
 - **Free local AI** *(planned)* — a small local model by default, with graceful degradation: editing, the tree, and search all work fully without it. Elevate with your own API key (or an OpenAI-compatible endpoint) when you want more. No mandatory subscription to make AI useful.
 - **Frictionless publish** — turn your tree into a clean, read-only static website in one move (via [canopy](https://github.com/iyulab/canopy)). Local notes, on the web, without surrendering the local-source-of-truth model.
 
@@ -138,20 +138,9 @@ Directions, not promises — the local, single-user core stays free and works wi
 
 ---
 
-## How Textree Differs from Cloud Note Apps
+## Where Textree fits
 
-| Aspect          | Typical cloud note app | Textree                       |
-| --------------- | ------------------- | -------------------------------- |
-| Delivery        | Cloud SaaS          | Local desktop app                |
-| Storage         | Proprietary DB (server) | Local filesystem (`.md`)     |
-| Offline         | Limited             | Fully supported                  |
-| Data ownership  | Vendor-locked       | 100% owned by you                |
-| Format          | Proprietary / needs export | Standard markdown, portable as-is |
-| Out-of-the-box polish | Polished, but cloud-bound | Pretty by default, on local files |
-| Collaboration   | Real-time multi-user | Single user (share a vault via a sync folder if you like) |
-| External tools  | Low compatibility   | Compatible with every markdown tool |
-
-> Textree trades real-time collaboration for **ownership, portability, and transparency** — then adds pretty-by-default and one-click publish on top. A polished note app you actually own.
+Textree trades real-time collaboration for **ownership, portability, and transparency** — then adds pretty-by-default and one-click publish on top. Your notes stay as plain `.md` files on your own disk: fully yours, readable by any markdown tool, and available offline. A polished note app you actually own.
 
 ---
 
