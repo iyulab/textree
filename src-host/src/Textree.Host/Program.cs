@@ -31,6 +31,7 @@ var app = builder.Build();
 
 var mgr = app.Services.GetRequiredService<VaultManager>();
 var reindexLog = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Textree.Host.Reindex");
+var genLog = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Textree.Host.Generation");
 
 // ── Endpoints ─────────────────────────────────────────────────────────────────
 
@@ -42,7 +43,11 @@ app.MapPost("/prepare-generation", (ITextGenerator gen) =>
     // Idempotent: kick off model load in the background, return immediately.
     // PrepareAsync is internally idempotent (double-checked SemaphoreSlim), so
     // concurrent or repeated calls are safe.
-    _ = Task.Run(() => gen.PrepareAsync(CancellationToken.None));
+    _ = Task.Run(async () =>
+    {
+        try { await gen.PrepareAsync(CancellationToken.None); }
+        catch (Exception ex) { genLog.LogError(ex, "Generation model PrepareAsync failed"); }
+    });
     return Results.Accepted();
 });
 

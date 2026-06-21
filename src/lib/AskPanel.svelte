@@ -89,7 +89,7 @@
     <div class="ask-consent">
       <p class="ask-consent-text">
         Ask questions answered from your notes — free, local, private.
-        Requires a one-time model download (~1 GB).
+        Requires a one-time AI model download (~5 GB).
       </p>
       <button class="ask-enable" onclick={enableGeneration}>
         Enable local AI Q&amp;A
