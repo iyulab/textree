@@ -97,10 +97,14 @@ class AskStore {
     }
   }
 
-  /** Cancel the active request (panel close, new question, etc.). */
+  /** Cancel the active request and fully clear display state (note switch, unmount, etc.). */
   cancel() {
-    this.askSeq++;
+    this.askSeq++;       // invalidates any in-flight stream callbacks
     this.status = 'idle';
+    this.question = '';
+    this.answer = '';
+    this.citations = [];
+    this.errorMessage = '';
   }
 }
 

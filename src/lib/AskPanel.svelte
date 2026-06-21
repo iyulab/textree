@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onDestroy } from 'svelte';
   import { askStore } from './askStore.svelte';
   import { getGenerationConsent, setGenerationConsent, setAiConsent } from './aiConsent';
   import { prepareAiModel } from './ipc';
@@ -32,6 +33,21 @@
       retryTimer = null;
     }
   }
+
+  // Reset the ask panel state whenever the scoped note changes so that a
+  // prior note's stream/answer/timer cannot bleed into the new note's panel.
+  $effect(() => {
+    // Reading nodeScope here registers it as a dependency so the effect
+    // re-runs on every prop change, not just mount.
+    nodeScope;
+    clearRetry();
+    askStore.cancel();
+  });
+
+  onDestroy(() => {
+    clearRetry();
+    askStore.cancel();
+  });
 
   /**
    * Enable local AI Q&A:
