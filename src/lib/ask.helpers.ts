@@ -10,7 +10,18 @@ export interface Citation {
   snippet: string;
 }
 
+export interface ChatTurn {
+  role: 'user' | 'assistant';
+  text: string;
+  citations: Citation[];
+}
+
 const MAX_HITS = 5;
+const GROUNDING_SYSTEM =
+  'You are a notes assistant. Answer only using the provided note excerpts below. ' +
+  'If the excerpts do not contain the answer, say you could not find it in the notes. ' +
+  'Do not invent facts that are not in the excerpts.';
+const DEFAULT_MAX_HISTORY = 6;
 
 export function hasUsableContext(hits: SemanticHit[]): boolean {
   return hits.length > 0;
@@ -20,19 +31,48 @@ export function selectContext(hits: SemanticHit[], maxHits = MAX_HITS): Semantic
   return hits.slice(0, maxHits);
 }
 
-export function buildAskPrompt(question: string, hits: SemanticHit[]): ChatMessage[] {
-  const system =
-    'You are a notes assistant. Answer only using the provided note excerpts below. ' +
-    'If the excerpts do not contain the answer, say you could not find it in the notes. ' +
-    'Do not invent facts that are not in the excerpts.';
-  const selected = selectContext(hits);
-  const context = selected.map(h => `Source: ${h.path}\n${h.snippet}`).join('\n\n---\n\n');
+function formatContext(hits: SemanticHit[]): string {
+  return selectContext(hits)
+    .map((h) => `Source: ${h.path}\n${h.snippet}`)
+    .join('\n\n---\n\n');
+}
+
+export function buildChatMessages(
+  history: ChatTurn[],
+  question: string,
+  hits: SemanticHit[],
+  opts: { maxHistory?: number } = {},
+): ChatMessage[] {
+  const maxHistory = opts.maxHistory ?? DEFAULT_MAX_HISTORY;
+  const recent = history.slice(-maxHistory);
+  const context = formatContext(hits);
   return [
-    { role: 'system', content: system },
+    { role: 'system', content: GROUNDING_SYSTEM },
+    ...recent.map((t): ChatMessage => ({ role: t.role, content: t.text })),
     { role: 'user', content: `Notes:\n\n${context}\n\nQuestion: ${question}` },
   ];
 }
 
+export function buildAskPrompt(question: string, hits: SemanticHit[]): ChatMessage[] {
+  return buildChatMessages([], question, hits);
+}
+
 export function extractCitations(hits: SemanticHit[]): Citation[] {
   return hits.map(h => ({ path: h.path, snippet: h.snippet }));
+}
+
+const DEFAULT_FILE_MAX_CHARS = 8000;
+
+/**
+ * Build a single-context "hit" from a whole note body, for file-scoped chat
+ * (the file is the subject — no retrieval). Budget-cut for the model context
+ * window. Empty/whitespace bodies yield no context (-> empty state).
+ */
+export function fileToContext(
+  path: string,
+  body: string,
+  maxChars = DEFAULT_FILE_MAX_CHARS,
+): SemanticHit[] {
+  if (body.trim().length === 0) return [];
+  return [{ path, snippet: body.slice(0, maxChars), score: 1 }];
 }
