@@ -53,6 +53,11 @@ pub struct HostHandle {
     port: Mutex<Option<u16>>,
     child: Mutex<Option<Child>>,
     generation: AtomicU64,
+    /// Separate single-flight counter for `ask` streams.
+    /// Must NOT share `generation` — that counter drives the health-poll thread
+    /// (spawn_host increments it); mixing them would cancel in-flight asks on
+    /// every host respawn, and a new ask would invalidate the health poller.
+    ask_generation: AtomicU64,
     current_vault: Mutex<Option<String>>,
 }
 
@@ -72,6 +77,15 @@ impl HostHandle {
     }
     pub fn current_vault(&self) -> Option<String> {
         self.current_vault.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+    /// Bump the ask-stream generation and return the new value.
+    /// Used by `ask` for single-flight cancellation (independent of health-poll `generation`).
+    pub fn bump_ask_generation(&self) -> u64 {
+        self.ask_generation.fetch_add(1, Ordering::SeqCst) + 1
+    }
+    /// Read the current ask generation (used inside spawn_blocking to detect cancellation).
+    pub fn ask_generation(&self) -> u64 {
+        self.ask_generation.load(Ordering::SeqCst)
     }
 }
 
@@ -337,6 +351,163 @@ pub async fn semantic_search(
 }
 
 // ---------------------------------------------------------------------------
+// DTOs and helpers for `ask` (streaming /chat)
+// ---------------------------------------------------------------------------
+
+/// A single message in a conversation, forwarded from the frontend to the host's /chat endpoint.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ChatMessage {
+    pub role: String,
+    pub content: String,
+}
+
+/// Events emitted by the `ask` command over its `Channel<AskEvent>`.
+#[derive(Clone, Serialize)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+pub enum AskEvent {
+    /// A streamed text token from the model.
+    Token { text: String },
+    /// The semantic-search hits that were used to ground the answer (sent once, after Done).
+    Citations { hits: Vec<SemanticHit> },
+    /// Stream complete — no more events will follow on this channel.
+    Done,
+    /// A non-fatal error; the frontend should display the message to the user.
+    Error { message: String },
+}
+
+// Private SSE-parsing DTOs.
+#[derive(Deserialize)]
+struct ChatChunk {
+    choices: Vec<ChatChoice>,
+}
+#[derive(Deserialize)]
+struct ChatChoice {
+    delta: ChatDelta,
+}
+#[derive(Deserialize)]
+struct ChatDelta {
+    #[serde(default)]
+    content: String,
+}
+
+/// Parse one SSE line (`"data: {...}"`) into a token string.
+///
+/// Returns `Some(text)` when the line carries a non-empty content delta.
+/// Returns `None` for:
+/// - `data: [DONE]` (stream terminator)
+/// - blank lines (SSE field separator)
+/// - non-`data:` lines (event/id/comment fields)
+/// - JSON parse failures (malformed chunk)
+/// - empty `content` field (role-only or heartbeat deltas)
+pub fn parse_chat_chunk(line: &str) -> Option<String> {
+    let payload = line.strip_prefix("data: ")?;
+    if payload.trim() == "[DONE]" {
+        return None;
+    }
+    let chunk: ChatChunk = serde_json::from_str(payload).ok()?;
+    let text = chunk.choices.first()?.delta.content.clone();
+    if text.is_empty() {
+        None
+    } else {
+        Some(text)
+    }
+}
+
+/// Stream a conversational response from the local-AI host's `/chat` endpoint.
+///
+/// Events are pushed over `on_event`:
+/// 1. `Token { text }` — one per SSE delta, in order.
+/// 2. `Citations { hits }` — the pre-fetched semantic hits used to ground the answer.
+/// 3. `Done` — stream complete.
+///
+/// On any error (host not up, connection failure, I/O) an `Error { message }` event is sent
+/// instead of Token/Citations/Done, and the command returns `Ok(())` so the frontend does
+/// not receive a Tauri IPC error.
+///
+/// Single-flight cancellation: a new `ask` call bumps `ask_generation`; in-flight streams
+/// detect the mismatch on each line and abort (dropping the reader closes the TCP connection,
+/// causing the host to see `RequestAborted` and stop generating — freeing CPU/memory).
+///
+/// Scope validation mirrors `semantic_search`: `scope_path`, when provided, must be within
+/// the vault directory, or the command returns `Err` (an IPC-level error, not an event).
+#[tauri::command]
+pub async fn ask(
+    vault: String,
+    messages: Vec<ChatMessage>,
+    citation_hits: Vec<SemanticHit>,
+    scope_path: Option<String>,
+    on_event: tauri::ipc::Channel<AskEvent>,
+    host: State<'_, Arc<HostHandle>>,
+) -> Result<(), String> {
+    // Graceful degradation: host not up → inform the user, do not hard-error.
+    let Some(base) = host.base_url() else {
+        let _ = on_event.send(AskEvent::Error {
+            message: "Local AI is not available".into(),
+        });
+        return Ok(());
+    };
+    if !matches!(host.status(), HostStatus::Ready) {
+        let _ = on_event.send(AskEvent::Error {
+            message: "Local AI is preparing".into(),
+        });
+        return Ok(());
+    }
+    // Security at the edge: reject scope_path that escapes the vault (mirrors semantic_search N3).
+    if let Some(ref sp) = scope_path {
+        if !crate::pathsafe::is_within(Path::new(&vault), Path::new(sp)) {
+            return Err("scope is outside the vault".into());
+        }
+    }
+
+    // Single-flight cancellation counter (separate from health-poll `generation`).
+    let my_gen = host.bump_ask_generation();
+    let handle = host.inner().clone();
+
+    // Clone the channel so on_event is available both inside and after spawn_blocking.
+    // Channel<T> is Clone in Tauri 2; both halves push to the same frontend listener.
+    let on_event_inner = on_event.clone();
+
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let payload = serde_json::json!({ "messages": messages, "stream": true });
+        let resp = ureq::post(&format!("{base}/chat"))
+            .timeout(Duration::from_secs(120))
+            .send_json(payload)
+            .map_err(|e| e.to_string())?;
+        let reader = BufReader::new(resp.into_reader());
+        for line in reader.lines() {
+            // A newer `ask` has started — abandon this stream.
+            // Dropping `reader` closes the TCP connection; the host sees RequestAborted
+            // and stops generating, freeing its CPU/memory budget.
+            if handle.ask_generation() != my_gen {
+                return Ok(());
+            }
+            let line = line.map_err(|e| e.to_string())?;
+            if let Some(text) = parse_chat_chunk(&line) {
+                let _ = on_event_inner.send(AskEvent::Token { text });
+            }
+        }
+        Ok::<(), String>(())
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+
+    match result {
+        Ok(()) => {
+            // Guard against sending Citations/Done on a superseded channel (cancelled ask).
+            // If another ask has since started, our channel is stale — skip the epilogue.
+            if host.ask_generation() == my_gen {
+                let _ = on_event.send(AskEvent::Citations { hits: citation_hits });
+                let _ = on_event.send(AskEvent::Done);
+            }
+        }
+        Err(e) => {
+            let _ = on_event.send(AskEvent::Error { message: e });
+        }
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // Fire-and-forget indexing helpers
 // ---------------------------------------------------------------------------
 
@@ -469,6 +640,20 @@ mod tests {
             "assembled host exe not found under {}/host/ — run scripts/assemble-host-sidecar.ps1",
             resource.display()
         );
+    }
+
+    #[test]
+    fn parse_chat_chunk_extracts_delta_content() {
+        // Valid delta with text.
+        let line = r#"data: {"choices":[{"delta":{"content":"Hel"}}]}"#;
+        assert_eq!(parse_chat_chunk(line), Some("Hel".to_string()));
+        // Stream terminator — must return None.
+        assert_eq!(parse_chat_chunk("data: [DONE]"), None);
+        // Blank line (SSE separator) — must return None.
+        assert_eq!(parse_chat_chunk(""), None);
+        // Empty content field — model emitted an empty delta, not a real token.
+        let empty_delta = r#"data: {"choices":[{"delta":{"content":""}}]}"#;
+        assert_eq!(parse_chat_chunk(empty_delta), None);
     }
 
     #[test]

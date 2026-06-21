@@ -64,7 +64,8 @@ pub fn run() {
             commands::ensure_default_vault,
             host::host_status,
             host::semantic_search,
-            host::prepare_ai_model
+            host::prepare_ai_model,
+            host::ask
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
