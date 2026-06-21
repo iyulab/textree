@@ -22,10 +22,11 @@ export function selectContext(hits: SemanticHit[], maxHits = MAX_HITS): Semantic
 
 export function buildAskPrompt(question: string, hits: SemanticHit[]): ChatMessage[] {
   const system =
-    'You are a notes assistant. Answer ONLY using the provided note excerpts below. ' +
+    'You are a notes assistant. Answer only using the provided note excerpts below. ' +
     'If the excerpts do not contain the answer, say you could not find it in the notes. ' +
     'Do not invent facts that are not in the excerpts.';
-  const context = hits.map(h => `Source: ${h.path}\n${h.snippet}`).join('\n\n---\n\n');
+  const selected = selectContext(hits);
+  const context = selected.map(h => `Source: ${h.path}\n${h.snippet}`).join('\n\n---\n\n');
   return [
     { role: 'system', content: system },
     { role: 'user', content: `Notes:\n\n${context}\n\nQuestion: ${question}` },
