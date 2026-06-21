@@ -31,6 +31,18 @@ class LayoutStore {
   width = $state<number>(SIDEBAR_DEFAULT);
   collapsed = $state<boolean>(false);
 
+  // Main-pane mode. Ephemeral (NOT persisted): a restart should reopen in Note
+  // mode, never Chat with a vanished session.
+  mode = $state<'note' | 'chat'>('note');
+
+  setMode(m: 'note' | 'chat'): void {
+    this.mode = m;
+  }
+
+  toggleMode(): void {
+    this.mode = this.mode === 'note' ? 'chat' : 'note';
+  }
+
   /** Once at app startup: load stored values. */
   init(): void {
     this.width = readWidth();

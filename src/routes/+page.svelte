@@ -37,7 +37,8 @@
   import Editor from "$lib/Editor.svelte";
   import Backlinks from "$lib/Backlinks.svelte";
   import RelatedNotes from "$lib/RelatedNotes.svelte";
-  import AskPanel from "$lib/AskPanel.svelte";
+  import ChatView from "$lib/ChatView.svelte";
+  import { chatStore, type ChatScope } from "$lib/chatStore.svelte";
   import Trash from "$lib/Trash.svelte";
   import PageHeader from "$lib/PageHeader.svelte";
   import { parseFrontmatter, getField } from "$lib/frontmatter.helpers";
@@ -166,6 +167,9 @@
     closeEditor();
     selectedNode = null;
     cancelMode();
+    chatStore.cancel();
+    chatStore.started = false;
+    layout.setMode("note");
     backlinks.clear(); // drop the previous vault's index (the $effect below rebuilds it)
     relatedNotes.clear(); // drop the previous vault's related panel
     await nav.load(path); // load favorites/order sidecar
@@ -731,6 +735,12 @@
     }
   });
 
+  // Stop the host generating when the user leaves Chat mode (mirror AskPanel's
+  // onDestroy cancel — the shipped /ask I1 lesson: cancel must reach the host).
+  $effect(() => {
+    if (layout.mode !== "chat") chatStore.cancel();
+  });
+
   // ── Frontmatter table (folder = DB, .md = row) — read-only first slice ────
   // Built from already-parsed frontmatter (no backend leakage; in-memory, D17). Reads each direct
   // child note's body once via the existing readNote IPC — same frontend-scan precedent as backlinks.
@@ -845,6 +855,31 @@
         ? parentDir(activePath)
         : null,
   );
+
+  /** Capture the current tree selection as a pinned chat scope. */
+  function chatScopeFromSelection(): ChatScope {
+    const sel = selectedNode;
+    if (sel?.kind === "container") return { kind: "folder", path: sel.path, label: sel.name };
+    if (sel?.kind === "leaf") return { kind: "file", path: sel.path, label: sel.name };
+    return { kind: "vault", path: null, label: "Whole vault" };
+  }
+
+  /** Enter Chat mode; start a session pinned to the selection only if none is active. */
+  function enterChat() {
+    if (!chatStore.started) chatStore.startSession(chatScopeFromSelection());
+    layout.setMode("chat");
+  }
+
+  /** New chat / re-scope: pin to the current selection and start fresh. */
+  function newChatFromSelection() {
+    chatStore.startSession(chatScopeFromSelection());
+  }
+
+  /** Open a cited note and return to Note mode (natural reading flow). */
+  function openCitedNote(path: string) {
+    layout.setMode("note");
+    openFileFromPalette(path);
+  }
 
   /** Palette file selection → find the matching TreeNode and delegate to handleSelect.
    *  Accepts both absolute TreeNode paths (file/command mode) and vault-relative POSIX
@@ -1157,7 +1192,31 @@
         </div>
       </div>
     {/if}
-    {#if !root}
+    {#if root}
+      <div class="content-bar">
+        <div class="mode-toggle" role="group" aria-label="Main view mode">
+          <button
+            class="mode-btn"
+            class:active={layout.mode === "note"}
+            onclick={() => layout.setMode("note")}
+            aria-pressed={layout.mode === "note"}
+          >Note</button>
+          <button
+            class="mode-btn"
+            class:active={layout.mode === "chat"}
+            onclick={enterChat}
+            aria-pressed={layout.mode === "chat"}
+          >Chat</button>
+        </div>
+      </div>
+    {/if}
+    {#if layout.mode === "chat" && root}
+      <ChatView
+        vault={root}
+        onOpenNote={openCitedNote}
+        onNewChat={newChatFromSelection}
+      />
+    {:else if !root}
       <div class="empty-state">
         <h1 class="empty-brand">Textree</h1>
         <p class="empty-sub">{NO_VAULT_PROMPT}</p>
@@ -1247,17 +1306,12 @@
             related={relatedNotes.items}
             onOpen={(p) => handleWikiLink(p, undefined)}
           />
-          <AskPanel
-            vault={root!}
-            nodeScope={semanticScopePath}
-            onOpenNote={openFileFromPalette}
-          />
         </div>
       {/if}
     {:else if selectedNode?.kind !== "container"}
       <p class="hint">{NO_NOTE_PROMPT}</p>
     {/if}
-    {#if selectedNode?.kind === "container" && folderTable}
+    {#if layout.mode === "note" && selectedNode?.kind === "container" && folderTable}
       <!-- Key by folder path so the (ephemeral) sort state resets when switching folders. -->
       {#key selectedNode.path}
         <FolderTableView
@@ -1726,6 +1780,32 @@
   .hint {
     color: var(--text-muted);
     padding: var(--sp-3);
+  }
+  .content-bar {
+    display: flex;
+    justify-content: flex-end;
+    padding: var(--sp-1) var(--sp-4);
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  .mode-toggle {
+    display: inline-flex;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-s);
+    overflow: hidden;
+  }
+  .mode-btn {
+    font: inherit;
+    font-size: var(--font-size-small);
+    padding: 2px var(--sp-2);
+    background: var(--bg-primary);
+    color: var(--text-muted);
+    border: none;
+    cursor: pointer;
+  }
+  .mode-btn.active {
+    background: var(--accent);
+    color: var(--text-on-accent);
   }
   /* Fill the remaining height so the empty area below the tree is also a drop target (move to root). */
   .tree-root {
