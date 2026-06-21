@@ -89,7 +89,7 @@
 
   // Semantic search — mirrors content search pattern; guarded by hostState and vaultRoot availability.
   let semanticHits = $state<SemanticHit[]>([]);
-  let hostState = $state<HostStatus | null>(null);
+  let hostState = $state<HostStatus | null>(null);  // derived from the .status field of hostStatus() result
   let consent = $state(getAiConsent());
 
   $effect(() => {
@@ -101,7 +101,7 @@
     // Poll host status on entering semantic mode (even with an empty term) so the consent /
     // preparing row can render before the user types.
     void hostStatus()
-      .then((s) => { hostState = s; })
+      .then((s) => { hostState = s.status; })
       .catch(() => { hostState = "unavailable"; });
     const term = palette.term;
     if (term === "") {
@@ -169,7 +169,7 @@
     void prepareAiModel();
     // Re-poll so the row flips prompt → preparing right away.
     void hostStatus()
-      .then((s) => { hostState = s; })
+      .then((s) => { hostState = s.status; })
       .catch(() => { hostState = "unavailable"; });
   }
 

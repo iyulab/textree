@@ -1,4 +1,5 @@
-import { invoke } from "@tauri-apps/api/core";
+import { invoke, Channel } from "@tauri-apps/api/core";
+import type { ChatMessage } from './ask.helpers';
 
 export type NodeKind = "leaf" | "container";
 
@@ -221,8 +222,30 @@ export async function semanticSearch(
   });
 }
 
-export async function hostStatus(): Promise<HostStatus> {
-  return invoke<HostStatus>("host_status");
+export async function hostStatus(): Promise<{ status: HostStatus; generatorReady: boolean }> {
+  return invoke<{ status: HostStatus; generatorReady: boolean }>("host_status");
+}
+
+export type AskEvent =
+  | { kind: 'token'; text: string }
+  | { kind: 'citations'; hits: SemanticHit[] }
+  | { kind: 'done' }
+  | { kind: 'error'; message: string };
+
+export function ask(
+  vault: string,
+  messages: ChatMessage[],
+  citationHits: SemanticHit[],
+  scopePath: string | null,
+  onEvent: (e: AskEvent) => void,
+): Promise<void> {
+  const channel = new Channel<AskEvent>();
+  channel.onmessage = onEvent;
+  return invoke<void>('ask', { vault, messages, citationHits, scopePath, onEvent: channel });
+}
+
+export function prepareGeneration(): Promise<void> {
+  return invoke<void>('prepare_generation');
 }
 
 export async function prepareAiModel(): Promise<void> {

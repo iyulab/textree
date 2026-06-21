@@ -37,6 +37,7 @@
   import Editor from "$lib/Editor.svelte";
   import Backlinks from "$lib/Backlinks.svelte";
   import RelatedNotes from "$lib/RelatedNotes.svelte";
+  import AskPanel from "$lib/AskPanel.svelte";
   import Trash from "$lib/Trash.svelte";
   import PageHeader from "$lib/PageHeader.svelte";
   import { parseFrontmatter, getField } from "$lib/frontmatter.helpers";
@@ -1245,6 +1246,11 @@
           <RelatedNotes
             related={relatedNotes.items}
             onOpen={(p) => handleWikiLink(p, undefined)}
+          />
+          <AskPanel
+            vault={root!}
+            nodeScope={semanticScopePath}
+            onOpenNote={openFileFromPalette}
           />
         </div>
       {/if}
