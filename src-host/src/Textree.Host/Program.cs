@@ -34,8 +34,17 @@ var reindexLog = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger(
 
 // ── Endpoints ─────────────────────────────────────────────────────────────────
 
-app.MapGet("/health", () =>
-    Results.Ok(new { status = "ok", embedderReady = mgr.EmbedderReady }));
+app.MapGet("/health", (ITextGenerator gen) =>
+    Results.Ok(new { status = "ok", embedderReady = mgr.EmbedderReady, generatorReady = gen.Ready }));
+
+app.MapPost("/prepare-generation", (ITextGenerator gen) =>
+{
+    // Idempotent: kick off model load in the background, return immediately.
+    // PrepareAsync is internally idempotent (double-checked SemaphoreSlim), so
+    // concurrent or repeated calls are safe.
+    _ = Task.Run(() => gen.PrepareAsync(CancellationToken.None));
+    return Results.Accepted();
+});
 
 app.MapPost("/index", async (IndexRequest req, CancellationToken ct) =>
 {
@@ -81,6 +90,11 @@ app.MapPost("/chat", async (ChatRequestDto req, ITextGenerator gen, HttpContext 
 {
     if (req.Messages is null || req.Messages.Count == 0)
         return Results.BadRequest("messages required");
+
+    // Lazy-load safety net: if the model has not been prepared yet (no prior
+    // /prepare-generation call), load it now before we begin streaming.
+    if (!gen.Ready)
+        await gen.PrepareAsync(ct);
 
     ctx.Response.ContentType = "text/event-stream";
     var msgs = req.Messages.Select(m => new ChatMessage(m.Role, m.Content)).ToList();

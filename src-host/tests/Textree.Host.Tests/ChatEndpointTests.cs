@@ -69,6 +69,32 @@ public sealed class ChatEndpointTests
     }
 
     [Fact]
+    public async Task Health_reports_generator_ready_flag()
+    {
+        var stub = new StubGenerator(chunks: ["x"]);
+        using var factory = new Factory(stub);
+        var client = factory.CreateClient();
+
+        var body = await client.GetStringAsync("/health");
+
+        Assert.Contains("generatorReady", body);
+    }
+
+    [Fact]
+    public async Task Prepare_generation_is_idempotent()
+    {
+        var stub = new StubGenerator(chunks: ["x"]);
+        using var factory = new Factory(stub);
+        var client = factory.CreateClient();
+
+        var resp1 = await client.PostAsync("/prepare-generation", null);
+        var resp2 = await client.PostAsync("/prepare-generation", null);
+
+        Assert.Equal(System.Net.HttpStatusCode.Accepted, resp1.StatusCode);
+        Assert.Equal(System.Net.HttpStatusCode.Accepted, resp2.StatusCode);
+    }
+
+    [Fact]
     public async Task Chat_stops_generating_when_client_cancels()
     {
         // Stub blocks after the first chunk until its ct is cancelled, then records it.
