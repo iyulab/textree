@@ -48,6 +48,27 @@ public sealed class ChatEndpointTests
     }
 
     [Fact]
+    public async Task Chat_forwards_max_tokens_to_generator()
+    {
+        // Regression for the ONNX containment fix: verify that req.MaxTokens (and the ?? 512
+        // default) is propagated into GenerationOptions so the cap actually reaches the backend.
+        var stub = new CapturingGenerator(chunks: ["ok"]);
+        using var factory = new Factory(stub);
+        var client = factory.CreateClient();
+
+        // Explicit value: expect it forwarded verbatim.
+        await client.PostAsJsonAsync("/chat",
+            new { messages = new[] { new { role = "user", content = "hi" } }, maxTokens = 64, stream = true });
+        Assert.Equal(64, stub.LastMaxTokens);
+
+        // Omitted value: expect the ?? 512 default applied by the endpoint.
+        stub.Reset();
+        await client.PostAsJsonAsync("/chat",
+            new { messages = new[] { new { role = "user", content = "hi" } }, stream = true });
+        Assert.Equal(512, stub.LastMaxTokens);
+    }
+
+    [Fact]
     public async Task Chat_stops_generating_when_client_cancels()
     {
         // Stub blocks after the first chunk until its ct is cancelled, then records it.
@@ -92,6 +113,37 @@ public sealed class ChatEndpointTests
                 services.RemoveAll<ITextGenerator>();
                 services.AddSingleton(_generator);
             });
+        }
+    }
+
+    // ── Capturing generator: records GenerationOptions for assertion ─────────────────
+    private sealed class CapturingGenerator : ITextGenerator
+    {
+        private readonly string[] _chunks;
+        private int? _lastMaxTokens;
+
+        public CapturingGenerator(string[] chunks) => _chunks = chunks;
+
+        public bool Ready => true;
+        public Task PrepareAsync(CancellationToken ct) => Task.CompletedTask;
+
+        /// <summary>MaxTokens from the most recent <see cref="GenerateAsync"/> call.</summary>
+        public int? LastMaxTokens => _lastMaxTokens;
+
+        public void Reset() => _lastMaxTokens = null;
+
+        public async IAsyncEnumerable<string> GenerateAsync(
+            IReadOnlyList<ChatMessage> messages,
+            GenerationOptions opts,
+            [EnumeratorCancellation] CancellationToken ct)
+        {
+            _lastMaxTokens = opts.MaxTokens;
+            foreach (var chunk in _chunks)
+            {
+                ct.ThrowIfCancellationRequested();
+                yield return chunk;
+                await Task.Yield();
+            }
         }
     }
 

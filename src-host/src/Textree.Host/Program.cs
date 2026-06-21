@@ -94,6 +94,10 @@ app.MapPost("/chat", async (ChatRequestDto req, ITextGenerator gen, HttpContext 
         await ctx.Response.Body.FlushAsync(ct);
     }
     await ctx.Response.WriteAsync("data: [DONE]\n\n", ct);
+    // The handler streams directly into ctx.Response (SSE); there is no object to return.
+    // Results.Empty is a formality required by the IResult-returning delegate signature — it
+    // writes nothing extra to the response. On client disconnect the OperationCanceledException
+    // propagates before this line is reached, so it is unreachable on the abort path.
     return Results.Empty;
 });
 

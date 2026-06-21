@@ -97,9 +97,11 @@ public sealed class LocalTextGenerator : ITextGenerator, IAsyncDisposable
             Temperature = opts.Temperature,
         };
 
-        // GenerateChatAsync streams token chunks. Forwarding ct stops generation on client
-        // disconnect (RequestAborted), freeing the CPU mid-stream.
-        await foreach (var chunk in model.GenerateChatAsync(lmMessages, lmOpts, ct).WithCancellation(ct))
+        // ct is already passed to GenerateChatAsync so the library can check it between tokens.
+        // ThrowIfCancellationRequested guards the case where the library yields a chunk without
+        // rechecking ct internally — ensures we stop promptly on client disconnect regardless
+        // of the backend's internal cancellation discipline.
+        await foreach (var chunk in model.GenerateChatAsync(lmMessages, lmOpts, ct))
         {
             ct.ThrowIfCancellationRequested();
             yield return chunk;
@@ -109,13 +111,21 @@ public sealed class LocalTextGenerator : ITextGenerator, IAsyncDisposable
     private static LmChatMessage ToLmMessage(ChatMessage m) =>
         new(ParseRole(m.Role), m.Content);
 
-    private static LmChatRole ParseRole(string role) => role?.ToLowerInvariant() switch
+    private static LmChatRole ParseRole(string? role)
     {
-        "system" => LmChatRole.System,
-        "assistant" => LmChatRole.Assistant,
-        "tool" => LmChatRole.Tool,
-        _ => LmChatRole.User, // default/unknown -> user
-    };
+        if (string.IsNullOrWhiteSpace(role))
+            throw new ArgumentException("Message role must not be null or empty.", nameof(role));
+
+        return role.ToLowerInvariant() switch
+        {
+            "system" => LmChatRole.System,
+            "assistant" => LmChatRole.Assistant,
+            "tool" => LmChatRole.Tool,
+            // Unknown non-empty roles (e.g. "function") are treated as User — the caller
+            // controls message construction, so non-empty unknown values are a soft mismatch.
+            _ => LmChatRole.User,
+        };
+    }
 
     public async ValueTask DisposeAsync()
     {
