@@ -188,8 +188,7 @@ test.describe("host-present: ask panel streams answers and opens cited notes", (
       // The question input must now be visible (consented state).
       // Use getByRole("textbox") scoped to the panel to avoid strict-mode collision with the
       // "Submit question" button whose aria-label also contains the substring "question".
-      const askPanel = page.locator('section[aria-label="Ask about your notes"]');
-      const questionInput = askPanel.getByRole("textbox", { name: /question/i });
+      const questionInput = panel.getByRole("textbox", { name: /question/i });
       await expect(questionInput).toBeVisible({ timeout: 5_000 });
 
       // Type a question clearly answerable from the vault.
@@ -236,8 +235,8 @@ test.describe("host-present: ask panel streams answers and opens cited notes", (
       await page.getByRole("treeitem", { name: /photosynthesis/i }).click();
       await expect(page.locator(".cm-content")).toBeVisible({ timeout: 5_000 });
 
-      const askPanel2 = page.locator('section[aria-label="Ask about your notes"]');
-      const questionInput = askPanel2.getByRole("textbox", { name: /question/i });
+      const panel = page.locator('section[aria-label="Ask about your notes"]');
+      const questionInput = panel.getByRole("textbox", { name: /question/i });
       await expect(questionInput).toBeVisible({ timeout: 5_000 });
 
       await questionInput.fill("What is glucose and how is it produced?");
@@ -248,18 +247,16 @@ test.describe("host-present: ask panel streams answers and opens cited notes", (
       const citations = page.locator(".ask-citation");
       await expect(citations).not.toHaveCount(0, { timeout: 30_000 });
 
-      // Click the first citation → the cited note should open in the editor.
+      // Click the first citation → the editor must open the CITED note (not just any note).
       const firstCitation = citations.first();
       const citedPath = await firstCitation.getAttribute("title");
       expect(citedPath).toBeTruthy();
-
       await firstCitation.click();
-
-      // The editor must now be open — verify .cm-content is visible.
       await expect(page.locator(".cm-content")).toBeVisible({ timeout: 5_000 });
-
-      // The title bar must reflect a note name (sanity: app didn't crash, nav worked).
-      await expect(page.locator(".title")).toBeVisible({ timeout: 3_000 });
+      // Derive the note stem from the cited path and assert the editor title shows it.
+      // This fails if the click opened nothing or the wrong note.
+      const expectedStem = citedPath!.replace(/\\/g, "/").split("/").pop()!.replace(/\.md$/, "");
+      await expect(page.locator(".title")).toContainText(expectedStem, { timeout: 5_000 });
     } finally {
       await clearAiConsent(page);
       removeTempVault(vault);
