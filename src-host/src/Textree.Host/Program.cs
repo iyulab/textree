@@ -1,3 +1,4 @@
+using System.Text.Json;
 using LMSupply.Embedder;
 using Textree.Host;
 using Textree.Host.Contracts;
@@ -22,6 +23,9 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddSingleton(opts);
 builder.Services.AddSingleton(embedder);
 builder.Services.AddSingleton<VaultManager>();
+// Local CPU text generator for /chat. Singleton: the model loads once (lazily, on first
+// /chat) and is reused. Tests replace this with a stub via ConfigureTestServices.
+builder.Services.AddSingleton<ITextGenerator, LocalTextGenerator>();
 
 var app = builder.Build();
 
@@ -73,6 +77,26 @@ app.MapPost("/search", async (SearchRequest req, CancellationToken ct) =>
     return Results.Ok(new SearchResponse(results, "ok"));
 });
 
+app.MapPost("/chat", async (ChatRequestDto req, ITextGenerator gen, HttpContext ctx, CancellationToken ct) =>
+{
+    if (req.Messages is null || req.Messages.Count == 0)
+        return Results.BadRequest("messages required");
+
+    ctx.Response.ContentType = "text/event-stream";
+    var msgs = req.Messages.Select(m => new ChatMessage(m.Role, m.Content)).ToList();
+    var opts = new GenerationOptions(MaxTokens: req.MaxTokens ?? 512);
+
+    // ct = HttpContext.RequestAborted -> client disconnect stops generation, frees CPU.
+    await foreach (var chunk in gen.GenerateAsync(msgs, opts, ct))
+    {
+        var json = JsonSerializer.Serialize(new { choices = new[] { new { delta = new { content = chunk } } } });
+        await ctx.Response.WriteAsync($"data: {json}\n\n", ct);
+        await ctx.Response.Body.FlushAsync(ct);
+    }
+    await ctx.Response.WriteAsync("data: [DONE]\n\n", ct);
+    return Results.Empty;
+});
+
 app.MapPost("/shutdown", (IHostApplicationLifetime life) =>
 {
     life.StopApplication();
@@ -80,3 +104,7 @@ app.MapPost("/shutdown", (IHostApplicationLifetime life) =>
 });
 
 app.Run();
+
+// Exposes the implicit Program class for WebApplicationFactory<Program> in tests
+// (top-level statements compile to an internal Program; the partial makes it addressable).
+public partial class Program { }

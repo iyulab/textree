@@ -12,6 +12,7 @@
     <PackageReference Include="FileFlux" />
     <PackageReference Include="FluxCurator" />
     <PackageReference Include="LMSupply.Embedder" />
+    <PackageReference Include="LMSupply.Generator" />
     <PackageReference Include="sqlite-vec" />
     <PackageReference Include="Microsoft.Data.Sqlite" />
   </ItemGroup>
