@@ -7,6 +7,7 @@ import {
   extractCitations,
   fileToContext,
   hasUsableContext,
+  pruneOrphanedAssistantTurn,
   resolveGenerationGate,
   selectContext,
   type ChatTurn,
@@ -50,6 +51,10 @@ class ChatStore {
   async send(vault: string) {
     const q = this.draft.trim();
     if (!q) return;
+    // A prior generation error can leave an orphaned (empty/partial) assistant turn at the tail.
+    // The composer stays enabled in the 'error' state, so a user typing a new question instead of
+    // clicking Retry would otherwise ship that orphan as model history. Symmetric with retryGeneration.
+    this.turns = pruneOrphanedAssistantTurn(this.turns, this.status);
     this.turns = [...this.turns, { role: 'user', text: q, citations: [] }];
     this.draft = '';
     await this.run(vault);
@@ -156,10 +161,8 @@ class ChatStore {
   async retryGeneration(vault: string) {
     // A mid-stream generation failure already pushed a partial assistant turn; drop it so the
     // retry doesn't stack a second one. (Generator-load failures return at the gate before any
-    // assistant turn is pushed, so this is a no-op there.)
-    if (this.turns[this.turns.length - 1]?.role === 'assistant') {
-      this.turns = this.turns.slice(0, -1);
-    }
+    // assistant turn is pushed, so this is a no-op there.) Reached only from the 'error' state.
+    this.turns = pruneOrphanedAssistantTurn(this.turns, this.status);
     this.errorMessage = '';
     this.status = 'preparing';
     try {

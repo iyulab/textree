@@ -7,6 +7,7 @@ import {
   buildChatMessages,
   fileToContext,
   resolveGenerationGate,
+  pruneOrphanedAssistantTurn,
   type ChatTurn,
 } from './ask.helpers';
 import type { SemanticHit } from './ipc';
@@ -136,5 +137,34 @@ describe('resolveGenerationGate', () => {
   });
   it('ignores a stale generator error while the host is not ready', () => {
     expect(resolveGenerationGate({ status: 'unavailable', generatorReady: false, generatorError: 'boom' })).toBe('preparing');
+  });
+});
+
+describe('pruneOrphanedAssistantTurn', () => {
+  const u = (text: string): ChatTurn => ({ role: 'user', text, citations: [] });
+  const a = (text: string): ChatTurn => ({ role: 'assistant', text, citations: [] });
+
+  it('drops a trailing assistant turn left orphaned by a generation error', () => {
+    const turns = [u('Q1'), a('')]; // empty orphan from a failed run
+    expect(pruneOrphanedAssistantTurn(turns, 'error')).toEqual([u('Q1')]);
+  });
+
+  it('drops a trailing half-finished assistant turn (mid-stream error)', () => {
+    const turns = [u('Q1'), a('partial ans')];
+    expect(pruneOrphanedAssistantTurn(turns, 'error')).toEqual([u('Q1')]);
+  });
+
+  it('keeps a finalized assistant turn from a healthy run (status not error)', () => {
+    const turns = [u('Q1'), a('full answer')];
+    expect(pruneOrphanedAssistantTurn(turns, 'done')).toEqual(turns);
+  });
+
+  it('does not drop a trailing user turn even in the error state (generator-load failure: no orphan)', () => {
+    const turns = [u('Q1')];
+    expect(pruneOrphanedAssistantTurn(turns, 'error')).toEqual(turns);
+  });
+
+  it('leaves an empty conversation unchanged', () => {
+    expect(pruneOrphanedAssistantTurn([], 'error')).toEqual([]);
   });
 });
