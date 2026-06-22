@@ -6,6 +6,7 @@ import {
   extractCitations,
   buildChatMessages,
   fileToContext,
+  resolveGenerationGate,
   type ChatTurn,
 } from './ask.helpers';
 import type { SemanticHit } from './ipc';
@@ -114,5 +115,26 @@ describe('fileToContext', () => {
 
   it('returns an empty array for an empty/whitespace body (no usable context)', () => {
     expect(fileToContext('a.md', '   \n  ')).toEqual([]);
+  });
+});
+
+describe('resolveGenerationGate', () => {
+  it('ready when host ready, generator ready, no error', () => {
+    expect(resolveGenerationGate({ status: 'ready', generatorReady: true })).toBe('ready');
+  });
+  it('preparing when host ready but generator not yet ready', () => {
+    expect(resolveGenerationGate({ status: 'ready', generatorReady: false })).toBe('preparing');
+  });
+  it('preparing while the host is still starting', () => {
+    expect(resolveGenerationGate({ status: 'starting', generatorReady: false })).toBe('preparing');
+  });
+  it('error when host ready and a generator error is present', () => {
+    expect(resolveGenerationGate({ status: 'ready', generatorReady: false, generatorError: 'boom' })).toBe('error');
+  });
+  it('error wins even if generatorReady is somehow true', () => {
+    expect(resolveGenerationGate({ status: 'ready', generatorReady: true, generatorError: 'boom' })).toBe('error');
+  });
+  it('ignores a stale generator error while the host is not ready', () => {
+    expect(resolveGenerationGate({ status: 'unavailable', generatorReady: false, generatorError: 'boom' })).toBe('preparing');
   });
 });

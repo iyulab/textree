@@ -76,3 +76,22 @@ export function fileToContext(
   if (body.trim().length === 0) return [];
   return [{ path, snippet: body.slice(0, maxChars), score: 1 }];
 }
+
+/**
+ * Decide what the chat pipeline should do given the host's generation readiness.
+ * Pure mirror of the Rust poll_action extraction — keeps the gate logic unit-testable
+ * (chatStore is a runes module and is not imported by tests).
+ *
+ * A generator error only counts while the host is 'ready': a stale error left over from a
+ * crashed/restarting host must not mask the real 'preparing'/'unavailable' state. 'preparing'
+ * covers both host-starting and generator-not-yet-loaded.
+ */
+export function resolveGenerationGate(s: {
+  status: string;
+  generatorReady: boolean;
+  generatorError?: string | null;
+}): 'error' | 'preparing' | 'ready' {
+  if (s.status === 'ready' && s.generatorError) return 'error';
+  if (s.status !== 'ready' || !s.generatorReady) return 'preparing';
+  return 'ready';
+}
