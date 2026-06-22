@@ -109,6 +109,10 @@ impl HostHandle {
 const HEALTH_CEILING: Duration = Duration::from_secs(15 * 60); // first-run model download
 const FAST_PATH: Duration = Duration::from_secs(30);
 const POLL_INTERVAL: Duration = Duration::from_secs(1);
+/// After the host is Ready we keep polling for its lifetime only to observe the lazily-loaded
+/// generator flip generatorReady; back off so steady-state polling does not flood the host log
+/// (Kestrel logs ~2 lines per /health request). ≤10s gate latency is dwarfed by model load.
+const READY_POLL_INTERVAL: Duration = Duration::from_secs(10);
 
 /// Spawn the host on a fresh loopback port and begin health polling on a
 /// background thread. Never panics; on any failure the handle stays Unavailable.
@@ -208,7 +212,7 @@ fn poll_health(handle: Arc<HostHandle>, base: String, my_gen: u64) {
     let mut announced = false;
     let mut ready = false;
     loop {
-        std::thread::sleep(POLL_INTERVAL);
+        std::thread::sleep(if ready { READY_POLL_INTERVAL } else { POLL_INTERVAL });
         // A newer spawn or a shutdown invalidates this poll thread.
         if handle.generation.load(Ordering::SeqCst) != my_gen {
             return;
