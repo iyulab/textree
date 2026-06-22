@@ -45,13 +45,10 @@ jobs:
         shell: pwsh
         run: pwsh -NoProfile -File scripts/assemble-canopy-sidecar.ps1 -CanopyPath ${{ github.workspace }}/canopy-src
 
-      # Guard: runs the gated integration test (Task 4) to confirm the assembled
-      # payload is complete before the build + sign step consumes it.
-      - name: Verify bundled sidecar publishes
-        run: cargo test --manifest-path src-tauri/Cargo.toml -- --ignored run_publish_via_assembled_sidecar
-
       # Publish the .NET host self-contained and stage it under src-tauri/resources/host/
-      # so tauri-action bundles it (Task 4 resources map).
+      # so tauri-action bundles it (Task 4 resources map). Must run BEFORE any cargo build:
+      # tauri.conf.json bundle.resources requires both resources/canopy AND resources/host to
+      # exist, so the verify-publish build below fails on a missing resource path otherwise.
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
         with:
@@ -61,7 +58,11 @@ jobs:
         shell: pwsh
         run: pwsh -NoProfile -File scripts/assemble-host-sidecar.ps1
 
-      # Guard: confirm the staged host exe resolves before the build + sign step consumes it.
+      # Guards: run the gated integration tests to confirm both assembled payloads are
+      # complete before the build + sign step consumes them.
+      - name: Verify bundled sidecar publishes
+        run: cargo test --manifest-path src-tauri/Cargo.toml -- --ignored run_publish_via_assembled_sidecar
+
       - name: Verify bundled host present
         run: cargo test --manifest-path src-tauri/Cargo.toml -- --ignored run_host_present_via_assembled_sidecar
 
