@@ -113,7 +113,7 @@
       <p class="chat-status" role="status">No related notes found for this question.</p>
     {:else if chatStore.status === 'error'}
       <p class="chat-error" role="alert">{chatStore.errorMessage}</p>
-      <button class="chat-retry" onclick={retryGeneration}>Retry</button>
+      <button class="chat-retry" type="button" onclick={retryGeneration}>Retry</button>
     {/if}
 
     <div class="chat-composer">

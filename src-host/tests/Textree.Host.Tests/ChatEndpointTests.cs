@@ -78,6 +78,7 @@ public sealed class ChatEndpointTests
         var body = await client.GetStringAsync("/health");
 
         Assert.Contains("generatorReady", body);
+        Assert.Contains("\"generatorError\":null", body);
     }
 
     [Fact]

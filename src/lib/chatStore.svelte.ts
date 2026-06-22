@@ -68,7 +68,7 @@ class ChatStore {
     if (!q) return;
 
     // Gate 1 + 2: host ready + generation model loaded (askStore 3-gate pattern).
-    let st: { status: string; generatorReady: boolean; generatorError?: string | null };
+    let st: { status: string; generatorReady: boolean; generatorError: string | null };
     try {
       st = await hostStatus();
     } catch {
@@ -154,6 +154,12 @@ class ChatStore {
    *  lets the host clear its last error before we re-poll, so the gate does not immediately
    *  re-resolve to 'error' on a stale value. */
   async retryGeneration(vault: string) {
+    // A mid-stream generation failure already pushed a partial assistant turn; drop it so the
+    // retry doesn't stack a second one. (Generator-load failures return at the gate before any
+    // assistant turn is pushed, so this is a no-op there.)
+    if (this.turns[this.turns.length - 1]?.role === 'assistant') {
+      this.turns = this.turns.slice(0, -1);
+    }
     this.errorMessage = '';
     this.status = 'preparing';
     try {
