@@ -62,8 +62,13 @@ async function tauriInvoke<T>(
 }
 
 /**
- * Poll host_status via Tauri IPC until status === "ready" (max timeoutMs).
+ * Poll host_status via Tauri IPC until status === "ready" AND generatorReady (max timeoutMs).
  * Used by the host-present profile to gate Q&A tests on model readiness.
+ *
+ * The generator loads lazily — the app only triggers it on the first question (chatStore.run
+ * → prepare_generation). This prerequisite sends no question, so it must kick generation off
+ * itself once the host is Ready; otherwise generatorReady never becomes true and the gate
+ * would time out even on a healthy host.
  */
 async function pollHostReady(page: Page, timeoutMs = 300_000): Promise<void> {
   const start = Date.now();
@@ -73,6 +78,10 @@ async function pollHostReady(page: Page, timeoutMs = 300_000): Promise<void> {
       "host_status",
     ).catch(() => ({ status: "unavailable", generatorReady: false }));
     if (payload.status === "ready" && payload.generatorReady) return;
+    if (payload.status === "ready" && !payload.generatorReady) {
+      // Kick off the lazy generator load (idempotent; safe to call repeatedly).
+      await tauriInvoke(page, "prepare_generation").catch(() => {});
+    }
     if (payload.status === "unavailable") {
       throw new Error("Host status became unavailable while waiting for ready");
     }
