@@ -23,6 +23,8 @@ pub struct HealthResponse {
     pub embedder_ready: bool,
     #[serde(rename = "generatorReady", default)]
     pub generator_ready: bool,
+    #[serde(rename = "generatorError", default)]
+    pub generator_error: Option<String>,
 }
 
 /// Bind 127.0.0.1:0 to let the OS pick a free port, then release it so the
@@ -64,6 +66,10 @@ pub struct HostHandle {
     /// Read-only tracking of the host's generatorReady flag (from /health).
     /// Does NOT gate the Ready transition — embedder_ready controls that.
     generator_ready: Mutex<bool>,
+    /// Last-known generator load error from /health (None = no error). Read-only tracking,
+    /// surfaced via host_status so the frontend can show a failure instead of hanging on
+    /// "preparing". Cleared optimistically by prepare_generation, refreshed every poll.
+    generator_error: Mutex<Option<String>>,
 }
 
 impl HostHandle {
@@ -99,6 +105,13 @@ impl HostHandle {
     }
     fn set_generator_ready(&self, v: bool) {
         *self.generator_ready.lock().unwrap_or_else(|e| e.into_inner()) = v;
+    }
+    /// Returns the last-known generator load error (None = healthy / still preparing).
+    pub fn generator_error(&self) -> Option<String> {
+        self.generator_error.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+    fn set_generator_error(&self, v: Option<String>) {
+        *self.generator_error.lock().unwrap_or_else(|e| e.into_inner()) = v;
     }
 }
 
@@ -230,6 +243,7 @@ fn poll_health(handle: Arc<HostHandle>, base: String, my_gen: u64) {
             // the loop returned on embedder_ready, freezing generatorReady=false forever, so the
             // frontend chat/ask gate never advanced past "preparing".
             handle.set_generator_ready(h.generator_ready);
+            handle.set_generator_error(h.generator_error.clone());
         }
         let embedder_ready = health.as_ref().map(|h| h.embedder_ready).unwrap_or(false);
         match poll_action(embedder_ready, ready, start.elapsed() >= HEALTH_CEILING) {
@@ -343,6 +357,7 @@ pub fn parse_search_response(body: &str) -> Option<Vec<SemanticHit>> {
 pub struct HostStatusPayload {
     pub status: HostStatus,
     pub generator_ready: bool,
+    pub generator_error: Option<String>,
 }
 
 #[tauri::command]
@@ -350,6 +365,7 @@ pub fn host_status(host: State<'_, Arc<HostHandle>>) -> HostStatusPayload {
     HostStatusPayload {
         status: host.status(),
         generator_ready: host.generator_ready(),
+        generator_error: host.generator_error(),
     }
 }
 
@@ -371,6 +387,10 @@ pub async fn prepare_generation(host: State<'_, Arc<HostHandle>>) -> Result<(), 
     if !matches!(host.status(), HostStatus::Ready) {
         return Ok(());
     }
+    // A (re)prepare attempt clears the last generator error optimistically: otherwise a stale
+    // error from before this attempt lingers in host_status until the next health poll (up to
+    // READY_POLL_INTERVAL), bouncing the frontend retry loop straight back to 'error'.
+    host.set_generator_error(None);
     tauri::async_runtime::spawn_blocking(move || {
         let _ = ureq::post(&format!("{base}/prepare-generation"))
             .timeout(Duration::from_secs(10))
@@ -775,6 +795,30 @@ mod tests {
         let h = parse_health(body).unwrap();
         assert!(h.embedder_ready);
         assert!(!h.generator_ready);
+    }
+
+    #[test]
+    fn parse_health_reads_generator_error() {
+        let body = r#"{"status":"ok","embedderReady":true,"generatorReady":false,"generatorError":"model download failed"}"#;
+        let h = parse_health(body).unwrap();
+        assert_eq!(h.generator_error.as_deref(), Some("model download failed"));
+    }
+
+    #[test]
+    fn parse_health_generator_error_defaults_none() {
+        let body = r#"{"status":"ok","embedderReady":true,"generatorReady":false}"#;
+        let h = parse_health(body).unwrap();
+        assert!(h.generator_error.is_none());
+    }
+
+    #[test]
+    fn generator_error_round_trips() {
+        let handle = HostHandle::default();
+        assert!(handle.generator_error().is_none());
+        handle.set_generator_error(Some("boom".into()));
+        assert_eq!(handle.generator_error().as_deref(), Some("boom"));
+        handle.set_generator_error(None);
+        assert!(handle.generator_error().is_none());
     }
 
     #[test]
