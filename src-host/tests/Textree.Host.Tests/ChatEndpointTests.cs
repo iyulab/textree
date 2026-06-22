@@ -81,6 +81,17 @@ public sealed class ChatEndpointTests
     }
 
     [Fact]
+    public async Task Health_reports_generator_error_when_prepare_failed()
+    {
+        using var factory = new Factory(new FailingGenerator());
+        var client = factory.CreateClient();
+
+        var body = await client.GetStringAsync("/health");
+
+        Assert.Contains("\"generatorError\":\"model download failed\"", body);
+    }
+
+    [Fact]
     public async Task Prepare_generation_is_idempotent()
     {
         var stub = new StubGenerator(chunks: ["x"]);
@@ -151,6 +162,7 @@ public sealed class ChatEndpointTests
         public CapturingGenerator(string[] chunks) => _chunks = chunks;
 
         public bool Ready => true;
+        public string? LastError => null;
         public Task PrepareAsync(CancellationToken ct) => Task.CompletedTask;
 
         /// <summary>MaxTokens from the most recent <see cref="GenerateAsync"/> call.</summary>
@@ -190,6 +202,7 @@ public sealed class ChatEndpointTests
         }
 
         public bool Ready => true;
+        public string? LastError => null;
 
         public Task PrepareAsync(CancellationToken ct) => Task.CompletedTask;
 
@@ -232,5 +245,16 @@ public sealed class ChatEndpointTests
             var done = await Task.WhenAny(_cancelled.Task, Task.Delay(timeout));
             return done == _cancelled.Task;
         }
+    }
+
+    // ── Generator whose model never loads — surfaces a fixed LastError for the /health error test.
+    private sealed class FailingGenerator : ITextGenerator
+    {
+        public bool Ready => false;
+        public string? LastError => "model download failed";
+        public Task PrepareAsync(CancellationToken ct) => Task.CompletedTask;
+        public IAsyncEnumerable<string> GenerateAsync(
+            IReadOnlyList<ChatMessage> messages, GenerationOptions opts, CancellationToken ct) =>
+            throw new InvalidOperationException("generator unavailable");
     }
 }

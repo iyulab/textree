@@ -36,7 +36,7 @@ var genLog = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Tex
 // ── Endpoints ─────────────────────────────────────────────────────────────────
 
 app.MapGet("/health", (ITextGenerator gen) =>
-    Results.Ok(new { status = "ok", embedderReady = mgr.EmbedderReady, generatorReady = gen.Ready }));
+    Results.Ok(new { status = "ok", embedderReady = mgr.EmbedderReady, generatorReady = gen.Ready, generatorError = gen.LastError }));
 
 app.MapPost("/prepare-generation", (ITextGenerator gen) =>
 {

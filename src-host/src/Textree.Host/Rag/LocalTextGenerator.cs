@@ -47,8 +47,11 @@ public sealed class LocalTextGenerator : ITextGenerator, IAsyncDisposable
     private readonly SemaphoreSlim _loadGate = new(1, 1);
     // Guarded by _loadGate for writes; read lock-free via Volatile.Read on the fast path.
     private IGeneratorModel? _model;
+    // Mirrors _model's Volatile read/write discipline: written inside _loadGate, read lock-free.
+    private string? _lastError;
 
     public bool Ready => Volatile.Read(ref _model) is not null;
+    public string? LastError => Volatile.Read(ref _lastError);
 
     /// <summary>Idempotent: loads the model once; subsequent calls are no-ops.</summary>
     public async Task PrepareAsync(CancellationToken ct)
@@ -62,13 +65,29 @@ public sealed class LocalTextGenerator : ITextGenerator, IAsyncDisposable
             if (_model is not null)
                 return;
 
-            // Pin CPU: DirectML crashes on inference here and does not fall back. See header.
-            var model = await LocalGenerator.LoadAsync(
-                ModelId,
-                new GeneratorOptions { Provider = ExecutionProvider.Cpu },
-                progress: null,
-                cancellationToken: ct);
-            Volatile.Write(ref _model, model);
+            // Fresh attempt: clear any error from a prior failed attempt so a successful (or
+            // still-in-progress) retry is not reported as failed.
+            Volatile.Write(ref _lastError, null);
+            try
+            {
+                // Pin CPU: DirectML crashes on inference here and does not fall back. See header.
+                var model = await LocalGenerator.LoadAsync(
+                    ModelId,
+                    new GeneratorOptions { Provider = ExecutionProvider.Cpu },
+                    progress: null,
+                    cancellationToken: ct);
+                Volatile.Write(ref _model, model);
+            }
+            catch (OperationCanceledException)
+            {
+                // Cancellation is not a load failure — do not record it as a generator error.
+                throw;
+            }
+            catch (Exception ex)
+            {
+                Volatile.Write(ref _lastError, ex.Message);
+                throw;
+            }
         }
         finally
         {
