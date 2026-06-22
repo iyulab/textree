@@ -176,45 +176,81 @@ fn drain_utf8(stream: Option<impl std::io::Read + Send + 'static>, log: std::pat
     });
 }
 
+/// Per-poll decision for the health loop. Pure (no I/O) so it is unit-tested.
+/// `already_ready` = the host previously reached Ready this spawn; once true we keep polling
+/// for the host's lifetime to refresh generatorReady (it loads lazily, long after
+/// embedder_ready) and the startup ceiling no longer applies.
+#[derive(Debug, PartialEq, Eq)]
+enum PollAction {
+    /// First observation of embedder_ready: transition to Ready (+ reindex) once, then keep polling.
+    BecomeReady,
+    /// Stay in the loop and poll again (still starting within the ceiling, or already Ready).
+    KeepPolling,
+    /// Never reached Ready and the startup ceiling elapsed: mark Unavailable and stop.
+    GiveUp,
+}
+
+fn poll_action(embedder_ready: bool, already_ready: bool, ceiling_exceeded: bool) -> PollAction {
+    if already_ready {
+        // Host is up; keep refreshing generatorReady indefinitely (ceiling no longer applies).
+        PollAction::KeepPolling
+    } else if embedder_ready {
+        PollAction::BecomeReady
+    } else if ceiling_exceeded {
+        PollAction::GiveUp
+    } else {
+        PollAction::KeepPolling
+    }
+}
+
 fn poll_health(handle: Arc<HostHandle>, base: String, my_gen: u64) {
     let start = Instant::now();
     let mut announced = false;
-    while start.elapsed() < HEALTH_CEILING {
+    let mut ready = false;
+    loop {
         std::thread::sleep(POLL_INTERVAL);
-        if let Ok(resp) = ureq::get(&format!("{base}/health"))
+        // A newer spawn or a shutdown invalidates this poll thread.
+        if handle.generation.load(Ordering::SeqCst) != my_gen {
+            return;
+        }
+        let health = ureq::get(&format!("{base}/health"))
             .timeout(Duration::from_secs(5))
             .call()
-        {
-            if let Ok(body) = resp.into_string() {
-                if let Some(h) = parse_health(&body) {
-                    // Track generatorReady on every poll (read-only; does not gate Ready).
-                    handle.set_generator_ready(h.generator_ready);
-                    if h.embedder_ready {
-                        if handle.generation.load(Ordering::SeqCst) != my_gen {
-                            return;
-                        }
-                        handle.set_status(HostStatus::Ready);
-                        // Re-trigger the reindex the open vault missed while the host was Starting
-                        // (lazy spawn means the host is never Ready at the first open_vault).
-                        if let Some(vault) = handle.current_vault() {
-                            reindex_vault(&handle, &vault);
-                        }
-                        return;
-                    }
+            .ok()
+            .and_then(|resp| resp.into_string().ok())
+            .and_then(|body| parse_health(&body));
+
+        if let Some(h) = &health {
+            // Refresh generatorReady on EVERY poll for the host's lifetime: the generator loads
+            // lazily (first /chat or /prepare-generation), long after embedder_ready. Previously
+            // the loop returned on embedder_ready, freezing generatorReady=false forever, so the
+            // frontend chat/ask gate never advanced past "preparing".
+            handle.set_generator_ready(h.generator_ready);
+        }
+        let embedder_ready = health.as_ref().map(|h| h.embedder_ready).unwrap_or(false);
+        match poll_action(embedder_ready, ready, start.elapsed() >= HEALTH_CEILING) {
+            PollAction::BecomeReady => {
+                ready = true;
+                handle.set_status(HostStatus::Ready);
+                // Re-trigger the reindex the open vault missed while the host was Starting
+                // (lazy spawn means the host is never Ready at the first open_vault).
+                if let Some(vault) = handle.current_vault() {
+                    reindex_vault(&handle, &vault);
                 }
             }
+            PollAction::GiveUp => {
+                handle.set_status(HostStatus::Unavailable);
+                return;
+            }
+            PollAction::KeepPolling => {}
         }
-        if !announced && start.elapsed() >= FAST_PATH {
+        if !ready && !announced && start.elapsed() >= FAST_PATH {
             announced = true;
             eprintln!(
                 "[host] still starting (likely first-run model download); will keep polling up to 15m"
             );
         }
     }
-    if handle.generation.load(Ordering::SeqCst) != my_gen {
-        return;
-    }
-    handle.set_status(HostStatus::Unavailable);
 }
 
 // ---------------------------------------------------------------------------
@@ -695,6 +731,38 @@ mod tests {
             "assembled host exe not found under {}/host/ — run scripts/assemble-host-sidecar.ps1",
             resource.display()
         );
+    }
+
+    #[test]
+    fn poll_action_becomes_ready_on_embedder_ready() {
+        assert_eq!(poll_action(true, false, false), PollAction::BecomeReady);
+    }
+
+    #[test]
+    fn poll_action_embedder_ready_beats_ceiling() {
+        // Embedder up right at the ceiling still transitions to Ready (not GiveUp).
+        assert_eq!(poll_action(true, false, true), PollAction::BecomeReady);
+    }
+
+    #[test]
+    fn poll_action_keeps_polling_while_starting_within_ceiling() {
+        assert_eq!(poll_action(false, false, false), PollAction::KeepPolling);
+    }
+
+    #[test]
+    fn poll_action_gives_up_when_never_ready_past_ceiling() {
+        assert_eq!(poll_action(false, false, true), PollAction::GiveUp);
+    }
+
+    #[test]
+    fn poll_action_keeps_polling_forever_once_ready() {
+        // Once Ready we keep refreshing generatorReady for the host's lifetime regardless of
+        // embedder blips or the startup ceiling — never GiveUp (that would mark a healthy host
+        // dead). This is the invariant that fixes the frozen-generatorReady bug: the loop must
+        // keep observing /health after embedder_ready so the lazily-loaded generator is seen.
+        assert_eq!(poll_action(true, true, true), PollAction::KeepPolling);
+        assert_eq!(poll_action(false, true, true), PollAction::KeepPolling);
+        assert_eq!(poll_action(false, true, false), PollAction::KeepPolling);
     }
 
     #[test]
