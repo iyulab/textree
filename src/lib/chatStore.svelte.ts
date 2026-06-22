@@ -7,6 +7,7 @@ import {
   extractCitations,
   fileToContext,
   hasUsableContext,
+  resolveGenerationGate,
   selectContext,
   type ChatTurn,
 } from './ask.helpers';
@@ -67,7 +68,7 @@ class ChatStore {
     if (!q) return;
 
     // Gate 1 + 2: host ready + generation model loaded (askStore 3-gate pattern).
-    let st: { status: string; generatorReady: boolean };
+    let st: { status: string; generatorReady: boolean; generatorError?: string | null };
     try {
       st = await hostStatus();
     } catch {
@@ -77,19 +78,26 @@ class ChatStore {
       return;
     }
     if (seq !== this.seq) return;
-    if (st.status !== 'ready') {
-      this.status = 'preparing';
+    const gate = resolveGenerationGate(st);
+    if (gate === 'error') {
+      this.status = 'error';
+      this.errorMessage = `Local AI failed to start: ${st.generatorError}`;
       return;
     }
-    if (!st.generatorReady) {
+    if (gate === 'preparing') {
       this.status = 'preparing';
-      try {
-        await prepareGeneration();
-      } catch {
-        // non-fatal: panel retries and re-polls
+      // Only kick a prepare once the host itself is up (matches prior behavior; the host
+      // command no-ops when not Ready anyway). The panel's retry timer re-polls.
+      if (st.status === 'ready' && !st.generatorReady) {
+        try {
+          await prepareGeneration();
+        } catch {
+          // non-fatal: panel retries and re-polls
+        }
       }
       return;
     }
+    // gate === 'ready' → fall through to retrieval.
 
     // Retrieval — scope-granularity dispatch.
     this.status = 'searching';
@@ -140,6 +148,20 @@ class ChatStore {
       this.status = 'error';
       this.errorMessage = String(e);
     }
+  }
+
+  /** User-triggered retry after a generation failure (Retry button). Awaiting prepareGeneration
+   *  lets the host clear its last error before we re-poll, so the gate does not immediately
+   *  re-resolve to 'error' on a stale value. */
+  async retryGeneration(vault: string) {
+    this.errorMessage = '';
+    this.status = 'preparing';
+    try {
+      await prepareGeneration();
+    } catch {
+      // non-fatal: re-poll below will reflect the host state.
+    }
+    await this.run(vault);
   }
 
   /** Cancel any in-flight stream and stop the host generating (mode switch, app close). */

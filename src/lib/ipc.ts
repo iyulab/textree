@@ -222,8 +222,8 @@ export async function semanticSearch(
   });
 }
 
-export async function hostStatus(): Promise<{ status: HostStatus; generatorReady: boolean }> {
-  return invoke<{ status: HostStatus; generatorReady: boolean }>("host_status");
+export async function hostStatus(): Promise<{ status: HostStatus; generatorReady: boolean; generatorError: string | null }> {
+  return invoke<{ status: HostStatus; generatorReady: boolean; generatorError: string | null }>("host_status");
 }
 
 export type AskEvent =

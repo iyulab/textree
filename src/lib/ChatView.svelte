@@ -50,6 +50,12 @@
     }
   }
 
+  async function retryGeneration() {
+    clearRetry();
+    await chatStore.retryGeneration(vault);
+    scheduleRetryIfPreparing();
+  }
+
   function handleKeydown(e: KeyboardEvent) {
     if (e.key === 'Enter') {
       if (busy) return;
@@ -107,6 +113,7 @@
       <p class="chat-status" role="status">No related notes found for this question.</p>
     {:else if chatStore.status === 'error'}
       <p class="chat-error" role="alert">{chatStore.errorMessage}</p>
+      <button class="chat-retry" onclick={retryGeneration}>Retry</button>
     {/if}
 
     <div class="chat-composer">
@@ -218,6 +225,20 @@
   .chat-citation:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
   .chat-status { margin: 0 0 var(--sp-2); font-size: var(--font-size-small); color: var(--text-muted); font-style: italic; }
   .chat-error { margin: 0 0 var(--sp-2); font-size: var(--font-size-small); color: var(--text-error); }
+  .chat-retry {
+    align-self: flex-start;
+    margin: 0 0 var(--sp-2);
+    padding: var(--sp-1) var(--sp-3);
+    font: inherit;
+    font-size: var(--font-size-small);
+    cursor: pointer;
+    color: var(--text-normal);
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-s);
+  }
+  .chat-retry:hover { background: var(--bg-secondary-alt); }
+  .chat-retry:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
   .chat-composer { display: flex; gap: var(--sp-1); flex-shrink: 0; }
   .chat-input {
     flex: 1;
