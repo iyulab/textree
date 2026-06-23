@@ -39,6 +39,40 @@ test("edit → debounced autosave → persisted to disk", async () => {
   }
 });
 
+test("typing continues across the debounced autosave (no focus loss)", async () => {
+  // Regression for the focus-loss bug: after the debounced save, the watcher echoed the app's own
+  // atomic write as an external change → editor was recreated → typing focus was dropped, so a
+  // second burst never landed. Here we type, WAIT past the save + watcher debounce, then keep
+  // typing WITHOUT re-focusing. If focus were lost, the second burst would not reach disk.
+  const vault = createTempVault({ "연속.md": "시작\n" });
+  try {
+    await loadVault(page, vault);
+    await page.getByRole("treeitem", { name: /연속/ }).click();
+    await expect(page.locator(".cm-content")).toBeVisible();
+
+    await page.locator(".cm-content").click();
+    await page.keyboard.press("Control+End");
+    await page.keyboard.type("첫번째");
+
+    // Let the autosave (500ms) AND the watcher debounce (300ms) + any echo fully settle.
+    await expect
+      .poll(() => readVaultFile(vault, "연속.md"), { timeout: 5000 })
+      .toContain("첫번째");
+    await page.waitForTimeout(900);
+
+    // Keep typing without clicking back into the editor — only possible if focus was retained.
+    await page.keyboard.type("두번째");
+    await expect
+      .poll(() => readVaultFile(vault, "연속.md"), { timeout: 5000 })
+      .toContain("두번째");
+
+    // Both bursts landed contiguously → the caret stayed put; typing was never interrupted.
+    expect(readVaultFile(vault, "연속.md")).toContain("첫번째두번째");
+  } finally {
+    removeTempVault(vault);
+  }
+});
+
 test("flush unsaved edits when switching notes", async () => {
   const vault = createTempVault({ "노트가.md": "가본문\n", "노트나.md": "나본문\n" });
   try {
