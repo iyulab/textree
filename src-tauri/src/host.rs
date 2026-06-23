@@ -138,7 +138,7 @@ pub fn spawn_host(handle: Arc<HostHandle>, exe: String, app_data: std::path::Pat
     let port = match alloc_loopback_port() {
         Ok(p) => p,
         Err(e) => {
-            eprintln!("[host] port alloc failed: {e}");
+            log::error!("[host] port alloc failed: {e}");
             handle.set_status(HostStatus::Unavailable);
             return;
         }
@@ -156,7 +156,7 @@ pub fn spawn_host(handle: Arc<HostHandle>, exe: String, app_data: std::path::Pat
     let mut child = match cmd.spawn() {
         Ok(c) => c,
         Err(e) => {
-            eprintln!("[host] spawn failed: {e}");
+            log::error!("[host] spawn failed: {e}");
             handle.set_status(HostStatus::Unavailable);
             return;
         }
@@ -264,7 +264,7 @@ fn poll_health(handle: Arc<HostHandle>, base: String, my_gen: u64) {
         }
         if !ready && !announced && start.elapsed() >= FAST_PATH {
             announced = true;
-            eprintln!(
+            log::warn!(
                 "[host] still starting (likely first-run model download); will keep polling up to 15m"
             );
         }

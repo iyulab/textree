@@ -267,7 +267,7 @@ pub fn open_vault(
             }
         }
         Err(e) => {
-            eprintln!("failed to open index (search disabled): {e}");
+            log::warn!("failed to open index (search disabled): {e}");
             *index.0.lock().unwrap_or_else(|e| e.into_inner()) = None;
         }
     }
