@@ -55,5 +55,29 @@ jobs:
       - name: Build frontend (vite, adapter-static)
         run: npm run build
 
+      # cargo test builds the Tauri crate, whose tauri.conf.json bundle.resources
+      # requires BOTH resources/canopy AND resources/host to exist — otherwise the
+      # build script fails with "resource path doesn't exist". Assemble both sidecars
+      # before cargo, mirroring release.yml (without that step this job was permanently red).
+      - name: Checkout canopy (pinned)
+        uses: actions/checkout@v4
+        with:
+          repository: iyulab/canopy
+          ref: 26bb78813a6bbfe420d2405f88f88e5015f9f263 # pin; keep in sync with release.yml
+          path: canopy-src
+
+      - name: Assemble canopy sidecar
+        shell: pwsh
+        run: pwsh -NoProfile -File scripts/assemble-canopy-sidecar.ps1 -CanopyPath ${{ github.workspace }}/canopy-src
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Assemble host sidecar
+        shell: pwsh
+        run: pwsh -NoProfile -File scripts/assemble-host-sidecar.ps1
+
       - name: Rust tests (cargo)
         run: cargo test --manifest-path src-tauri/Cargo.toml
