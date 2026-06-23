@@ -256,3 +256,8 @@ export function cancelAsk(): Promise<void> {
 export async function prepareAiModel(): Promise<void> {
   return invoke<void>("prepare_ai_model");
 }
+
+/** Open the OS app log directory in the system file explorer. */
+export async function openLogDir(): Promise<void> {
+  return invoke<void>("open_log_dir");
+}

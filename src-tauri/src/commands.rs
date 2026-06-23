@@ -564,6 +564,18 @@ pub fn publish_site(
     Ok(result)
 }
 
+/// Opens the OS app log directory in the system file explorer. Useful for diagnostic sharing.
+/// Creates the directory if it does not yet exist (e.g. before the first app run that writes a log).
+#[tauri::command]
+pub fn open_log_dir(app: tauri::AppHandle) -> Result<(), String> {
+    use tauri::Manager;
+    let dir = app.path().app_log_dir().map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    log::info!("open_log_dir: {}", dir.display());
+    tauri_plugin_opener::open_path(dir.to_string_lossy().as_ref(), None::<&str>)
+        .map_err(|e| e.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

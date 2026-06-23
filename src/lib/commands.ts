@@ -32,6 +32,7 @@ export interface PaletteActions {
   hasVault: () => boolean;
   publishSite: () => void;
   openTrash: () => void;
+  openLogDir: () => void;
 }
 
 export function buildCommands(a: PaletteActions): Command[] {
@@ -52,6 +53,7 @@ export function buildCommands(a: PaletteActions): Command[] {
     { id: "search.rebuild", title: "Rebuild content index", run: a.rebuildIndex },
     { id: "vault.publish", title: "Publish site…", run: a.publishSite, when: a.hasVault },
     { id: "vault.trash", title: "Trash…", run: a.openTrash, when: a.hasVault },
+    { id: "log.openDir", title: "Open log folder", run: a.openLogDir },
   ];
 }
 

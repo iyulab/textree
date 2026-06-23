@@ -79,6 +79,7 @@ pub fn run() {
             commands::list_trash,
             commands::purge_trash,
             commands::ensure_default_vault,
+            commands::open_log_dir,
             host::host_status,
             host::semantic_search,
             host::prepare_ai_model,

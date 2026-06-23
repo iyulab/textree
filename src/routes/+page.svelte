@@ -20,6 +20,7 @@
     rebuildIndex,
     publishSite,
     prepareAiModel,
+    openLogDir,
     type TreeNode,
     type SearchHit,
   } from "$lib/ipc";
@@ -801,6 +802,7 @@
     hasVault: () => root !== null,
     publishSite: () => { void choosePublishTarget(); },
     openTrash: () => { showTrash = true; },
+    openLogDir: () => { void openLogDir(); },
   };
 
   let commands = $derived(activeCommands(buildCommands(actions)));
