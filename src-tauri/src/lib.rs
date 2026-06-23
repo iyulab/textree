@@ -26,8 +26,6 @@ pub fn run() {
                 ))
                 .level(log::LevelFilter::Info)
                 // Rotation: keep at most one rotated file (~5 MB ceiling).
-                // If these builder methods are unavailable in the installed version,
-                // the build error will identify the correct API surface.
                 .max_file_size(5_000_000)
                 .rotation_strategy(tauri_plugin_log::RotationStrategy::KeepOne)
                 .build(),
@@ -46,8 +44,8 @@ pub fn run() {
             if let Ok(exe) = std::env::var("TEXTREE_HOST_EXE") {
                 use tauri::Manager;
                 let handle = app.state::<std::sync::Arc<HostHandle>>().inner().clone();
-                if let Ok(app_data) = app.path().app_data_dir() {
-                    host::spawn_host(handle, exe, app_data);
+                if let Ok(log_dir) = app.path().app_log_dir() {
+                    host::spawn_host(handle, exe, log_dir);
                 }
             }
             Ok(())

@@ -336,13 +336,13 @@ fn rel_to_root(root: &Path, target: &Path) -> Result<String, String> {
 pub fn delete_node(root: String, path: String) -> Result<(), String> {
     let root_p = Path::new(&root);
     let target = Path::new(&path);
-    log::info!("delete_node: {}", path);
     // Capture provenance before the move (canonicalize needs the path to still exist).
     let original_rel = rel_to_root(root_p, target)?;
     let is_dir = target.is_dir();
     // Move first (fs_ops validates is_within / root / .textree). Manifest after — a mid-crash
     // leaves an "unknown-origin" trash file (recoverable) rather than a dangling manifest entry.
     let dest = crate::fs_ops::delete_to_trash(root_p, target).map_err(|e| e.to_string())?;
+    log::info!("delete_node: {}", path);
     let trash_name = dest
         .file_name()
         .and_then(|s| s.to_str())

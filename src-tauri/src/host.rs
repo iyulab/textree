@@ -129,7 +129,7 @@ const READY_POLL_INTERVAL: Duration = Duration::from_secs(10);
 
 /// Spawn the host on a fresh loopback port and begin health polling on a
 /// background thread. Never panics; on any failure the handle stays Unavailable.
-pub fn spawn_host(handle: Arc<HostHandle>, exe: String, app_data: std::path::PathBuf) {
+pub fn spawn_host(handle: Arc<HostHandle>, exe: String, log_dir: std::path::PathBuf) {
     // Idempotent: never double-spawn. A concurrent caller (mount auto-spawn + ? enable, or a
     // dev eager-spawn racing a manual trigger) must not orphan a child or clobber the port.
     if matches!(handle.status(), HostStatus::Starting | HostStatus::Ready) {
@@ -162,8 +162,10 @@ pub fn spawn_host(handle: Arc<HostHandle>, exe: String, app_data: std::path::Pat
         }
     };
     // UTF-8 async drain (Filer mojibake/deadlock lesson).
-    drain_utf8(child.stdout.take(), app_data.join("logs/host-out.log"));
-    drain_utf8(child.stderr.take(), app_data.join("logs/host-err.log"));
+    // host-out.log / host-err.log land in app_log_dir so they sit next to textree.log
+    // and the "Open log folder" palette command exposes them in one place.
+    drain_utf8(child.stdout.take(), log_dir.join("host-out.log"));
+    drain_utf8(child.stderr.take(), log_dir.join("host-err.log"));
     *handle.port.lock().unwrap_or_else(|e| e.into_inner()) = Some(port);
     *handle.child.lock().unwrap_or_else(|e| e.into_inner()) = Some(child);
     handle.set_status(HostStatus::Starting);
@@ -412,8 +414,8 @@ pub fn prepare_ai_model(app: AppHandle, host: State<'_, Arc<HostHandle>>) -> Res
     let Some(exe) = resolve_host(&app) else {
         return Ok(()); // no host available → graceful degradation
     };
-    let app_data = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    spawn_host(host.inner().clone(), exe, app_data);
+    let log_dir = app.path().app_log_dir().map_err(|e| e.to_string())?;
+    spawn_host(host.inner().clone(), exe, log_dir);
     Ok(())
 }
 
