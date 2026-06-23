@@ -17,10 +17,27 @@ use watcher::WatcherHandle;
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(
+            tauri_plugin_log::Builder::new()
+                .target(tauri_plugin_log::Target::new(
+                    tauri_plugin_log::TargetKind::LogDir {
+                        file_name: Some("textree".into()),
+                    },
+                ))
+                .level(log::LevelFilter::Info)
+                // Rotation: keep at most one rotated file (~5 MB ceiling).
+                // If these builder methods are unavailable in the installed version,
+                // the build error will identify the correct API surface.
+                .max_file_size(5_000_000)
+                .rotation_strategy(tauri_plugin_log::RotationStrategy::KeepOne)
+                .build(),
+        )
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_process::init())
         .setup(|app| {
+            // Log startup here (after plugin init) so the logger is already wired.
+            log::info!("textree starting (v{})", env!("CARGO_PKG_VERSION"));
             #[cfg(windows)]
             app.handle()
                 .plugin(tauri_plugin_updater::Builder::new().build())?;
@@ -73,6 +90,7 @@ pub fn run() {
         .expect("error while building tauri application")
         .run(|app_handle, event| {
             if let tauri::RunEvent::ExitRequested { .. } = event {
+                log::info!("textree shutting down");
                 use tauri::Manager;
                 let handle = app_handle.state::<std::sync::Arc<HostHandle>>();
                 host::shutdown_host(&handle);

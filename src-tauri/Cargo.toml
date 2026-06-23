@@ -35,6 +35,10 @@ sha2 = "0.10"
 tauri-plugin-process = "2.3.1"
 # Lightweight blocking HTTP for loopback sidecar health-check; no TLS needed.
 ureq = { version = "2.10", features = ["json"] }
+# Structured logging to the OS app log directory (app_log_dir). The `log` facade
+# (log::info!/warn!/error!) is used at call sites; the plugin wires the backend.
+log = "0.4"
+tauri-plugin-log = "2"
 
 [target."cfg(windows)".dependencies]
 tauri-plugin-updater = "2.10.1"
