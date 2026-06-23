@@ -94,6 +94,7 @@ fn default_vault_base(app: &AppHandle) -> Result<PathBuf, String> {
 pub fn ensure_default_vault(app: AppHandle) -> Result<String, String> {
     let base = default_vault_base(&app)?;
     let vault = ensure_vault_at(&base)?;
+    log::info!("ensure_default_vault: {}", vault.display());
     Ok(vault.display().to_string())
 }
 
@@ -187,6 +188,7 @@ pub fn read_note(root: String, path: String) -> Result<String, String> {
     let root = PathBuf::from(root);
     let path = PathBuf::from(path);
     if !is_within(&root, &path) {
+        log::warn!("read_note: rejected unsafe path: {}", path.display());
         return Err("path is outside the vault".into());
     }
     std::fs::read_to_string(&path).map_err(|e| e.to_string())
@@ -204,6 +206,7 @@ pub fn write_note(
     let root = PathBuf::from(root);
     let path = PathBuf::from(path);
     if !is_within(&root, &path) {
+        log::warn!("write_note: rejected unsafe path: {}", path.display());
         return Err("path is outside the vault".into());
     }
     // Must register "just before" writing: if the watcher receives the event before
@@ -211,6 +214,7 @@ pub fn write_note(
     self_writes.record(&path, &content);
     match atomic_write(&root, &path, &content) {
         Ok(()) => {
+            log::info!("write_note: {} ({} bytes)", path.display(), content.len());
             // The watcher suppresses self-writes, so in-app edits update the index here.
             // An index failure does not fail the save (index = derived cache, graceful).
             if let Some(state) = index.0.lock().unwrap_or_else(|e| e.into_inner()).as_mut() {
@@ -228,6 +232,7 @@ pub fn write_note(
             // On write failure the disk did not change, so remove the stale registration
             // to keep the registry from diverging from the actual disk state.
             self_writes.forget(&path);
+            log::error!("write_note failed for {}: {}", path.display(), e);
             Err(e.to_string())
         }
     }
@@ -246,6 +251,7 @@ pub fn open_vault(
     // Sweep orphaned atomic-write temps (crash/power-loss leftovers) so they don't linger and sync.
     clear_temp_dir(&root_path);
     let tree = vault::build_tree(&root_path).map_err(|e| e.to_string())?;
+    log::info!("open_vault: {} ({} top-level nodes)", root, tree.len());
 
     // Install the index (app data directory, per-vault hash). On failure only search is disabled —
     // graceful degradation (editing, tree, and file search remain intact without the index).
@@ -295,6 +301,7 @@ pub fn open_vault(
 pub fn create_note(root: String, parent: String, name: String) -> Result<String, String> {
     let path = crate::fs_ops::create_note(Path::new(&root), Path::new(&parent), &name)
         .map_err(|e| e.to_string())?;
+    log::info!("create_note: {}", path.display());
     Ok(path.display().to_string())
 }
 
@@ -302,6 +309,7 @@ pub fn create_note(root: String, parent: String, name: String) -> Result<String,
 pub fn create_folder(root: String, parent: String, name: String) -> Result<String, String> {
     let dir = crate::fs_ops::create_folder(Path::new(&root), Path::new(&parent), &name)
         .map_err(|e| e.to_string())?;
+    log::info!("create_folder: {}", dir.display());
     Ok(dir.display().to_string())
 }
 
@@ -328,6 +336,7 @@ fn rel_to_root(root: &Path, target: &Path) -> Result<String, String> {
 pub fn delete_node(root: String, path: String) -> Result<(), String> {
     let root_p = Path::new(&root);
     let target = Path::new(&path);
+    log::info!("delete_node: {}", path);
     // Capture provenance before the move (canonicalize needs the path to still exist).
     let original_rel = rel_to_root(root_p, target)?;
     let is_dir = target.is_dir();
@@ -454,6 +463,7 @@ pub fn purge_trash(root: String, trash_name: Option<String>) -> Result<(), Strin
 pub fn rename_node(root: String, path: String, name: String) -> Result<String, String> {
     let p = crate::fs_ops::rename_node(Path::new(&root), Path::new(&path), &name)
         .map_err(|e| e.to_string())?;
+    log::info!("rename_node: {} -> {}", path, name);
     Ok(p.display().to_string())
 }
 
@@ -461,6 +471,7 @@ pub fn rename_node(root: String, path: String, name: String) -> Result<String, S
 pub fn move_node(root: String, path: String, dest: String) -> Result<String, String> {
     let p = crate::fs_ops::move_node(Path::new(&root), Path::new(&path), Path::new(&dest))
         .map_err(|e| e.to_string())?;
+    log::info!("move_node: {} -> {}", path, dest);
     Ok(p.display().to_string())
 }
 
@@ -548,7 +559,9 @@ pub fn publish_site(
     let vault = PathBuf::from(&vault_path);
     let out = PathBuf::from(&out_dir);
     let canopy = resolve_canopy(&app)?;
-    crate::publish::run_publish(&vault, &out, &options, &canopy)
+    let result = crate::publish::run_publish(&vault, &out, &options, &canopy)?;
+    log::info!("publish_site: {} ({} pages)", result.out_dir, result.page_count);
+    Ok(result)
 }
 
 #[cfg(test)]
