@@ -50,6 +50,13 @@ describe("friendlyError", () => {
     expect(r.summary).toMatch(/outside your vault/i);
   });
 
+  it("maps an invalid-name error to a friendly summary listing the constraints", () => {
+    const r = friendlyError("invalid name");
+    expect(r.summary).toMatch(/can't be used|reserved/i);
+    expect(r.summary).not.toBe(r.raw);
+    expect(r.raw).toBe("invalid name");
+  });
+
   it("normalizes a thrown Error object via its message/string form", () => {
     const r = friendlyError(new Error("Permission denied (os error 13)"));
     expect(r.summary).toMatch(/permission/i);

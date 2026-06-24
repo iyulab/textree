@@ -44,6 +44,11 @@ const RULES: Rule[] = [
     summary: "An item with that name already exists here. Choose a different name.",
   },
   {
+    match: ["invalid name"],
+    summary:
+      "That name can't be used. Avoid / and \\ and a leading dot, and Windows reserved names (CON, PRN, AUX, NUL, COM1-9, LPT1-9).",
+  },
+  {
     match: ["canopy failed", "failed to start canopy"],
     summary:
       "The publishing tool couldn't finish. The publish bundle may be missing — see the release notes.",
