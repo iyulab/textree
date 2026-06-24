@@ -82,6 +82,7 @@ pub fn run() {
             host::host_status,
             host::semantic_search,
             host::prepare_ai_model,
+            host::stop_host,
             host::ask,
             host::cancel_ask,
             host::prepare_generation

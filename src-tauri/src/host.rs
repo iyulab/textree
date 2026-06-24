@@ -440,6 +440,15 @@ pub fn prepare_ai_model(app: AppHandle, host: State<'_, Arc<HostHandle>>) -> Res
     Ok(())
 }
 
+/// User-triggered (Settings → turn local AI off): stop the host now and free its process.
+/// Thin wrapper over `shutdown_host` (no new logic). No-op-safe when the host is already down.
+/// The on-disk index is a regenerable cache and is left intact (constitution: content immutable).
+#[tauri::command]
+pub fn stop_host(host: State<'_, Arc<HostHandle>>) -> Result<(), String> {
+    shutdown_host(&host);
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn semantic_search(
     vault: String,
@@ -893,6 +902,15 @@ mod tests {
         // Empty content field — model emitted an empty delta, not a real token.
         let empty_delta = r#"data: {"choices":[{"delta":{"content":""}}]}"#;
         assert_eq!(parse_chat_chunk(empty_delta), None);
+    }
+
+    #[test]
+    fn shutdown_host_is_safe_when_no_host_running() {
+        // The host-absent path the Settings "turn off" relies on: no base_url, no child.
+        // shutdown must not panic and must leave status Unavailable (no network call made).
+        let handle = HostHandle::default();
+        shutdown_host(&handle);
+        assert!(matches!(handle.status(), HostStatus::Unavailable));
     }
 
     #[test]
