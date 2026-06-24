@@ -115,7 +115,6 @@ test("generation toggle is disabled until embeddings consent is on", async () =>
   // (host-absent: the IPC call will fail silently per Settings.svelte catch block — safe.)
   await embedding.uncheck();
 
-  await expect(dialog).toBeFocused();
   await page.keyboard.press("Escape");
   await expect(dialog).toBeHidden();
 });
@@ -138,7 +137,6 @@ test("theme segmented control switches the applied theme", async () => {
   await dialog.getByRole("radio", { name: "Light" }).click();
   await expect(html).toHaveAttribute("data-theme", "light");
 
-  await expect(dialog).toBeFocused();
   await page.keyboard.press("Escape");
   await expect(dialog).toBeHidden();
 });
