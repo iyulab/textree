@@ -14,6 +14,8 @@ export interface ChatTurn {
   role: 'user' | 'assistant';
   text: string;
   citations: Citation[];
+  /** 'summary' on a synthetic user turn that seeds a scope summary; absent for normal Q&A. */
+  kind?: 'summary';
 }
 
 const MAX_HITS = 5;
