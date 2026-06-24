@@ -9,6 +9,7 @@
 
 <script lang="ts">
   import type { TreeNode } from "./ipc";
+  import type { FriendlyError } from "./friendlyError.helpers";
   import { tree } from "./tree.svelte";
   import Icon from "./Icon.svelte";
   import { mergeOrder, nav } from "./nav.svelte";
@@ -23,6 +24,9 @@
     onrename,
     ondelete,
     onfavorite,
+    oncommitrename,
+    oncancelrename,
+    editingPath = null,
     selectedPath = null,
     top = false,
   }: {
@@ -40,6 +44,12 @@
     ondelete: (node: TreeNode) => void;
     /** Toggle the node's favorite state (star affordance in the row). */
     onfavorite: (node: TreeNode) => void;
+    /** Commit an inline rename. Returns null on success, FriendlyError on failure (input stays open). */
+    oncommitrename: (node: TreeNode, name: string) => Promise<FriendlyError | null>;
+    /** Cancel the inline rename (Escape). */
+    oncancelrename: () => void;
+    /** Path of the node currently being inline-renamed (null = none). */
+    editingPath?: string | null;
     /** Currently selected node path (for highlighting). Propagated to all descendants. */
     selectedPath?: string | null;
     /** Whether this is the top-level instance (role=tree vs group, fallback focus). */
@@ -196,6 +206,48 @@
     if (tree.focused === null && top && index === 0) return 0;
     return -1;
   }
+
+  // ── Inline rename (T2) ──────────────────────────────────────────
+  // Only ever one node is edited globally; the single instance rendering that node owns the
+  // input + error. editError clears whenever the edited node changes.
+  let editError = $state<FriendlyError | null>(null);
+  // Suppress the commit fired by the blur that follows an Escape cancel.
+  let suppressRenameBlur = false;
+
+  $effect(() => {
+    editingPath; // re-run when the edited node changes
+    editError = null;
+  });
+
+  /** Focus + select-all on the inline rename input; seed its initial value. */
+  function initRename(el: HTMLInputElement, name: string) {
+    el.value = name;
+    el.focus();
+    el.select();
+  }
+
+  async function commitRename(node: TreeNode, el: HTMLInputElement) {
+    if (suppressRenameBlur) {
+      suppressRenameBlur = false;
+      return;
+    }
+    const err = await oncommitrename(node, el.value);
+    // On success the parent clears editingPath → input unmounts. On failure keep it open + show error.
+    editError = err;
+  }
+
+  function onRenameKey(e: KeyboardEvent, node: TreeNode) {
+    e.stopPropagation(); // don't bubble to tree keyboard navigation
+    if (e.key === "Enter") {
+      e.preventDefault();
+      commitRename(node, e.currentTarget as HTMLInputElement);
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      suppressRenameBlur = true; // the unmount blur must not commit
+      editError = null;
+      oncancelrename();
+    }
+  }
 </script>
 
 <ul class="tree" role={top ? "tree" : "group"}>
@@ -226,26 +278,37 @@
         {:else}
           <span class="chevron-spacer"></span>
         {/if}
-        <button
-          class="node"
-          class:no-body={!node.body_path}
-          role="treeitem"
-          aria-selected={node.path === selectedPath}
-          aria-expanded={isContainer ? open : undefined}
-          tabindex={tabFor(node.path, i)}
-          draggable="true"
-          ondragstart={(e) => onDragStart(e, node)}
-          ondragend={() => (dragOverPath = null)}
-          ondragover={(e) => onDragOver(e, node)}
-          ondragleave={() => onDragLeave(node)}
-          ondrop={(e) => onDrop(e, node)}
-          onclick={() => onselect(node)}
-          onfocus={() => tree.setFocused(node.path)}
-          onkeydown={(e) => onKeydown(e, node)}
-        >
+        {#if editingPath === node.path}
           <span class="icon"><Icon name={node.kind === "container" ? "folder" : "file-text"} size={15} /></span>
-          <span class="label">{node.name}</span>
-        </button>
+          <input
+            class="tree-rename-input"
+            use:initRename={node.name}
+            onkeydown={(e) => onRenameKey(e, node)}
+            onblur={(e) => commitRename(node, e.currentTarget)}
+            aria-label="New name"
+          />
+        {:else}
+          <button
+            class="node"
+            class:no-body={!node.body_path}
+            role="treeitem"
+            aria-selected={node.path === selectedPath}
+            aria-expanded={isContainer ? open : undefined}
+            tabindex={tabFor(node.path, i)}
+            draggable="true"
+            ondragstart={(e) => onDragStart(e, node)}
+            ondragend={() => (dragOverPath = null)}
+            ondragover={(e) => onDragOver(e, node)}
+            ondragleave={() => onDragLeave(node)}
+            ondrop={(e) => onDrop(e, node)}
+            onclick={() => onselect(node)}
+            onfocus={() => tree.setFocused(node.path)}
+            onkeydown={(e) => onKeydown(e, node)}
+          >
+            <span class="icon"><Icon name={node.kind === "container" ? "folder" : "file-text"} size={15} /></span>
+            <span class="label">{node.name}</span>
+          </button>
+        {/if}
         <button
           class="fav"
           class:is-fav={fav}
@@ -259,6 +322,12 @@
           aria-pressed={fav}
         ><Icon name="star" size={14} /></button>
       </div>
+      {#if editingPath === node.path && editError}
+        <p
+          class="tree-rename-error"
+          title={editError.raw !== editError.summary ? editError.raw : undefined}
+        >⚠ {editError.summary}</p>
+      {/if}
       {#if hasChildren && open}
         <Self
           nodes={node.children}
@@ -269,6 +338,9 @@
           {onrename}
           {ondelete}
           {onfavorite}
+          {oncommitrename}
+          {oncancelrename}
+          {editingPath}
           {selectedPath}
         />
       {/if}
@@ -366,6 +438,27 @@
     overflow: hidden;
     white-space: nowrap;
     text-overflow: ellipsis;
+  }
+  /* Inline rename input — sits in the node's place; matches the node label's type scale. */
+  .tree-rename-input {
+    flex: 1;
+    min-width: 0;
+    font: inherit;
+    font-size: var(--font-size-small);
+    color: var(--text-normal);
+    background: var(--bg-primary);
+    border: 1px solid var(--accent);
+    border-radius: var(--radius-s);
+    padding: 2px var(--sp-1);
+  }
+  .tree-rename-input:focus {
+    outline: none;
+  }
+  /* Inline rename error — sits directly under the edited row. */
+  .tree-rename-error {
+    margin: var(--sp-1) 0 var(--sp-1) var(--sp-5);
+    font-size: var(--font-size-small);
+    color: var(--text-error);
   }
   /* Container without a body: body can't be opened, but it can still be selected for structure editing */
   .no-body .label {

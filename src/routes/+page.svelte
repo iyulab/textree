@@ -106,7 +106,7 @@
 
   // Structure editing (M4) state.
   let selectedNode = $state<TreeNode | null>(null);
-  let mode = $state<"none" | "new-note" | "new-folder" | "rename">("none");
+  let mode = $state<"none" | "new-note" | "new-folder">("none");
   let nameInput = $state("");
   let opError = $state<FriendlyError | null>(null);
   // Explicit create-target override (e.g. new container after leaf promote). When set, used instead of selection-based inference.
@@ -279,10 +279,48 @@
     }
   }
 
-  /** Keyboard F2: select the node and enter rename mode. */
-  function handleRename(node: TreeNode) {
+  // ── Inline tree rename (T2) ────────────────────────────────────────
+  let renamingPath = $state<string | null>(null);
+
+  /** Start an inline rename of the given node (F2 / Rename button / palette). */
+  function beginTreeRename(node: TreeNode | null) {
+    if (!node) return;
     selectedNode = node;
-    startMode("rename");
+    renamingPath = node.path;
+  }
+
+  function cancelTreeRename() {
+    renamingPath = null;
+  }
+
+  /** Commit an inline tree rename. Returns null on success, FriendlyError on failure (input stays open). */
+  async function commitTreeRename(
+    node: TreeNode,
+    rawName: string,
+  ): Promise<FriendlyError | null> {
+    if (!root) return null;
+    const name = rawName.trim();
+    if (!name || name === node.name) {
+      renamingPath = null; // no-op cancel
+      return null;
+    }
+    await flush(); // preserve unsaved edits before the structure change
+    if (pending) {
+      return friendlyError("Rename canceled — could not save your unsaved edits.");
+    }
+    try {
+      const target = node.path;
+      const affectsOpen = activePath !== null && pathInside(activePath, target);
+      await renameNode(root, target, name);
+      await refreshTree();
+      // If the open note is inside the renamed node, its path changed → close + prompt re-selection.
+      if (affectsOpen) closeEditor();
+      selectedNode = null;
+      renamingPath = null; // success → exit edit mode
+      return null;
+    } catch (e) {
+      return friendlyError(e); // keep renamingPath → input stays open, error shown inline
+    }
   }
 
   /** Keyboard Delete: select the node and delete it (trash). */
@@ -387,13 +425,12 @@
   }
 
   function startMode(
-    m: "new-note" | "new-folder" | "rename",
+    m: "new-note" | "new-folder",
     parentOverride: string | null = null,
   ) {
-    if (m === "rename" && !selectedNode) return;
     createParent = parentOverride;
     mode = m;
-    nameInput = m === "rename" && selectedNode ? selectedNode.name : "";
+    nameInput = "";
     opError = null;
   }
 
@@ -452,14 +489,6 @@
       } else if (mode === "new-folder") {
         await createFolder(root, targetParent(), name);
         await refreshTree();
-      } else if (mode === "rename" && selectedNode) {
-        const target = selectedNode.path;
-        const affectsOpen = activePath !== null && pathInside(activePath, target);
-        await renameNode(root, target, name);
-        await refreshTree();
-        // If the open note is inside the renamed node, close it and prompt re-selection (path changed).
-        if (affectsOpen) closeEditor();
-        selectedNode = null;
       }
       mode = "none";
       nameInput = "";
@@ -788,7 +817,7 @@
     newNoteAtRoot: () => { if (root) startMode("new-note", root); },
     newFolderAtRoot: () => { if (root) startMode("new-folder", root); },
     hasSelection: () => selectedNode !== null,
-    renameSelected: () => { startMode("rename"); },
+    renameSelected: () => { beginTreeRename(selectedNode); },
     deleteSelected: () => { void deleteSelected(); },
     // Promote is leaf-only — meaningful only when the selected node is a leaf (also checked inside startAddChild).
     promoteSelected: () => { void startAddChild(); },
@@ -1080,7 +1109,7 @@
           title="Promote the selected note to a folder and add a child note inside it"
           aria-label="Add child note"><Icon name="add-child" /></button>
         <span class="toolbar-sep" aria-hidden="true"></span>
-        <button onclick={() => startMode("rename")} disabled={!selectedNode} title="Rename"
+        <button onclick={() => beginTreeRename(selectedNode)} disabled={!selectedNode} title="Rename"
           aria-label="Rename"><Icon name="pencil" /></button>
         <button onclick={deleteSelected} disabled={!selectedNode} title="Delete"
           aria-label="Delete"><Icon name="trash" /></button>
@@ -1089,10 +1118,7 @@
         <div class="name-edit">
           <input
             class="name-input"
-            placeholder={mode === "new-folder" ||
-            (mode === "rename" && selectedNode?.kind === "container")
-              ? "Folder name"
-              : "Note name"}
+            placeholder={mode === "new-folder" ? "Folder name" : "Note name"}
             bind:value={nameInput}
             onkeydown={(e) => {
               if (e.key === "Enter") confirmMode();
@@ -1132,9 +1158,12 @@
           onselect={handleSelect}
           onmove={handleMove}
           onadopt={handleAdopt}
-          onrename={handleRename}
+          onrename={(node) => beginTreeRename(node)}
           ondelete={handleDelete}
           onfavorite={(node) => nav.toggleFavorite(node.path)}
+          oncommitrename={commitTreeRename}
+          oncancelrename={cancelTreeRename}
+          editingPath={renamingPath}
           selectedPath={selectedNode?.path ?? null}
         />
       </div>
