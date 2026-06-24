@@ -1215,6 +1215,7 @@
     {#if layout.mode === "chat" && root}
       <ChatView
         vault={root}
+        tree={tree}
         onOpenNote={openCitedNote}
         onNewChat={newChatFromSelection}
       />

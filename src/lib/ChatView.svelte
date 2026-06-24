@@ -3,13 +3,16 @@
   import { chatStore } from './chatStore.svelte';
   import { getGenerationConsent, setGenerationConsent, setAiConsent } from './aiConsent';
   import { prepareAiModel } from './ipc';
+  import type { TreeNode } from './ipc';
 
   let {
     vault,
+    tree,
     onOpenNote,
     onNewChat,
   }: {
     vault: string;
+    tree: TreeNode[];
     onOpenNote: (path: string) => void;
     onNewChat: () => void;
   } = $props();
@@ -56,6 +59,14 @@
     scheduleRetryIfPreparing();
   }
 
+  function summarize() {
+    clearRetry();
+    void (async () => {
+      await chatStore.summarize(vault, tree);
+      scheduleRetryIfPreparing();
+    })();
+  }
+
   function handleKeydown(e: KeyboardEvent) {
     if (e.key === 'Enter') {
       if (busy) return;
@@ -81,6 +92,7 @@
       <span class="chat-chip" title={chatStore.scope.path ?? 'Whole vault'}>
         ◈ Scope: {chatStore.scope.label}
       </span>
+      <button class="chat-summarize" onclick={summarize} disabled={busy} aria-label="Summarize this scope">Summarize</button>
       <button class="chat-newchat" onclick={onNewChat}>New chat</button>
     </div>
 
@@ -88,6 +100,10 @@
       {#each chatStore.turns as turn, i (i)}
         <div class="chat-turn {turn.role}">
           <div class="chat-bubble">{turn.text}</div>
+          {#if turn.role === 'assistant' && turn.text}
+            <button class="chat-copy" type="button" aria-label="Copy summary"
+              onclick={() => navigator.clipboard.writeText(turn.text)}>Copy</button>
+          {/if}
           {#if turn.citations.length}
             <ul class="chat-citations">
               {#each turn.citations as c (c.path)}
@@ -171,6 +187,7 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
+  .chat-summarize,
   .chat-newchat {
     flex-shrink: 0;
     padding: var(--sp-1) var(--sp-2);
@@ -182,7 +199,21 @@
     font-size: var(--font-size-smaller);
     cursor: pointer;
   }
+  .chat-summarize:hover,
   .chat-newchat:hover { background: var(--bg-secondary-alt); }
+  .chat-summarize:disabled { opacity: 0.5; cursor: default; }
+  .chat-copy {
+    align-self: flex-start;
+    margin-top: var(--sp-1);
+    padding: var(--sp-1) var(--sp-2);
+    font-size: var(--font-size-smaller);
+    color: var(--text-muted);
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-s);
+    cursor: pointer;
+  }
+  .chat-copy:hover { background: var(--bg-secondary-alt); }
   .chat-turns {
     flex: 1;
     min-height: 0;
