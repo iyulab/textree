@@ -100,11 +100,10 @@ test("generation toggle is disabled until embeddings consent is on", async () =>
   // planEmbeddingToggle(false, ...) also cascades genConsent to false.
   if (await embedding.isChecked()) {
     await embedding.uncheck();
-    // Wait for Svelte reactivity to propagate the disabled state.
-    await expect(generation).toBeDisabled();
   }
 
   // Precondition: with embeddings off, generation must be disabled.
+  // (expect auto-retries, so this covers Svelte reactivity after the uncheck above.)
   await expect(generation).toBeDisabled();
 
   // Enable embeddings → generation becomes enabled (generationDisabled = !aiConsent).
@@ -121,7 +120,8 @@ test("generation toggle is disabled until embeddings consent is on", async () =>
 
 // ── Test 4: theme segmented control switches <html data-theme> ───────────────
 // themeButtons labels are "Auto" / "Light" / "Dark" (settings.helpers.ts:46).
-// Role=radio comes from explicit role="radio" on the <button> elements in the radiogroup.
+// The control is a role=group of aria-pressed toggle buttons (project convention,
+// mirrors the Note│Chat mode toggle) — so the options are plain buttons, not radios.
 test("theme segmented control switches the applied theme", async () => {
   await page.keyboard.press("Control+Comma");
   const dialog = page.getByRole("dialog", { name: "Settings" });
@@ -129,13 +129,18 @@ test("theme segmented control switches the applied theme", async () => {
 
   const html = page.locator("html");
 
-  // Click "Dark" → <html data-theme="dark">
-  await dialog.getByRole("radio", { name: "Dark" }).click();
+  // Click "Dark" → <html data-theme="dark">, button reports aria-pressed.
+  const dark = dialog.getByRole("button", { name: "Dark" });
+  await dark.click();
   await expect(html).toHaveAttribute("data-theme", "dark");
+  await expect(dark).toHaveAttribute("aria-pressed", "true");
 
   // Click "Light" → <html data-theme="light">
-  await dialog.getByRole("radio", { name: "Light" }).click();
+  await dialog.getByRole("button", { name: "Light" }).click();
   await expect(html).toHaveAttribute("data-theme", "light");
+
+  // Restore the default theme so the test leaves no global side effect.
+  await dialog.getByRole("button", { name: "Auto" }).click();
 
   await page.keyboard.press("Escape");
   await expect(dialog).toBeHidden();

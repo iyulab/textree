@@ -101,14 +101,17 @@
 
     <section aria-label="Appearance">
       <h3>Appearance</h3>
-      <div class="seg-group" role="radiogroup" aria-label="Theme">
+      <!-- Segmented single-choice control: mirrors the Note│Chat / reading toggles
+           (role=group + aria-pressed), the project convention. A radiogroup would
+           demand roving tabindex + arrow-key nav; native toggle buttons stay fully
+           keyboard-reachable without it. -->
+      <div class="seg-group" role="group" aria-label="Theme">
         {#each themes as t (t.mode)}
           <button
             type="button"
-            role="radio"
-            aria-checked={t.active}
             class="seg"
             class:active={t.active}
+            aria-pressed={t.active}
             onclick={() => theme.set(t.mode as ThemeMode)}
           >{t.label}</button>
         {/each}

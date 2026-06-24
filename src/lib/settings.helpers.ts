@@ -16,6 +16,9 @@ export interface AiSectionState {
   badge: AiBadge;
 }
 
+// `host === null` is the pre-poll state: refreshHost() has not resolved yet (the modal
+// just opened). Show "preparing" optimistically when the user has consented — we expect
+// the host to come up — and "unavailable" otherwise, so the badge never overpromises.
 function aiBadge(aiConsent: boolean, host: HostStatus | null): AiBadge {
   if (host === "ready") return "ready";
   if (host === "starting") return "preparing";
