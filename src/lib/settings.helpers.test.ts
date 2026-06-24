@@ -42,6 +42,20 @@ describe("themeButtons", () => {
     expect(btns.find((b) => b.mode === "dark")?.active).toBe(true);
     expect(btns.find((b) => b.mode === "auto")?.active).toBe(false);
   });
+
+  it("auto is the only active one when current is auto", () => {
+    const btns = themeButtons("auto");
+    expect(btns.find((b) => b.mode === "auto")?.active).toBe(true);
+    expect(btns.find((b) => b.mode === "light")?.active).toBe(false);
+    expect(btns.find((b) => b.mode === "dark")?.active).toBe(false);
+  });
+
+  it("light is the only active one when current is light", () => {
+    const btns = themeButtons("light");
+    expect(btns.find((b) => b.mode === "auto")?.active).toBe(false);
+    expect(btns.find((b) => b.mode === "light")?.active).toBe(true);
+    expect(btns.find((b) => b.mode === "dark")?.active).toBe(false);
+  });
 });
 
 describe("planEmbeddingToggle", () => {
