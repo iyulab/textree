@@ -41,6 +41,7 @@
   import ChatView from "$lib/ChatView.svelte";
   import { chatStore, type ChatScope } from "$lib/chatStore.svelte";
   import Trash from "$lib/Trash.svelte";
+  import Settings from "$lib/Settings.svelte";
   import PageHeader from "$lib/PageHeader.svelte";
   import { parseFrontmatter, getField } from "$lib/frontmatter.helpers";
   import { palette } from "$lib/paletteStore.svelte";
@@ -82,6 +83,7 @@
   let startupError = $state<string | null>(null);
   let publishNotice = $state<{ kind: "ok" | "error"; text: string; detail?: string } | null>(null);
   let showTrash = $state(false);
+  let showSettings = $state(false);
 
   // Sync-conflict surfacing — derived from the live tree (no IPC). Non-destructive: we only
   // flag the duplicate copies a sync tool left behind; the user decides what to do (D18 guard).
@@ -803,6 +805,7 @@
     publishSite: () => { void choosePublishTarget(); },
     openTrash: () => { showTrash = true; },
     openLogDir: () => { void openLogDir(); },
+    openSettings: () => { showSettings = true; },
   };
 
   let commands = $derived(activeCommands(buildCommands(actions)));
@@ -1329,6 +1332,13 @@
         {root}
         onclose={() => { showTrash = false; }}
         onrestored={refreshTree}
+      />
+    {/if}
+    {#if showSettings}
+      <Settings
+        {root}
+        onOpenVault={() => { showSettings = false; void chooseVault(); }}
+        onclose={() => { showSettings = false; }}
       />
     {/if}
   </main>

@@ -33,6 +33,7 @@ export interface PaletteActions {
   publishSite: () => void;
   openTrash: () => void;
   openLogDir: () => void;
+  openSettings: () => void;
 }
 
 export function buildCommands(a: PaletteActions): Command[] {
@@ -40,6 +41,7 @@ export function buildCommands(a: PaletteActions): Command[] {
   return [
     { id: "vault.open", title: "Open / switch vault", run: a.openVault },
     { id: "view.theme", title: "Toggle theme (light/dark)", run: a.toggleTheme },
+    { id: "view.settings", title: "Settings", run: a.openSettings, keybinding: "mod+," },
     { id: "view.sidebar", title: "Toggle sidebar", run: a.toggleSidebar },
     { id: "view.reading", title: "Toggle reading view", run: a.toggleReading },
     { id: "note.new", title: "New note (root)", run: a.newNoteAtRoot, keybinding: "mod+n" },
