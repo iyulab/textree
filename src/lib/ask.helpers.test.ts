@@ -154,9 +154,19 @@ describe('pruneOrphanedAssistantTurn', () => {
     expect(pruneOrphanedAssistantTurn(turns, 'error')).toEqual([u('Q1')]);
   });
 
+  it('drops a trailing partial assistant turn interrupted by cancel (mid-stream, generating)', () => {
+    const turns = [u('Q1'), a('half-streamed ')]; // in-flight turn frozen by cancel()
+    expect(pruneOrphanedAssistantTurn(turns, 'generating')).toEqual([u('Q1')]);
+  });
+
   it('keeps a finalized assistant turn from a healthy run (status not error)', () => {
     const turns = [u('Q1'), a('full answer')];
     expect(pruneOrphanedAssistantTurn(turns, 'done')).toEqual(turns);
+  });
+
+  it('does not drop a trailing user turn when cancelled before any assistant turn (searching)', () => {
+    const turns = [u('Q1')];
+    expect(pruneOrphanedAssistantTurn(turns, 'generating')).toEqual(turns);
   });
 
   it('does not drop a trailing user turn even in the error state (generator-load failure: no orphan)', () => {

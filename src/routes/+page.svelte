@@ -1798,9 +1798,15 @@
     overflow: hidden;
   }
   .mode-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
     font: inherit;
     font-size: var(--font-size-small);
-    padding: 2px var(--sp-2);
+    /* min-height 24px (var(--sp-6)) meets the WCAG 2.5.8 (AA) minimum target size; the prior
+       2px vertical padding left the toggle ~17px tall, below the threshold. */
+    min-height: var(--sp-6);
+    padding: var(--sp-1) var(--sp-2);
     background: var(--bg-primary);
     color: var(--text-muted);
     border: none;

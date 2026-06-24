@@ -96,10 +96,15 @@
       <button class="chat-newchat" onclick={onNewChat}>New chat</button>
     </div>
 
-    <div class="chat-turns" aria-live="polite">
+    <div class="chat-turns">
       {#each chatStore.turns as turn, i (i)}
         <div class="chat-turn {turn.role}">
-          <div class="chat-bubble">{turn.text}</div>
+          <span class="chat-speaker">{turn.role === 'user' ? 'You' : 'Assistant'}:</span>
+          <!-- Live region scoped to the assistant bubble only: a polite region on the whole
+               transcript re-announces every prior turn on each streamed token. Static turns are
+               already in the DOM (not re-announced); only the streaming bubble's appended tokens
+               speak. User turns carry no live region. -->
+          <div class="chat-bubble" aria-live={turn.role === 'assistant' ? 'polite' : undefined}>{turn.text}</div>
           {#if turn.role === 'assistant' && turn.text}
             <button class="chat-copy" type="button" aria-label="Copy message"
               onclick={() => navigator.clipboard.writeText(turn.text).catch(() => {})}>Copy</button>
@@ -225,6 +230,19 @@
   }
   .chat-turn { display: flex; flex-direction: column; gap: var(--sp-1); }
   .chat-turn.user { align-items: flex-end; }
+  /* Visually hidden, screen-reader only: announces the speaker (the bubble alignment/colour
+     conveys it visually, but not to assistive tech). */
+  .chat-speaker {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
   .chat-bubble {
     max-width: 90%;
     padding: var(--sp-2) var(--sp-3);

@@ -89,15 +89,17 @@ export function fileToContext(
  * covers both host-starting and generator-not-yet-loaded.
  */
 /**
- * Drop a trailing assistant turn left orphaned by a failed generation. `run()` pushes an empty
- * assistant turn before streaming, so a generation error leaves an empty/partial assistant turn
- * at the tail; a healthy run finalizes it and it must stay in history. Prune only in the 'error'
- * state, so this is symmetric across both recovery paths — the user clicking Retry AND the user
- * typing a new question instead — keeping malformed (empty/half-finished) assistant content out
- * of the model's multi-turn history.
+ * Drop a trailing assistant turn that was never finalized. `run()` pushes an empty assistant turn
+ * before streaming, so an interrupted run leaves an empty/partial assistant turn at the tail; a
+ * healthy run finalizes it ('done') and it must stay in history. Two non-terminal states leave such
+ * an orphan: 'error' (generation failed mid-stream) and 'generating' (an in-flight stream frozen by
+ * cancel() on mode-switch/app-close). Pruning both keeps malformed (empty/half-finished) assistant
+ * content out of the model's multi-turn history and out of the resumed view — symmetric across every
+ * recovery path (Retry, typing a new question, and switching back into Chat after a cancel).
  */
+const ORPHAN_LEAVING_STATES = new Set(['error', 'generating']);
 export function pruneOrphanedAssistantTurn(turns: ChatTurn[], status: string): ChatTurn[] {
-  if (status === 'error' && turns.at(-1)?.role === 'assistant') {
+  if (ORPHAN_LEAVING_STATES.has(status) && turns.at(-1)?.role === 'assistant') {
     return turns.slice(0, -1);
   }
   return turns;

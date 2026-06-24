@@ -212,6 +212,10 @@ class ChatStore {
   cancel() {
     this.seq++;
     void cancelAsk(); // fire-and-forget: bump Rust ask_generation → host stops
+    // Drop the half-streamed assistant turn before it freezes in the session: leaving it would
+    // resurface a truncated answer (with clickable partial citations) on the next Chat entry.
+    // Pass the pre-cancel status so the helper prunes only when a stream was actually in flight.
+    this.turns = pruneOrphanedAssistantTurn(this.turns, this.status);
     this.status = 'idle';
   }
 }

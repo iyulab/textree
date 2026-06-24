@@ -79,6 +79,21 @@ impl HostHandle {
     fn set_status(&self, s: HostStatus) {
         self.status.lock().unwrap_or_else(|e| e.into_inner()).0 = s;
     }
+    /// Atomically claim the right to spawn the host: transition to `Starting` only if no spawn is
+    /// already in flight (`Starting`) or up (`Ready`), all under a single lock so the check-and-set
+    /// is indivisible. The previous guard read the status and set `Starting` in two separate lock
+    /// acquisitions with a port-alloc + process-spawn gap between them, letting two concurrent
+    /// callers (mount auto-spawn racing the `?`-enable, or a dev eager-spawn racing a manual
+    /// trigger) both pass and double-spawn — orphaning the first child (clobbered in `child`) and
+    /// leaking its port. Returns true to the single winner, false to everyone else.
+    fn try_begin_spawn(&self) -> bool {
+        let mut cell = self.status.lock().unwrap_or_else(|e| e.into_inner());
+        if matches!(cell.0, HostStatus::Starting | HostStatus::Ready) {
+            return false;
+        }
+        cell.0 = HostStatus::Starting;
+        true
+    }
     pub fn base_url(&self) -> Option<String> {
         let p = *self.port.lock().unwrap_or_else(|e| e.into_inner());
         p.map(|p| format!("http://127.0.0.1:{p}"))
@@ -132,7 +147,9 @@ const READY_POLL_INTERVAL: Duration = Duration::from_secs(10);
 pub fn spawn_host(handle: Arc<HostHandle>, exe: String, log_dir: std::path::PathBuf) {
     // Idempotent: never double-spawn. A concurrent caller (mount auto-spawn + ? enable, or a
     // dev eager-spawn racing a manual trigger) must not orphan a child or clobber the port.
-    if matches!(handle.status(), HostStatus::Starting | HostStatus::Ready) {
+    // try_begin_spawn atomically claims the spawn (transition → Starting under one lock); only the
+    // single winner proceeds. The failure paths below roll the claim back to Unavailable.
+    if !handle.try_begin_spawn() {
         return;
     }
     let port = match alloc_loopback_port() {
@@ -171,7 +188,7 @@ pub fn spawn_host(handle: Arc<HostHandle>, exe: String, log_dir: std::path::Path
     drain_utf8(child.stderr.take(), log_dir.join("host-err.log"));
     *handle.port.lock().unwrap_or_else(|e| e.into_inner()) = Some(port);
     *handle.child.lock().unwrap_or_else(|e| e.into_inner()) = Some(child);
-    handle.set_status(HostStatus::Starting);
+    // Status was already claimed as Starting by try_begin_spawn at the top.
 
     let my_gen = handle.generation.fetch_add(1, Ordering::SeqCst) + 1;
     let h = handle.clone();
@@ -739,6 +756,43 @@ mod tests {
             matches!(handle.status(), HostStatus::Ready),
             "guard must prevent re-spawn when already Starting/Ready"
         );
+    }
+
+    #[test]
+    fn try_begin_spawn_claims_then_rejects_second_caller() {
+        let handle = HostHandle::default(); // status = Unavailable
+        assert!(handle.try_begin_spawn(), "first claim from a non-running host must win");
+        assert!(
+            !handle.try_begin_spawn(),
+            "second claim must lose — a spawn is already in flight (Starting)"
+        );
+    }
+
+    #[test]
+    fn try_begin_spawn_rejected_when_already_ready() {
+        let handle = HostHandle::default();
+        handle.set_status(HostStatus::Ready);
+        assert!(
+            !handle.try_begin_spawn(),
+            "claim must be rejected when the host is already Ready"
+        );
+    }
+
+    #[test]
+    fn try_begin_spawn_admits_exactly_one_concurrent_winner() {
+        // The race the guard exists to prevent: many callers hitting an idle host at once.
+        // Exactly one may claim; the rest must be turned away so only one child is spawned.
+        let handle = Arc::new(HostHandle::default());
+        let winners: usize = (0..16)
+            .map(|_| {
+                let h = handle.clone();
+                std::thread::spawn(move || h.try_begin_spawn())
+            })
+            .collect::<Vec<_>>()
+            .into_iter()
+            .map(|j| j.join().unwrap() as usize)
+            .sum();
+        assert_eq!(winners, 1, "exactly one concurrent caller may claim the spawn");
     }
 
     #[test]
