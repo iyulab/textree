@@ -344,4 +344,55 @@ test.describe("host-absent: chat degrades calmly, Note mode stays functional", (
       removeTempVault(vault);
     }
   });
+
+  test("Summarize degrades gracefully (preparing state, no crash) without a host", async () => {
+    // Consent must be set before ChatView renders so the scopebar (and Summarize button) is shown.
+    const vault = createTempVault({ "summary-target.md": "# Summary Target\n\nSome content.\n" });
+    try {
+      await setGenerationConsent(absentPage, true);
+      await loadVault(absentPage, vault);
+      await absentPage.getByRole("treeitem", { name: /summary-target/i }).click();
+      await expect(absentPage.locator(".cm-content")).toBeVisible({ timeout: 5_000 });
+      await enterChatMode(absentPage);
+
+      // Summarize button is visible inside the consented scopebar.
+      const btn = absentPage.getByRole("button", { name: "Summarize this scope" });
+      await expect(btn).toBeVisible({ timeout: 3_000 });
+      await btn.click();
+
+      // Host is absent → gate resolves to 'preparing' (status: "unavailable" → resolveGenerationGate).
+      // The panel shows a [role="status"] message and no [role="alert"] (graceful, not a crash).
+      const statusMsg = absentPage.locator('[role="status"]');
+      await expect(statusMsg).toBeVisible({ timeout: 5_000 });
+      expect(await statusMsg.innerText()).toMatch(/preparing|Local AI/i);
+      await expect(absentPage.locator('[role="alert"]')).toHaveCount(0);
+
+      // The chat panel (section) must still be visible — no navigation away or crash.
+      await expect(
+        absentPage.locator('section[aria-label="Chat about your notes"]'),
+      ).toBeVisible();
+    } finally {
+      await clearAiConsent(absentPage);
+      removeTempVault(vault);
+    }
+  });
 });
+
+// ── HOST-PRESENT: Summarize (human gate) ─────────────────────────────────────
+//
+// HUMAN GATE (host-present, real model — cannot be automated without a live host + loaded model):
+//
+// Manual procedure:
+//   1. Launch the app with TEXTREE_HOST_EXE set and TEXTREE_ASK_E2E=host.
+//   2. Open a vault with multiple notes (a folder with several .md files works best).
+//   3. Click the folder in the tree to set it as the Chat scope.
+//   4. Enter Chat mode; wait for the model to finish preparing (the status message clears).
+//   5. Click "Summarize" (aria-label="Summarize this scope").
+//   6. Verify: a synthetic user turn "Summarize "<folder-name>"" appears immediately.
+//   7. Verify: an assistant turn streams tokens until 'done'; the bubble contains a coherent summary.
+//   8. Verify: citations (.chat-citation) list the notes that contributed context.
+//   9. Verify: the "Copy" button (aria-label="Copy summary") copies the assistant text to the clipboard.
+//  10. Large folder (e.g. 20+ notes): verify the summary message or citation list shows "N of M notes"
+//      truncation notice (budget-concat limit applied).
+//
+// Expected: no [role="alert"], chat panel stays visible throughout, summary is non-trivial text.
