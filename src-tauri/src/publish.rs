@@ -155,6 +155,8 @@ pub fn run_publish(
     if let Some(f) = &tokens_file {
         cmd.arg("--tokens-css").arg(f.path());
     }
+    // Run the canopy CLI without flashing a console window (Windows).
+    crate::process_ext::no_console_window(&mut cmd);
 
     let output = cmd
         .output()

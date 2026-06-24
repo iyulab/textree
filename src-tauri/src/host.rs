@@ -150,6 +150,9 @@ pub fn spawn_host(handle: Arc<HostHandle>, exe: String, log_dir: std::path::Path
         .env("ASPNETCORE_URLS", &url)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    // Run the sidecar without flashing a console window (Windows). Without this,
+    // a GUI app gives the console-subsystem .NET host its own console window.
+    crate::process_ext::no_console_window(&mut cmd);
     // The bundled host is published self-contained single-file (assemble-host-sidecar.ps1),
     // so it carries its own runtime — no DOTNET_ROOT needed. In dev, TEXTREE_HOST_EXE may point
     // at a framework-dependent build, which then relies on the ambient .NET runtime.
@@ -295,9 +298,10 @@ pub fn shutdown_host(handle: &HostHandle) {
         #[cfg(windows)]
         {
             let pid = child.id();
-            let _ = Command::new("taskkill")
-                .args(["/F", "/T", "/PID", &pid.to_string()])
-                .output();
+            let mut tk = Command::new("taskkill");
+            tk.args(["/F", "/T", "/PID", &pid.to_string()]);
+            crate::process_ext::no_console_window(&mut tk);
+            let _ = tk.output();
         }
         let _ = child.wait();
     }

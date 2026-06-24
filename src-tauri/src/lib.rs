@@ -2,6 +2,7 @@ pub(crate) mod commands;
 pub(crate) mod host;
 pub(crate) mod fs_ops;
 pub(crate) mod pathsafe;
+pub(crate) mod process_ext;
 pub(crate) mod publish;
 pub(crate) mod search;
 pub(crate) mod self_write;
