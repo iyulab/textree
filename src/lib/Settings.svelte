@@ -34,6 +34,16 @@
     void refreshHost();
   });
 
+  // While the host is spawning, keep polling so the badge flips preparing → ready
+  // without the user reopening the modal (spec §4.3: the badge is the honesty signal).
+  $effect(() => {
+    if (host !== "starting") return;
+    const id = setInterval(() => {
+      void refreshHost();
+    }, 1000);
+    return () => clearInterval(id);
+  });
+
   $effect(() => {
     panelEl?.focus();
   });
