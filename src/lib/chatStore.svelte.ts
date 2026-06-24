@@ -1,7 +1,7 @@
 // Runes orchestration store for the multi-turn local AI Chat (workspace shell).
 // NOT imported by tests (runes module — test only pure logic in ask.helpers.ts).
 import { ask, cancelAsk, hostStatus, prepareGeneration, readNote, semanticSearch } from './ipc';
-import type { SemanticHit } from './ipc';
+import type { SemanticHit, TreeNode } from './ipc';
 import {
   buildChatMessages,
   extractCitations,
@@ -12,6 +12,7 @@ import {
   selectContext,
   type ChatTurn,
 } from './ask.helpers';
+import { collectScopeNotes, budgetConcat, buildSummaryMessages } from './summary.helpers';
 
 export type ChatScopeKind = 'file' | 'folder' | 'vault';
 export interface ChatScope {
@@ -35,6 +36,10 @@ class ChatStore {
   // Monotonic guard — each new run increments it; stale stream callbacks check
   // their captured seq against the current and discard if behind (askStore pattern).
   private seq = 0;
+  // Tree snapshot captured at summarize() time, reused by run()'s summary branch on retry
+  // (so retryGeneration need not re-thread the tree).
+  private summaryTree: TreeNode[] = [];
+  private summaryResult: import('./summary.helpers').BudgetResult | null = null;
 
   /** Begin a fresh conversation pinned to `scope` (New chat / re-scope / first entry). */
   startSession(scope: ChatScope) {
@@ -57,6 +62,15 @@ class ChatStore {
     this.turns = pruneOrphanedAssistantTurn(this.turns, this.status);
     this.turns = [...this.turns, { role: 'user', text: q, citations: [] }];
     this.draft = '';
+    await this.run(vault);
+  }
+
+  /** Begin a fresh summary conversation pinned to the current scope; seed a synthetic summary turn. */
+  async summarize(vault: string, tree: TreeNode[]) {
+    this.summaryTree = tree;
+    const label = this.scope.label;
+    this.startSession(this.scope); // clears turns + cancels any in-flight stream
+    this.turns = [{ role: 'user', text: `Summarize "${label}"`, citations: [], kind: 'summary' }];
     await this.run(vault);
   }
 
@@ -104,15 +118,18 @@ class ChatStore {
     }
     // gate === 'ready' → fall through to retrieval.
 
-    // Retrieval — scope-granularity dispatch.
+    // Retrieval — branch on the latest user turn's intent (summary vs Q&A).
     this.status = 'searching';
-    let hits: SemanticHit[];
+    const isSummary = lastUser?.kind === 'summary';
+    let ctx: SemanticHit[];
     try {
-      if (this.scope.kind === 'file' && this.scope.path) {
+      if (isSummary) {
+        ctx = await this.retrieveSummaryContext(vault);
+      } else if (this.scope.kind === 'file' && this.scope.path) {
         const body = await readNote(vault, this.scope.path);
-        hits = fileToContext(this.scope.path, body);
+        ctx = selectContext(fileToContext(this.scope.path, body));
       } else {
-        hits = await semanticSearch(vault, q, this.scope.path, CONTEXT_LIMIT);
+        ctx = selectContext(await semanticSearch(vault, q, this.scope.path, CONTEXT_LIMIT));
       }
     } catch (e) {
       if (seq !== this.seq) return;
@@ -122,7 +139,6 @@ class ChatStore {
     }
     if (seq !== this.seq) return;
 
-    const ctx = selectContext(hits);
     if (!hasUsableContext(ctx)) {
       this.status = 'empty';
       return;
@@ -132,7 +148,9 @@ class ChatStore {
     this.status = 'generating';
     const idx = this.turns.lastIndexOf(lastUser!);
     const priorTurns = this.turns.slice(0, idx);
-    const messages = buildChatMessages(priorTurns, q, ctx);
+    const messages = isSummary
+      ? buildSummaryMessages(this.scope.label, this.summaryResult!)
+      : buildChatMessages(priorTurns, q, ctx);
     const assistantIdx = this.turns.length;
     this.turns = [...this.turns, { role: 'assistant', text: '', citations: [] }];
     try {
@@ -153,6 +171,22 @@ class ChatStore {
       this.status = 'error';
       this.errorMessage = String(e);
     }
+  }
+
+  /** Build summary context for the pinned scope: whole body for a file, budget-concat for folder/vault. */
+  private async retrieveSummaryContext(vault: string): Promise<SemanticHit[]> {
+    if (this.scope.kind === 'file' && this.scope.path) {
+      const body = await readNote(vault, this.scope.path);
+      const hits = fileToContext(this.scope.path, body);
+      this.summaryResult = { hits, includedCount: hits.length, totalCount: 1 };
+      return hits;
+    }
+    const paths = collectScopeNotes(this.summaryTree, this.scope.path);
+    const notes = await Promise.all(
+      paths.map(async (path) => ({ path, body: await readNote(vault, path).catch(() => '') })),
+    );
+    this.summaryResult = budgetConcat(notes);
+    return this.summaryResult.hits;
   }
 
   /** User-triggered retry after a generation failure (Retry button). Awaiting prepareGeneration
