@@ -232,7 +232,10 @@
       return;
     }
     const err = await oncommitrename(node, el.value);
-    // On success the parent clears editingPath → input unmounts. On failure keep it open + show error.
+    // On success the parent clears editingPath → the input unmounts and fires a blur; arm the
+    // guard so that unmount-blur does not re-commit (the Escape path arms it the same way).
+    // On failure the input stays open, so no unmount-blur fires and the guard stays unset.
+    if (err === null) suppressRenameBlur = true;
     editError = err;
   }
 
