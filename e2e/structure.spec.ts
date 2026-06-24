@@ -52,18 +52,54 @@ test("＋folder → create directory on disk", async () => {
   }
 });
 
-test("rename → rename file on disk", async () => {
+test("rename → inline rename file on disk", async () => {
   const vault = createTempVault({ "옛이름.md": "내용\n" });
   try {
     await loadVault(page, vault);
     await page.getByRole("treeitem", { name: /옛이름/ }).click();
     await page.getByRole("button", { name: "Rename", exact: true }).click();
-    await page.locator(".name-input").fill("새이름");
-    await page.locator(".name-input").press("Enter");
+    await page.locator(".tree-rename-input").fill("새이름");
+    await page.locator(".tree-rename-input").press("Enter");
 
     await expect(page.getByRole("treeitem", { name: /새이름/ })).toBeVisible();
     expect(exists(vault, "새이름.md")).toBe(true);
     expect(exists(vault, "옛이름.md")).toBe(false);
+  } finally {
+    removeTempVault(vault);
+  }
+});
+
+test("rename → illegal name keeps the input open with an inline error", async () => {
+  const vault = createTempVault({ "정상.md": "내용\n" });
+  try {
+    await loadVault(page, vault);
+    await page.getByRole("treeitem", { name: /정상/ }).click();
+    await page.getByRole("button", { name: "Rename", exact: true }).click();
+    // A name containing a path separator is rejected by is_valid_name.
+    await page.locator(".tree-rename-input").fill("a/b");
+    await page.locator(".tree-rename-input").press("Enter");
+
+    // Input stays open, an inline error shows, and the file is NOT renamed.
+    await expect(page.locator(".tree-rename-input")).toBeVisible();
+    await expect(page.locator(".tree-rename-error")).toBeVisible();
+    expect(exists(vault, "정상.md")).toBe(true);
+  } finally {
+    removeTempVault(vault);
+  }
+});
+
+test("rename → inline rename folder (directory + folder note on disk)", async () => {
+  const vault = createTempVault({ "옛폴더/옛폴더.md": "노트\n" });
+  try {
+    await loadVault(page, vault);
+    await page.getByRole("treeitem", { name: /옛폴더/ }).click();
+    await page.getByRole("button", { name: "Rename", exact: true }).click();
+    await page.locator(".tree-rename-input").fill("새폴더");
+    await page.locator(".tree-rename-input").press("Enter");
+
+    await expect(page.getByRole("treeitem", { name: /새폴더/ })).toBeVisible();
+    expect(exists(vault, "새폴더")).toBe(true);
+    expect(exists(vault, "옛폴더")).toBe(false);
   } finally {
     removeTempVault(vault);
   }

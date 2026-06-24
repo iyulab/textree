@@ -89,16 +89,19 @@ test("keyboard: ↑↓ move · ←→ collapse/expand · Enter open", async () =
   }
 });
 
-test("keyboard: F2 enter rename mode · Delete delete", async () => {
+test("keyboard: F2 inline rename · Delete delete", async () => {
   const vault = createTempVault({ "지울노트.md": "x\n", "남길노트.md": "y\n" });
   try {
     await loadVault(page, vault);
 
-    // F2 → rename input appears (select + mode).
+    // F2 → inline rename input appears in the tree (no dialog).
     await page.getByRole("treeitem", { name: /지울노트/ }).focus();
     await page.keyboard.press("F2");
-    await expect(page.locator(".name-input")).toBeVisible();
+    await expect(page.locator(".tree-rename-input")).toBeVisible();
     await page.keyboard.press("Escape");
+    await expect(page.locator(".tree-rename-input")).toHaveCount(0);
+    // Escape leaves the name unchanged.
+    await expect(page.getByRole("treeitem", { name: /지울노트/ })).toBeVisible();
 
     // Delete → to trash (disappears from tree).
     await page.getByRole("treeitem", { name: /지울노트/ }).focus();
