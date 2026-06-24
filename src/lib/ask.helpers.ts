@@ -63,7 +63,7 @@ export function extractCitations(hits: SemanticHit[]): Citation[] {
   return hits.map(h => ({ path: h.path, snippet: h.snippet }));
 }
 
-const DEFAULT_FILE_MAX_CHARS = 8000;
+export const DEFAULT_FILE_MAX_CHARS = 8000;
 
 /**
  * Build a single-context "hit" from a whole note body, for file-scoped chat

@@ -56,6 +56,8 @@ describe('budgetConcat', () => {
     expect(r.hits[1].snippet).toBe('B'.repeat(30));
     expect(r.includedCount).toBe(2);
     expect(r.totalCount).toBe(2);
+    // 100-char bodies sliced to 30 → body was truncated
+    expect(r.bodyTruncated).toBe(true);
   });
 
   it('excludes blank-body notes but still counts them in totalCount', () => {
@@ -63,6 +65,8 @@ describe('budgetConcat', () => {
     expect(r.hits.map(h => h.path)).toEqual(['a.md']);
     expect(r.includedCount).toBe(1);
     expect(r.totalCount).toBe(2);
+    // 'x' is 1 char, perNote = floor(100/1) = 100, no truncation
+    expect(r.bodyTruncated).toBe(false);
   });
 
   it('caps at maxNotes (later notes dropped, counted in totalCount)', () => {
@@ -71,6 +75,8 @@ describe('budgetConcat', () => {
     expect(r.includedCount).toBe(2);
     expect(r.totalCount).toBe(5);
     expect(r.hits.map(h => h.path)).toEqual(['n0.md', 'n1.md']);
+    // 50-char bodies, perNote = floor(100/2) = 50 → no body truncation (50 > 50 is false)
+    expect(r.bodyTruncated).toBe(false);
   });
 
   it('returns empty hits when all bodies are blank', () => {
@@ -78,6 +84,32 @@ describe('budgetConcat', () => {
     expect(r.hits).toEqual([]);
     expect(r.includedCount).toBe(0);
     expect(r.totalCount).toBe(1);
+    expect(r.bodyTruncated).toBe(false);
+  });
+
+  it('bodyTruncated is false when all bodies fit within perNote budget', () => {
+    // 3-char bodies, perNote = floor(90/3) = 30 → no truncation
+    const short: ScopeNote[] = [
+      { path: 'a.md', body: 'abc' },
+      { path: 'b.md', body: 'def' },
+      { path: 'c.md', body: 'ghi' },
+    ];
+    const r = budgetConcat(short, { totalBudget: 90 });
+    expect(r.bodyTruncated).toBe(false);
+    expect(r.includedCount).toBe(3);
+  });
+
+  it('bodyTruncated is true when bodies exceed perNote even with all notes included', () => {
+    // 50-char bodies, perNote = floor(30/2) = 15 → bodies truncated
+    const long: ScopeNote[] = [
+      { path: 'a.md', body: 'A'.repeat(50) },
+      { path: 'b.md', body: 'B'.repeat(50) },
+    ];
+    const r = budgetConcat(long, { totalBudget: 30 });
+    expect(r.bodyTruncated).toBe(true);
+    expect(r.includedCount).toBe(2);
+    expect(r.totalCount).toBe(2);
+    // All included (no count-truncation), body still truncated
   });
 });
 
@@ -106,6 +138,38 @@ describe('buildSummaryMessages', () => {
   it('omits the truncation note when all are included', () => {
     const r = budgetConcat([{ path: 'a.md', body: 'x' }], { totalBudget: 100 });
     const msgs = buildSummaryMessages('V', r);
-    expect(msgs.find(m => m.role === 'user')!.content).not.toContain(' of ');
+    const user = msgs.find(m => m.role === 'user')!.content;
+    expect(user).not.toContain(' of ');
+    expect(user).not.toContain('excerpts are truncated');
+  });
+
+  it('discloses only body truncation (no count-trunc) when bodies exceed budget but all notes included', () => {
+    // 2 notes, 50-char bodies, budget 30 → perNote=15, bodyTruncated=true, includedCount===totalCount
+    const r = budgetConcat(
+      [{ path: 'a.md', body: 'A'.repeat(50) }, { path: 'b.md', body: 'B'.repeat(50) }],
+      { totalBudget: 30 },
+    );
+    expect(r.bodyTruncated).toBe(true);
+    expect(r.includedCount).toBe(r.totalCount); // no count truncation
+    const user = buildSummaryMessages('V', r).find(m => m.role === 'user')!.content;
+    expect(user).toContain('excerpts are truncated');
+    expect(user).not.toContain(' of '); // no count-truncation text
+  });
+
+  it('combines both disclosures into a single parenthetical when count and body are both truncated', () => {
+    // 5 notes capped to 2, bodies long enough to be sliced
+    const r = budgetConcat(
+      Array.from({ length: 5 }, (_, i) => ({ path: `n${i}.md`, body: 'z'.repeat(50) })),
+      { maxNotes: 2, totalBudget: 30 },
+    );
+    expect(r.includedCount).toBe(2);
+    expect(r.totalCount).toBe(5);
+    // perNote = floor(30/2) = 15; 50 > 15 → bodyTruncated true
+    expect(r.bodyTruncated).toBe(true);
+    const user = buildSummaryMessages('V', r).find(m => m.role === 'user')!.content;
+    expect(user).toContain('2 of 5');
+    expect(user).toContain('excerpts are truncated');
+    // Both should appear in a single parenthetical (only one opening paren)
+    expect(user.match(/\(/g)?.length ?? 0).toBe(1);
   });
 });

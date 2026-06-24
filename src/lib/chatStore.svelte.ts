@@ -4,6 +4,7 @@ import { ask, cancelAsk, hostStatus, prepareGeneration, readNote, semanticSearch
 import type { SemanticHit, TreeNode } from './ipc';
 import {
   buildChatMessages,
+  DEFAULT_FILE_MAX_CHARS,
   extractCitations,
   fileToContext,
   hasUsableContext,
@@ -178,7 +179,7 @@ class ChatStore {
     if (this.scope.kind === 'file' && this.scope.path) {
       const body = await readNote(vault, this.scope.path);
       const hits = fileToContext(this.scope.path, body);
-      this.summaryResult = { hits, includedCount: hits.length, totalCount: 1 };
+      this.summaryResult = { hits, includedCount: hits.length, totalCount: 1, bodyTruncated: body.length > DEFAULT_FILE_MAX_CHARS };
       return hits;
     }
     const paths = collectScopeNotes(this.summaryTree, this.scope.path);

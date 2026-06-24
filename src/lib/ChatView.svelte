@@ -101,8 +101,8 @@
         <div class="chat-turn {turn.role}">
           <div class="chat-bubble">{turn.text}</div>
           {#if turn.role === 'assistant' && turn.text}
-            <button class="chat-copy" type="button" aria-label="Copy summary"
-              onclick={() => navigator.clipboard.writeText(turn.text)}>Copy</button>
+            <button class="chat-copy" type="button" aria-label="Copy message"
+              onclick={() => navigator.clipboard.writeText(turn.text).catch(() => {})}>Copy</button>
           {/if}
           {#if turn.citations.length}
             <ul class="chat-citations">

@@ -12,6 +12,8 @@ export interface BudgetResult {
   hits: SemanticHit[];
   includedCount: number;
   totalCount: number;
+  /** True when at least one included note's body was sliced shorter than its original content. */
+  bodyTruncated: boolean;
 }
 
 const DEFAULT_MAX_NOTES = 30;
@@ -76,19 +78,22 @@ export function budgetConcat(
   const totalCount = notes.length;
   const nonEmpty = notes.filter((n) => n.body.trim().length > 0);
   const capped = nonEmpty.slice(0, maxNotes);
-  if (capped.length === 0) return { hits: [], includedCount: 0, totalCount };
+  if (capped.length === 0) return { hits: [], includedCount: 0, totalCount, bodyTruncated: false };
   const perNote = Math.max(1, Math.floor(totalBudget / capped.length));
+  const bodyTruncated = capped.some((n) => n.body.length > perNote);
   const hits = capped.map((n): SemanticHit => ({ path: n.path, snippet: n.body.slice(0, perNote), score: 1 }));
-  return { hits, includedCount: capped.length, totalCount };
+  return { hits, includedCount: capped.length, totalCount, bodyTruncated };
 }
 
 /** Build the summary chat messages: summary grounding system prompt + excerpt context + instruction. */
 export function buildSummaryMessages(scopeLabel: string, result: BudgetResult): ChatMessage[] {
   const context = result.hits.map((h) => `Source: ${h.path}\n${h.snippet}`).join('\n\n---\n\n');
-  const truncation =
-    result.includedCount < result.totalCount
-      ? `\n\n(Summarizing ${result.includedCount} of ${result.totalCount} notes in scope.)`
-      : '';
+  const parts: string[] = [];
+  if (result.includedCount < result.totalCount)
+    parts.push(`Summarizing ${result.includedCount} of ${result.totalCount} notes in scope.`);
+  if (result.bodyTruncated)
+    parts.push('Some note excerpts are truncated.');
+  const truncation = parts.length ? `\n\n(${parts.join(' ')})` : '';
   return [
     { role: 'system', content: SUMMARY_SYSTEM },
     { role: 'user', content: `Notes from "${scopeLabel}":\n\n${context}\n\nSummarize these notes.${truncation}` },
