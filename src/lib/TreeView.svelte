@@ -219,8 +219,12 @@
     editError = null;
   });
 
-  /** Focus + select-all on the inline rename input; seed its initial value. */
+  /** Focus + select-all on the inline rename input; seed its initial value.
+   * Reset the blur guard on every mount: the blur-away success path arms it without a
+   * following unmount-blur to consume it (the input was already unfocused), so a fresh
+   * session must start clean or it would silently swallow its first commit. */
   function initRename(el: HTMLInputElement, name: string) {
+    suppressRenameBlur = false;
     el.value = name;
     el.focus();
     el.select();
