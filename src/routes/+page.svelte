@@ -1334,6 +1334,7 @@
         onrestored={refreshTree}
       />
     {/if}
+    <!-- No `&& root` guard (unlike Trash): Settings is usable with no vault open — the Vault section's "Open vault" path needs it. -->
     {#if showSettings}
       <Settings
         {root}
