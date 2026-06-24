@@ -18,6 +18,7 @@
   let aiConsent = $state(getAiConsent());
   let genConsent = $state(getGenerationConsent());
   let host = $state<HostStatus | null>(null);
+  let panelEl = $state<HTMLDivElement | undefined>();
 
   const ai = $derived(computeAiSectionState(aiConsent, genConsent, host));
   const themes = $derived(themeButtons(theme.mode));
@@ -31,6 +32,10 @@
   }
   $effect(() => {
     void refreshHost();
+  });
+
+  $effect(() => {
+    panelEl?.focus();
   });
 
   async function toggleEmbedding(next: boolean): Promise<void> {
@@ -70,6 +75,7 @@
 
 <div class="overlay" role="presentation" onclick={onclose} onkeydown={() => {}}>
   <div
+    bind:this={panelEl}
     class="panel"
     role="dialog"
     aria-modal="true"
