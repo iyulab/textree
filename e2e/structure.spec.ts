@@ -105,6 +105,35 @@ test("rename → inline rename folder (directory + folder note on disk)", async 
   }
 });
 
+// Regression: the inline-rename blur guard must reset between sessions. A blur-away commit
+// (no Enter) arms the guard but fires no unmount-blur to consume it; if the next rename
+// session does not start clean, its first commit is silently swallowed.
+test("rename → blur-away commit, then a second rename both land (guard reset)", async () => {
+  const vault = createTempVault({ "에이.md": "a\n", "비.md": "b\n" });
+  try {
+    await loadVault(page, vault);
+
+    // Rename 에이 by clicking another node (commit via blur, not Enter).
+    await page.getByRole("treeitem", { name: /에이/ }).click();
+    await page.getByRole("button", { name: "Rename", exact: true }).click();
+    await page.locator(".tree-rename-input").fill("에이2");
+    await page.getByRole("treeitem", { name: /비/ }).click();
+    await expect(page.getByRole("treeitem", { name: /에이2/ })).toBeVisible();
+    expect(exists(vault, "에이2.md")).toBe(true);
+
+    // The next rename must land on its FIRST commit (a leaked guard would swallow it).
+    await page.getByRole("treeitem", { name: /비/ }).click();
+    await page.getByRole("button", { name: "Rename", exact: true }).click();
+    await page.locator(".tree-rename-input").fill("비2");
+    await page.locator(".tree-rename-input").press("Enter");
+    await expect(page.getByRole("treeitem", { name: /비2/ })).toBeVisible();
+    expect(exists(vault, "비2.md")).toBe(true);
+    expect(exists(vault, "비.md")).toBe(false);
+  } finally {
+    removeTempVault(vault);
+  }
+});
+
 test("delete → move to trash (original disappears)", async () => {
   const vault = createTempVault({ "삭제할노트.md": "내용\n" });
   try {
