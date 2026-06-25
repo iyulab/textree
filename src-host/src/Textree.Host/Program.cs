@@ -53,8 +53,31 @@ var genLog = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Tex
 
 // ── Endpoints ─────────────────────────────────────────────────────────────────
 
-app.MapGet("/health", (ITextGenerator gen) =>
-    Results.Ok(new { status = "ok", embedderReady = mgr.EmbedderReady, generatorReady = gen.Ready, generatorError = gen.LastError }));
+app.MapGet("/health", (ITextGenerator gen, ModelStatus modelStatus) =>
+{
+    static object? Dl(ModelSnapshot s) =>
+        s.Phase is ModelPhase.Downloading or ModelPhase.Loading
+            ? new
+            {
+                phase = s.Phase == ModelPhase.Loading ? "loading" : "downloading",
+                overallPercent = s.OverallPercent,
+                bytesDownloaded = s.BytesDownloaded,
+                totalBytes = s.TotalBytes,
+                fileIndex = s.FileIndex,
+                fileCount = s.FileCount,
+            }
+            : null;
+    return Results.Ok(new
+    {
+        status = "ok",
+        embedderReady = mgr.EmbedderReady,
+        generatorReady = gen.Ready,
+        generatorError = gen.LastError,
+        embedderError = modelStatus.Embedder.Error,
+        embedderDownload = Dl(modelStatus.Embedder),
+        generatorDownload = Dl(modelStatus.Generator),
+    });
+});
 
 app.MapPost("/prepare-generation", (ITextGenerator gen) =>
 {

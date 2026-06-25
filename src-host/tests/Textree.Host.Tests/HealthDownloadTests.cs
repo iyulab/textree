@@ -23,12 +23,13 @@ public sealed class HealthDownloadTests
             bytesDownloaded: 1_200_000_000L,
             totalBytes: 2_900_000_000L);
 
-        using var factory = new TextreeHostFactory(stubLoader);
+        using var factory = new TextreeHostFactory(loader: stubLoader);
         var client = factory.CreateClient();
 
         // Wait until the stub has reported at least one progress tick — proves
         // the background task is live and the host is listening concurrently.
-        await stubLoader.ProgressReported.WaitAsync(TimeSpan.FromSeconds(10));
+        var progressReported = await stubLoader.ProgressReported.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.True(progressReported, "Stub loader did not report progress within 10s — background task may be blocked.");
 
         // Host must respond immediately — not blocked on the embedder load.
         var health = await client.GetFromJsonAsync<JsonElement>("/health");
@@ -43,24 +44,75 @@ public sealed class HealthDownloadTests
         Assert.Equal(2_900_000_000L, snap.TotalBytes);
     }
 
-    // ── Test host: replaces IEmbedderLoader with the stub via ConfigureTestServices ──
+    [Fact]
+    public async Task Health_includes_generator_download_snapshot()
+    {
+        // Build a ModelStatus that already has a generator download in progress.
+        var modelStatus = new ModelStatus();
+        modelStatus.SetGeneratorPhase(ModelPhase.Downloading);
+        modelStatus.GeneratorProgress.Report(new DownloadProgress
+        {
+            FileName = "model.gguf",
+            BytesDownloaded = 300_000_000,
+            TotalBytes = 2_200_000_000,
+            CurrentFileIndex = 1,
+            TotalFileCount = 2,
+        });
+
+        // Use a never-resolving loader for the background embedder task so the test stays
+        // hermetic and the background download does not interfere with assertions.
+        var embedderGate = new TaskCompletionSource<IEmbeddingModel>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var embedderLoader = new StubEmbedderLoader(embedderGate.Task, 0, 0);
+
+        using var app = new TextreeHostFactory(modelStatus: modelStatus, loader: embedderLoader);
+        var client = app.CreateClient();
+
+        var health = await client.GetFromJsonAsync<JsonElement>("/health");
+        var dl = health.GetProperty("generatorDownload");
+        Assert.Equal("downloading", dl.GetProperty("phase").GetString());
+        Assert.Equal(300_000_000, dl.GetProperty("bytesDownloaded").GetInt64());
+        Assert.Equal(2, dl.GetProperty("fileCount").GetInt32());
+    }
+
+    // ── Test host: replaces IEmbedderLoader and/or ModelStatus with stubs ──
     private sealed class TextreeHostFactory : WebApplicationFactory<Program>
     {
-        private readonly IEmbedderLoader _loader;
+        private readonly IEmbedderLoader? _loader;
+        private readonly ModelStatus? _modelStatus;
 
+        /// <summary>Constructor for embedder-loading tests (original use case).</summary>
         public TextreeHostFactory(IEmbedderLoader loader) => _loader = loader;
+
+        /// <summary>
+        /// Constructor for generator-focused tests: injects a custom <see cref="ModelStatus"/>
+        /// and a custom loader so the background embedder task does not interfere.
+        /// </summary>
+        public TextreeHostFactory(ModelStatus modelStatus, IEmbedderLoader loader)
+        {
+            _modelStatus = modelStatus;
+            _loader = loader;
+        }
 
         protected override void ConfigureWebHost(Microsoft.AspNetCore.Hosting.IWebHostBuilder builder)
         {
             builder.ConfigureTestServices(services =>
             {
-                services.RemoveAll<IEmbedderLoader>();
-                services.AddSingleton(_loader);
+                if (_loader is not null)
+                {
+                    services.RemoveAll<IEmbedderLoader>();
+                    services.AddSingleton(_loader);
+                }
+
+                if (_modelStatus is not null)
+                {
+                    services.RemoveAll<ModelStatus>();
+                    services.AddSingleton(_modelStatus);
+                }
             });
         }
     }
 
-    // ── Stub loader: reports one progress tick then blocks until the gate task resolves ──
+    // ── Stub loader: optionally reports one progress tick then blocks until gate resolves ──
     private sealed class StubEmbedderLoader : IEmbedderLoader
     {
         private readonly Task<IEmbeddingModel> _gateTask;
@@ -86,20 +138,23 @@ public sealed class HealthDownloadTests
             IProgress<DownloadProgress> progress,
             CancellationToken ct)
         {
-            // Report one download progress tick.
-            progress.Report(new DownloadProgress
+            if (_bytesDownloaded > 0 || _totalBytes > 0)
             {
-                FileName = "model.onnx.data",
-                BytesDownloaded = _bytesDownloaded,
-                TotalBytes = _totalBytes,
-                CurrentFileIndex = 1,
-                TotalFileCount = 2,
-            });
+                // Report one download progress tick.
+                progress.Report(new DownloadProgress
+                {
+                    FileName = "model.onnx.data",
+                    BytesDownloaded = _bytesDownloaded,
+                    TotalBytes = _totalBytes,
+                    CurrentFileIndex = 1,
+                    TotalFileCount = 2,
+                });
+            }
 
-            // Signal the test that the tick was reported.
+            // Signal the test that the tick was reported (or that LoadAsync was entered).
             _progressReported.Release();
 
-            // Block until the test completes (simulates a long cold download).
+            // Block until the gate resolves (simulates a long cold download or an idle wait).
             return await _gateTask;
         }
     }
