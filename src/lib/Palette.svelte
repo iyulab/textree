@@ -95,17 +95,55 @@
   let modelDownload = $state<DownloadSnapshot | null>(null); // embedder-first download snapshot during preparing
   let consent = $state(getAiConsent());
 
+  // Live-poll hostStatus() while the AI badge is in the "preparing" state so the download
+  // progress bar advances in real time (not frozen at first-sampled value).
+  // Deps: palette.mode, consent — restarts when either changes, not on every keystroke.
+  $effect(() => {
+    if (palette.mode !== "semantic") {
+      hostState = null;
+      modelDownload = null;
+      return;
+    }
+    // Read consent in the effect body so the poll auto-restarts when enableAi() flips it.
+    const _consent = consent;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    function poll() {
+      void hostStatus()
+        .then((s) => {
+          if (cancelled) return;
+          hostState = s.status;
+          modelDownload = s.embedderDownload ?? s.generatorDownload ?? null;
+          // Reschedule only while the badge is still in the preparing state.
+          if (resolveSemanticAiUi(_consent, s.status) === "preparing") {
+            timer = setTimeout(poll, 2000);
+          }
+        })
+        .catch(() => {
+          if (cancelled) return;
+          hostState = "unavailable";
+          modelDownload = null;
+        });
+    }
+
+    poll();
+
+    return () => {
+      cancelled = true;
+      if (timer !== null) {
+        clearTimeout(timer);
+        timer = null;
+      }
+    };
+  });
+
   $effect(() => {
     if (palette.mode !== "semantic") {
       semanticHits = [];
       searching = false;
       return;
     }
-    // Poll host status on entering semantic mode (even with an empty term) so the consent /
-    // preparing row can render before the user types.
-    void hostStatus()
-      .then((s) => { hostState = s.status; modelDownload = s.embedderDownload ?? s.generatorDownload; })
-      .catch(() => { hostState = "unavailable"; modelDownload = null; });
     const term = palette.term;
     if (term === "") {
       semanticHits = [];

@@ -302,6 +302,9 @@ fn poll_health(handle: Arc<HostHandle>, base: String, my_gen: u64) {
         // begins after embedder_ready, while ready==true). First iteration: any_dl=false but
         // ready=false → 1s anyway (harmless 1-poll lag before download state is observed).
         let any_dl = handle.embedder_download().is_some() || handle.generator_download().is_some();
+        // When a generator download begins while ready==true, any_dl was false on this iteration,
+        // so the sleep here can last up to one READY_POLL_INTERVAL (≤10s) before the cadence drops
+        // to 1s; the generic "preparing" UI in the front-end covers that brief window.
         std::thread::sleep(poll_interval(ready, any_dl));
         // A newer spawn or a shutdown invalidates this poll thread.
         if handle.generation.load(Ordering::SeqCst) != my_gen {
