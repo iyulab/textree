@@ -16,6 +16,17 @@ pub enum HostStatus {
     Unavailable,
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DownloadSnapshot {
+    pub phase: String,
+    pub overall_percent: f64,
+    pub bytes_downloaded: i64,
+    pub total_bytes: i64,
+    pub file_index: i32,
+    pub file_count: i32,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct HealthResponse {
     pub status: String,
@@ -25,6 +36,12 @@ pub struct HealthResponse {
     pub generator_ready: bool,
     #[serde(rename = "generatorError", default)]
     pub generator_error: Option<String>,
+    #[serde(rename = "embedderError", default)]
+    pub embedder_error: Option<String>,
+    #[serde(rename = "embedderDownload", default)]
+    pub embedder_download: Option<DownloadSnapshot>,
+    #[serde(rename = "generatorDownload", default)]
+    pub generator_download: Option<DownloadSnapshot>,
 }
 
 /// Bind 127.0.0.1:0 to let the OS pick a free port, then release it so the
@@ -70,6 +87,12 @@ pub struct HostHandle {
     /// surfaced via host_status so the frontend can show a failure instead of hanging on
     /// "preparing". Cleared optimistically by prepare_generation, refreshed every poll.
     generator_error: Mutex<Option<String>>,
+    /// Last-known embedder load error from /health (None = no error).
+    embedder_error: Mutex<Option<String>>,
+    /// Last-known embedder download progress snapshot from /health (None = not downloading).
+    embedder_download: Mutex<Option<DownloadSnapshot>>,
+    /// Last-known generator download progress snapshot from /health (None = not downloading).
+    generator_download: Mutex<Option<DownloadSnapshot>>,
 }
 
 impl HostHandle {
@@ -127,6 +150,27 @@ impl HostHandle {
     }
     fn set_generator_error(&self, v: Option<String>) {
         *self.generator_error.lock().unwrap_or_else(|e| e.into_inner()) = v;
+    }
+    /// Returns the last-known embedder load error (None = healthy / still preparing).
+    pub fn embedder_error(&self) -> Option<String> {
+        self.embedder_error.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+    fn set_embedder_error(&self, v: Option<String>) {
+        *self.embedder_error.lock().unwrap_or_else(|e| e.into_inner()) = v;
+    }
+    /// Returns the last-known embedder download progress (None = not downloading/loading).
+    pub fn embedder_download(&self) -> Option<DownloadSnapshot> {
+        self.embedder_download.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+    fn set_embedder_download(&self, v: Option<DownloadSnapshot>) {
+        *self.embedder_download.lock().unwrap_or_else(|e| e.into_inner()) = v;
+    }
+    /// Returns the last-known generator download progress (None = not downloading/loading).
+    pub fn generator_download(&self) -> Option<DownloadSnapshot> {
+        self.generator_download.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+    fn set_generator_download(&self, v: Option<DownloadSnapshot>) {
+        *self.generator_download.lock().unwrap_or_else(|e| e.into_inner()) = v;
     }
 }
 
@@ -266,6 +310,9 @@ fn poll_health(handle: Arc<HostHandle>, base: String, my_gen: u64) {
             // frontend chat/ask gate never advanced past "preparing".
             handle.set_generator_ready(h.generator_ready);
             handle.set_generator_error(h.generator_error.clone());
+            handle.set_embedder_download(h.embedder_download.clone());
+            handle.set_generator_download(h.generator_download.clone());
+            handle.set_embedder_error(h.embedder_error.clone());
         }
         let embedder_ready = health.as_ref().map(|h| h.embedder_ready).unwrap_or(false);
         match poll_action(embedder_ready, ready, start.elapsed() >= HEALTH_CEILING) {
@@ -381,6 +428,9 @@ pub struct HostStatusPayload {
     pub status: HostStatus,
     pub generator_ready: bool,
     pub generator_error: Option<String>,
+    pub embedder_error: Option<String>,
+    pub embedder_download: Option<DownloadSnapshot>,
+    pub generator_download: Option<DownloadSnapshot>,
 }
 
 #[tauri::command]
@@ -389,6 +439,9 @@ pub fn host_status(host: State<'_, Arc<HostHandle>>) -> HostStatusPayload {
         status: host.status(),
         generator_ready: host.generator_ready(),
         generator_error: host.generator_error(),
+        embedder_error: host.embedder_error(),
+        embedder_download: host.embedder_download(),
+        generator_download: host.generator_download(),
     }
 }
 
@@ -856,6 +909,27 @@ mod tests {
         assert_eq!(poll_action(true, true, true), PollAction::KeepPolling);
         assert_eq!(poll_action(false, true, true), PollAction::KeepPolling);
         assert_eq!(poll_action(false, true, false), PollAction::KeepPolling);
+    }
+
+    #[test]
+    fn parse_health_reads_download_snapshot() {
+        let body = r#"{"status":"ok","embedderReady":false,"embedderError":null,
+          "embedderDownload":{"phase":"downloading","overallPercent":42.0,
+          "bytesDownloaded":1200000000,"totalBytes":2900000000,"fileIndex":2,"fileCount":3}}"#;
+        let h = parse_health(body).unwrap();
+        assert!(!h.embedder_ready);
+        let dl = h.embedder_download.unwrap();
+        assert_eq!(dl.file_count, 3);
+        assert_eq!(dl.total_bytes, 2_900_000_000);
+        assert!((dl.overall_percent - 42.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn parse_health_tolerates_missing_download_fields() {
+        let body = r#"{"status":"ok","embedderReady":true,"generatorReady":true}"#;
+        let h = parse_health(body).unwrap();
+        assert!(h.embedder_download.is_none());
+        assert!(h.generator_download.is_none());
     }
 
     #[test]
