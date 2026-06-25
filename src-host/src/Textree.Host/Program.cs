@@ -4,30 +4,48 @@ using Textree.Host;
 using Textree.Host.Contracts;
 using Textree.Host.Rag;
 
-// ── Startup: load embedder synchronously before the app begins listening ──────
-// Plan B's Rust lifecycle polls /health and tolerates the host being slow to
-// respond on first-run model download (connection-refused → retry). No
-// background-load mechanism needed (YAGNI).
-var opts = new TextreeHostOptions();
-// Force CPU execution provider: DirectML (the default Auto provider) crashes during
-// inference on this hardware ("LayerNormalization DmlExecutionProvider 0x80070057")
-// and does not fall back to CPU automatically. e5-small is fast enough on CPU for
-// the latencies Textree needs, so CPU is the robust production choice here.
-var model = await LocalEmbedder.LoadAsync(
-    opts.EmbeddingModel,
-    new EmbedderOptions { Provider = LMSupply.ExecutionProvider.Cpu });
-var embedder = new LmSupplyEmbeddingService(model);
-
 // ── DI / builder ──────────────────────────────────────────────────────────────
+// The embedder loads in the background so the host begins accepting requests
+// immediately. Rust's Plan B lifecycle (poll /health with retry on connection-
+// refused) still works on cold download; now /health answers promptly with
+// embedderReady=false rather than remaining unreachable until the model is on disk.
+var opts = new TextreeHostOptions();
+var status = new ModelStatus();
+// Empty embedder: Dimensions==0 until SetModel is called, keeping EmbedderReady==false
+// and /search returning "warming" until the background load finishes.
+var embedder = new LmSupplyEmbeddingService();
+
 var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddSingleton(opts);
+builder.Services.AddSingleton(status);
 builder.Services.AddSingleton(embedder);
+builder.Services.AddSingleton<IEmbedderLoader, DefaultEmbedderLoader>();
 builder.Services.AddSingleton<VaultManager>();
 // Local CPU text generator for /chat. Singleton: the model loads once (lazily, on first
 // /chat) and is reused. Tests replace this with a stub via ConfigureTestServices.
 builder.Services.AddSingleton<ITextGenerator, LocalTextGenerator>();
 
 var app = builder.Build();
+
+// Background embedder load — host starts listening immediately.
+// The background task resolves IEmbedderLoader from the DI container so that
+// tests can inject a stub via ConfigureTestServices and have it take effect here.
+status.SetEmbedderPhase(ModelPhase.Downloading);
+_ = Task.Run(async () =>
+{
+    try
+    {
+        var model = await app.Services.GetRequiredService<IEmbedderLoader>()
+            .LoadAsync(opts.EmbeddingModel, status.EmbedderProgress, CancellationToken.None);
+        status.SetEmbedderPhase(ModelPhase.Loading);
+        embedder.SetModel(model);
+        status.SetEmbedderPhase(ModelPhase.Ready);
+    }
+    catch (Exception ex)
+    {
+        status.SetEmbedderError(ex.Message);
+    }
+});
 
 var mgr = app.Services.GetRequiredService<VaultManager>();
 var reindexLog = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Textree.Host.Reindex");
@@ -103,10 +121,10 @@ app.MapPost("/chat", async (ChatRequestDto req, ITextGenerator gen, HttpContext 
 
     ctx.Response.ContentType = "text/event-stream";
     var msgs = req.Messages.Select(m => new ChatMessage(m.Role, m.Content)).ToList();
-    var opts = new GenerationOptions(MaxTokens: req.MaxTokens ?? 512);
+    var genOpts = new GenerationOptions(MaxTokens: req.MaxTokens ?? 512);
 
     // ct = HttpContext.RequestAborted -> client disconnect stops generation, frees CPU.
-    await foreach (var chunk in gen.GenerateAsync(msgs, opts, ct))
+    await foreach (var chunk in gen.GenerateAsync(msgs, genOpts, ct))
     {
         var json = JsonSerializer.Serialize(new { choices = new[] { new { delta = new { content = chunk } } } });
         await ctx.Response.WriteAsync($"data: {json}\n\n", ct);
