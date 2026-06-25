@@ -286,12 +286,23 @@ fn poll_action(embedder_ready: bool, already_ready: bool, ceiling_exceeded: bool
     }
 }
 
+/// Poll fast (1s) while starting OR while any model is actively downloading (so generator
+/// download progress — which begins after embedder_ready — updates live); back off to 10s only
+/// in steady state (host ready and nothing downloading) to keep the host log quiet.
+fn poll_interval(ready: bool, any_download_active: bool) -> Duration {
+    if ready && !any_download_active { READY_POLL_INTERVAL } else { POLL_INTERVAL }
+}
+
 fn poll_health(handle: Arc<HostHandle>, base: String, my_gen: u64) {
     let start = Instant::now();
     let mut announced = false;
     let mut ready = false;
     loop {
-        std::thread::sleep(if ready { READY_POLL_INTERVAL } else { POLL_INTERVAL });
+        // Stay at 1s whenever any model is actively downloading (e.g. generator lazy-download
+        // begins after embedder_ready, while ready==true). First iteration: any_dl=false but
+        // ready=false → 1s anyway (harmless 1-poll lag before download state is observed).
+        let any_dl = handle.embedder_download().is_some() || handle.generator_download().is_some();
+        std::thread::sleep(poll_interval(ready, any_dl));
         // A newer spawn or a shutdown invalidates this poll thread.
         if handle.generation.load(Ordering::SeqCst) != my_gen {
             return;
@@ -952,6 +963,22 @@ mod tests {
         let body = r#"{"status":"ok","embedderReady":true,"generatorReady":false}"#;
         let h = parse_health(body).unwrap();
         assert!(h.generator_error.is_none());
+    }
+
+    #[test]
+    fn poll_interval_fast_during_any_download_even_when_ready() {
+        // generator downloading after embedder ready → must stay fast (1s), not back off
+        assert_eq!(poll_interval(true, true), POLL_INTERVAL);
+    }
+
+    #[test]
+    fn poll_interval_backs_off_only_when_ready_and_idle() {
+        assert_eq!(poll_interval(true, false), READY_POLL_INTERVAL);
+    }
+
+    #[test]
+    fn poll_interval_fast_while_starting() {
+        assert_eq!(poll_interval(false, false), POLL_INTERVAL);
     }
 
     #[test]
