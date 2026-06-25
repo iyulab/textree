@@ -479,7 +479,7 @@
   /* Byte transfer detail (e.g. "1.2 / 2.9 GB"). */
   .dl-detail {
     display: block;
-    font-size: 0.75rem;
+    font-size: var(--font-size-smaller);
     color: var(--text-muted);
     margin-top: var(--sp-1);
   }
