@@ -98,6 +98,15 @@
   // Live-poll hostStatus() while the AI badge is in the "preparing" state so the download
   // progress bar advances in real time (not frozen at first-sampled value).
   // Deps: palette.mode, consent — restarts when either changes, not on every keystroke.
+  //
+  // Grace-window: on a fresh Enable, Rust's resolve_host (filesystem work) runs before
+  // try_begin_spawn sets host status to "Starting". The first poll(s) may therefore see
+  // "unavailable" even though the host is mid-spawn. INITIAL_GRACE_POLLS lets the poll
+  // keep rescheduling for the first ~3 cycles (~6 s) regardless of status so it rides out
+  // that window. After the grace period, an always-unavailable host stops the poll (no
+  // infinite loop: at most INITIAL_GRACE_POLLS extra cycles are wasted, then it stops).
+  const INITIAL_GRACE_POLLS = 3;
+
   $effect(() => {
     if (palette.mode !== "semantic") {
       hostState = null;
@@ -108,15 +117,20 @@
     const _consent = consent;
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
+    // Per-run counter — resets on every effect re-run (fresh consent/mode change gets its
+    // own grace window). Declared here, NOT inside poll(), so it accumulates across cycles.
+    let attempts = 0;
 
     function poll() {
       void hostStatus()
         .then((s) => {
           if (cancelled) return;
+          // Increment unconditionally so the grace bound is exact (3 polls max).
+          attempts += 1;
           hostState = s.status;
           modelDownload = s.embedderDownload ?? s.generatorDownload ?? null;
-          // Reschedule only while the badge is still in the preparing state.
-          if (resolveSemanticAiUi(_consent, s.status) === "preparing") {
+          // Reschedule while preparing OR still within the initial grace window.
+          if (resolveSemanticAiUi(_consent, s.status) === "preparing" || attempts < INITIAL_GRACE_POLLS) {
             timer = setTimeout(poll, 2000);
           }
         })

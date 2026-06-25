@@ -115,3 +115,64 @@ This documents the one-interval lag that wasn't previously called out (the exist
 
 - `src/lib/Palette.svelte` — replaced one-shot hostStatus call with self-rescheduling poll effect (cancelled-flag pattern, 2s interval, stops on non-preparing)
 - `src-tauri/src/host.rs` — added one comment line in `poll_health` about the ready+generator-starts lag window
+
+---
+
+## Path B Hardening
+
+**Branch:** `feat/cold-model-download-progress`
+**Date:** 2026-06-25
+**Commit:** follows below
+
+### The Race
+
+After commit 77d2584 introduced the 2s self-rescheduling poll, a secondary race was identified: `enableAi()` flips `consent` true (triggering a fresh effect run) and fires `void prepareAiModel()`. Inside Rust's `prepare_ai_model`, `resolve_host` (filesystem work) executes *before* `try_begin_spawn` sets the host status to `Starting`. During that window, `hostStatus()` returns `"unavailable"`. If the poll's first cycle resolves in that window, `resolveSemanticAiUi(true, "unavailable")` returns `"unavailable"` — the reschedule condition is false — and the poll stops dead. The old search-effect one-shot re-poll was removed in 77d2584, so typing no longer recovers a stalled poll. On a fresh Enable (cold-download path), this reproduces the frozen-bar symptom the feature was built to fix.
+
+### Fix: Bounded Grace Window
+
+Added an `INITIAL_GRACE_POLLS = 3` constant (module-level) and an `attempts` counter (per-effect-run, declared inside the `$effect` body, reset on every re-run).
+
+Reschedule condition changed from:
+```ts
+if (resolveSemanticAiUi(_consent, s.status) === "preparing") {
+```
+to:
+```ts
+if (resolveSemanticAiUi(_consent, s.status) === "preparing" || attempts < INITIAL_GRACE_POLLS) {
+```
+
+`attempts` is incremented unconditionally at the top of the `.then` handler (before the reschedule check), so the grace bound is exact:
+
+| Poll | attempts before check | attempts < 3? | always-unavailable reschedules? |
+|------|----------------------|---------------|--------------------------------|
+| t=0  | 0→1                  | 1 < 3 = true  | yes                            |
+| t=2s | 1→2                  | 2 < 3 = true  | yes                            |
+| t=4s | 2→3                  | 3 < 3 = false | no → stop                      |
+
+Exactly 3 wasted polls on a genuinely-unavailable host, then stops. No infinite loop.
+
+### Teardown Preservation
+
+- `cancelled` flag and `timer` variable unchanged — each effect run owns its own pair.
+- Cleanup still sets `cancelled = true` then `clearTimeout(timer)`.
+- `attempts` is declared inside the `$effect` body (not inside `poll()`), so it accumulates across cycles within one run but resets to 0 on every effect re-run (fresh consent flip or mode change).
+- `.catch` is left untouched — it does not increment `attempts` and does not reschedule (no grace in the error path, as specified).
+
+### Gate Outputs
+
+| Gate | Result |
+|------|--------|
+| `npm run check` | 0 errors, 0 warnings (412 files) |
+| `npm run test:unit` | 249 passed (20 test files) — no regression |
+| `npm run build` | ✓ built in ~2s + ~4s (pre-existing chunk-size warning) |
+
+### Self-Review
+
+- **No leaked timer:** teardown pattern identical to 77d2584; `cancelled = true` gates both `.then` and `.catch`.
+- **No infinite loop:** after grace (`attempts >= 3`) AND status is not `"preparing"`, no reschedule fires. A permanently-unavailable host stops after exactly 3 extra polls.
+- **Grace counter is per-run:** `let attempts = 0` is inside the `$effect` body, outside `poll()`, so each effect re-run (e.g., consent flip) resets it — a fresh Enable gets a fresh 3-cycle grace window.
+- **`.catch` unmodified:** the race is a resolved-`"unavailable"` race, not an IPC rejection. Extending grace to `.catch` would be scope creep and incorrect.
+
+### Files Changed
+
+- `src/lib/Palette.svelte` — added `INITIAL_GRACE_POLLS` const, `attempts` counter, extended reschedule condition with grace-window `||` branch, added explanatory comment.
