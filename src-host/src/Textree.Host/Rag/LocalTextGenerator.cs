@@ -44,11 +44,14 @@ public sealed class LocalTextGenerator : ITextGenerator, IAsyncDisposable
     // pinned instead of "default" (which auto-selects a GGUF/llama-server backend on CPU).
     private const string ModelId = "phi-4-mini";
 
+    private readonly ModelStatus _status;
     private readonly SemaphoreSlim _loadGate = new(1, 1);
     // Guarded by _loadGate for writes; read lock-free via Volatile.Read on the fast path.
     private IGeneratorModel? _model;
     // Mirrors _model's Volatile read/write discipline: written inside _loadGate, read lock-free.
     private string? _lastError;
+
+    public LocalTextGenerator(ModelStatus status) => _status = status;
 
     public bool Ready => Volatile.Read(ref _model) is not null;
     public string? LastError => Volatile.Read(ref _lastError);
@@ -70,12 +73,18 @@ public sealed class LocalTextGenerator : ITextGenerator, IAsyncDisposable
             Volatile.Write(ref _lastError, null);
             try
             {
+                // Signal download start before invoking the library so /health reflects the
+                // actual phase even if download progress callbacks never fire (cached model).
+                _status.SetGeneratorPhase(ModelPhase.Downloading);
+
                 // Pin CPU: DirectML crashes on inference here and does not fall back. See header.
                 var model = await LocalGenerator.LoadAsync(
                     ModelId,
                     new GeneratorOptions { Provider = ExecutionProvider.Cpu },
-                    progress: null,
+                    progress: _status.GeneratorProgress,
                     cancellationToken: ct);
+
+                _status.SetGeneratorPhase(ModelPhase.Ready);
                 Volatile.Write(ref _model, model);
             }
             catch (OperationCanceledException)
@@ -86,6 +95,7 @@ public sealed class LocalTextGenerator : ITextGenerator, IAsyncDisposable
             catch (Exception ex)
             {
                 Volatile.Write(ref _lastError, ex.Message);
+                _status.SetGeneratorError(ex.Message);
                 throw;
             }
         }

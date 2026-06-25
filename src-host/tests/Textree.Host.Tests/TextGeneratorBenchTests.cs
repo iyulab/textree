@@ -37,7 +37,7 @@ public sealed class TextGeneratorBenchTests
             "DirectML crashes during inference on the target hardware and does not fall back.";
         const string question = "In one sentence, what is the source of truth in Textree and why?";
 
-        await using var gen = new LocalTextGenerator();
+        await using var gen = new LocalTextGenerator(new ModelStatus());
 
         var loadSw = Stopwatch.StartNew();
         await gen.PrepareAsync(CancellationToken.None);
