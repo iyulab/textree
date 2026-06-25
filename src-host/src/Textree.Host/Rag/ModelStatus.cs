@@ -19,6 +19,7 @@ public record ModelSnapshot(
 /// </summary>
 public sealed class ModelStatus
 {
+    // Single writer per model slot (the background load loop); /health only reads. No CAS needed.
     private ModelSnapshot _embedder = ModelSnapshot.Idle;
     private ModelSnapshot _generator = ModelSnapshot.Idle;
 
@@ -34,6 +35,7 @@ public sealed class ModelStatus
         GeneratorProgress = new SyncProgress(p => Report(ref _generator, p));
     }
 
+    // Progress callbacks mean bytes are moving → Downloading; the load loop drives Loading/Ready/Error explicitly.
     private static void Report(ref ModelSnapshot slot, DownloadProgress p) =>
         Volatile.Write(ref slot, new ModelSnapshot(
             ModelPhase.Downloading, p.OverallPercentComplete, p.BytesDownloaded,
@@ -46,8 +48,10 @@ public sealed class ModelStatus
 
     private static void SetPhase(ref ModelSnapshot slot, ModelPhase phase)
     {
+        if (phase == ModelPhase.Error)
+            throw new ArgumentException("Use SetEmbedderError/SetGeneratorError to enter the Error phase.", nameof(phase));
         var cur = Volatile.Read(ref slot);
-        Volatile.Write(ref slot, cur with { Phase = phase, Error = phase == ModelPhase.Error ? cur.Error : null });
+        Volatile.Write(ref slot, cur with { Phase = phase, Error = null });
     }
 
     private static void SetError(ref ModelSnapshot slot, string msg)

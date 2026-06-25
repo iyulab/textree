@@ -51,4 +51,12 @@ public class ModelStatusTests
         Assert.Equal(ModelPhase.Ready, status.Generator.Phase);
         Assert.Equal(ModelPhase.Idle, status.Embedder.Phase);
     }
+
+    [Fact]
+    public void SetEmbedderPhase_Error_throws_ArgumentException()
+    {
+        var status = new ModelStatus();
+        Assert.Throws<ArgumentException>(() => status.SetEmbedderPhase(ModelPhase.Error));
+        // The correct path to Error phase is SetEmbedderError (covered by SetEmbedderError_moves_phase_to_error_with_message).
+    }
 }
