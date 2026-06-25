@@ -18,12 +18,17 @@ export async function openVault(root: string): Promise<TreeNode[]> {
   return invoke<TreeNode[]>("open_vault", { root });
 }
 
+/** Resolved default vault: its absolute path, and whether the preferred (Documents) location was
+ * unusable so the vault was created in a fallback location (home/app-local-data) instead. */
+export type DefaultVault = { path: string; fellBack: boolean };
+
 /**
  * Ensures the default vault exists (created + welcome.md seeded on first run) and returns its
- * absolute path. The backend owns OS-path resolution, folder creation, and seeding.
+ * absolute path. The backend owns OS-path resolution, folder creation, and seeding, and falls
+ * back through home → app-local-data when Documents is unusable so first run never blank-screens.
  */
-export async function ensureDefaultVault(): Promise<string> {
-  return invoke<string>("ensure_default_vault");
+export async function ensureDefaultVault(): Promise<DefaultVault> {
+  return invoke<DefaultVault>("ensure_default_vault");
 }
 
 export async function listTree(root: string): Promise<TreeNode[]> {

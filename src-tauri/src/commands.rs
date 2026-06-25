@@ -73,29 +73,74 @@ fn ensure_vault_at(base: &Path) -> Result<PathBuf, String> {
     Ok(vault)
 }
 
-/// Resolves the base directory under which the default `Textree/` vault lives.
-/// Dev/E2E: `TEXTREE_DEFAULT_VAULT_BASE` env var (test isolation, mirrors TEXTREE_CANOPY_CLI).
-/// Production: the OS Documents dir, falling back to the home dir.
-fn default_vault_base(app: &AppHandle) -> Result<PathBuf, String> {
+/// Ordered candidate base directories under which the default `Textree/` vault may live.
+/// Dev/E2E: a single forced `TEXTREE_DEFAULT_VAULT_BASE` (test isolation, mirrors TEXTREE_CANOPY_CLI;
+/// no fallback so tests stay deterministic). Production: Documents first (preferred), then the home
+/// dir, then app-local-data as a last resort. Documents can resolve to an *invalid* path (e.g. a
+/// OneDrive-redirected/uninitialized Known Folder) that exists in name but cannot be created under —
+/// so we keep going past it rather than trusting the first resolved path.
+fn candidate_vault_bases(app: &AppHandle) -> Vec<PathBuf> {
     if let Ok(p) = std::env::var("TEXTREE_DEFAULT_VAULT_BASE") {
         if !p.is_empty() {
-            return Ok(PathBuf::from(p));
+            return vec![PathBuf::from(p)];
         }
     }
-    if let Ok(dir) = app.path().document_dir() {
-        return Ok(dir);
+    let mut bases: Vec<PathBuf> = Vec::new();
+    let mut push = |dir: PathBuf| {
+        if !bases.contains(&dir) {
+            bases.push(dir);
+        }
+    };
+    if let Ok(d) = app.path().document_dir() {
+        push(d);
     }
-    app.path().home_dir().map_err(|_| "could not resolve a documents or home directory".to_string())
+    if let Ok(h) = app.path().home_dir() {
+        push(h);
+    }
+    if let Ok(a) = app.path().app_local_data_dir() {
+        push(a);
+    }
+    bases
+}
+
+/// Tries each candidate base in order, returning the first under which a vault was successfully
+/// created/seeded. `fell_back` is true when that base was not the first (preferred) candidate —
+/// i.e. the Documents location was unusable and the vault landed elsewhere, which the UI surfaces
+/// so the user always knows where their notes live (data sovereignty). Errors only when *every*
+/// candidate fails — never silently no-ops into a blank app.
+fn first_creatable_vault(bases: &[PathBuf]) -> Result<(PathBuf, bool), String> {
+    let mut last_err = "no candidate base directory could be resolved".to_string();
+    for (i, base) in bases.iter().enumerate() {
+        match ensure_vault_at(base) {
+            Ok(vault) => return Ok((vault, i > 0)),
+            Err(e) => last_err = e,
+        }
+    }
+    Err(last_err)
+}
+
+/// Result of resolving the default vault: its absolute path plus whether the preferred (Documents)
+/// location was unusable so the vault was created in a fallback location instead.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DefaultVault {
+    pub path: String,
+    pub fell_back: bool,
 }
 
 /// Ensures the default vault exists (creating it and seeding `welcome.md` on first run) and
-/// returns its absolute path. The single backend owner of OS-path resolution + seeding.
+/// returns its absolute path. The single backend owner of OS-path resolution + seeding. Falls
+/// back through home → app-local-data when Documents is unusable so first run never blank-screens.
 #[tauri::command]
-pub fn ensure_default_vault(app: AppHandle) -> Result<String, String> {
-    let base = default_vault_base(&app)?;
-    let vault = ensure_vault_at(&base)?;
-    log::info!("ensure_default_vault: {}", vault.display());
-    Ok(vault.display().to_string())
+pub fn ensure_default_vault(app: AppHandle) -> Result<DefaultVault, String> {
+    let bases = candidate_vault_bases(&app);
+    let (vault, fell_back) = first_creatable_vault(&bases)?;
+    if fell_back {
+        log::warn!("ensure_default_vault: preferred base unusable, fell back to {}", vault.display());
+    } else {
+        log::info!("ensure_default_vault: {}", vault.display());
+    }
+    Ok(DefaultVault { path: vault.display().to_string(), fell_back })
 }
 
 /// Builds the `.textree/<rel>` sidecar path. `rel` is confined under `.textree/`, and
@@ -903,5 +948,48 @@ mod onboarding_tests {
         std::fs::remove_file(base.path().join("Textree").join("welcome.md")).unwrap();
         ensure_vault_at(base.path()).unwrap();
         assert!(!base.path().join("Textree").join("welcome.md").exists());
+    }
+
+    /// A base path that cannot have `base/Textree` created under it — a regular file occupies a
+    /// path component, so `create_dir_all` fails. Mirrors a OneDrive-redirected/uninitialized
+    /// Documents dir whose returned path is invalid (the real-world trigger of os error 3).
+    fn uncreatable_base() -> (tempfile::TempDir, PathBuf) {
+        let holder = tempdir().unwrap();
+        let file = holder.path().join("a_file");
+        std::fs::write(&file, "x").unwrap();
+        // `file` is a regular file, so `file/sub/Textree` can never be created.
+        (holder, file.join("sub"))
+    }
+
+    #[test]
+    fn no_fallback_flag_when_primary_base_works() {
+        let good = tempdir().unwrap();
+        let bases = vec![good.path().to_path_buf()];
+        let (vault, fell_back) = first_creatable_vault(&bases).unwrap();
+        assert!(!fell_back, "a working primary base must not report a fallback");
+        assert_eq!(vault, good.path().join("Textree"));
+        assert!(vault.join("welcome.md").is_file());
+    }
+
+    #[test]
+    fn falls_back_when_primary_base_is_uncreatable() {
+        let (_holder, invalid) = uncreatable_base();
+        let good = tempdir().unwrap();
+        // Primary (invalid) fails create_dir_all → must land on the second candidate and flag it.
+        let bases = vec![invalid, good.path().to_path_buf()];
+        let (vault, fell_back) = first_creatable_vault(&bases).unwrap();
+        assert!(fell_back, "must report falling back away from the unusable primary base");
+        assert_eq!(vault, good.path().join("Textree"));
+        assert!(vault.join("welcome.md").is_file(), "the fallback vault is fully seeded");
+    }
+
+    #[test]
+    fn errors_when_every_candidate_base_fails() {
+        let (_holder, invalid) = uncreatable_base();
+        let bases = vec![invalid];
+        assert!(
+            first_creatable_vault(&bases).is_err(),
+            "with no creatable base, the whole resolution must error (never silently no-op)"
+        );
     }
 }

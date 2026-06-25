@@ -81,6 +81,9 @@
   let dirty = $state(false);
   let saveError = $state<FriendlyError | null>(null);
   let startupError = $state<string | null>(null);
+  // Absolute path where the default vault was created when Documents was unusable (fallback). Drives
+  // a dismissible notice so the user knows where their notes live; null when no fallback happened.
+  let vaultFallbackPath = $state<string | null>(null);
   let publishNotice = $state<{ kind: "ok" | "error"; text: string; detail?: string } | null>(null);
   let showTrash = $state(false);
   let showSettings = $state(false);
@@ -996,7 +999,11 @@
         if (plan.action === "restore") {
           await loadVault(plan.path);
         } else {
-          await loadVault(await ensureDefaultVault());
+          const dv = await ensureDefaultVault();
+          await loadVault(dv.path);
+          // Documents was unusable → the vault landed elsewhere. Surface where, so the user always
+          // knows where their notes live (data sovereignty) instead of a silent relocation.
+          if (dv.fellBack && root) vaultFallbackPath = root;
         }
         if (root) localStorage.setItem(LAST_VAULT_KEY, root);
         // Auto-select the first note so the app opens to content instead of the "Select a note."
@@ -1211,6 +1218,25 @@
               </button>
             </li>
           {/each}
+        </ul>
+      </div>
+    {/if}
+    {#if root && vaultFallbackPath}
+      <div class="conflict-banner" role="status" aria-label="Vault created in a fallback location">
+        <div class="conflict-head">
+          <span>ⓘ Your Documents folder couldn't be used, so your vault was created here: {vaultFallbackPath}</span>
+          <button
+            class="banner-dismiss"
+            onclick={() => (vaultFallbackPath = null)}
+            aria-label="Dismiss"
+          >×</button>
+        </div>
+        <ul class="conflict-list">
+          <li>
+            <button class="conflict-item" onclick={() => { vaultFallbackPath = null; void chooseVault(); }}>
+              Open a different folder…
+            </button>
+          </li>
         </ul>
       </div>
     {/if}
