@@ -8,6 +8,8 @@
   import { semanticSearch, hostStatus, prepareAiModel, type SearchHit, type SemanticHit, type HostStatus } from "./ipc";
   import { resolveSemanticAiUi } from "./semanticAiUi.helpers";
   import { getAiConsent, setAiConsent } from "./aiConsent";
+  import { formatModelDownload } from "./modelDownload.helpers";
+  import type { DownloadSnapshot } from "./modelDownload.helpers";
 
   interface FileEntry {
     name: string;
@@ -90,6 +92,7 @@
   // Semantic search — mirrors content search pattern; guarded by hostState and vaultRoot availability.
   let semanticHits = $state<SemanticHit[]>([]);
   let hostState = $state<HostStatus | null>(null);  // derived from the .status field of hostStatus() result
+  let modelDownload = $state<DownloadSnapshot | null>(null); // embedder-first download snapshot during preparing
   let consent = $state(getAiConsent());
 
   $effect(() => {
@@ -101,8 +104,8 @@
     // Poll host status on entering semantic mode (even with an empty term) so the consent /
     // preparing row can render before the user types.
     void hostStatus()
-      .then((s) => { hostState = s.status; })
-      .catch(() => { hostState = "unavailable"; });
+      .then((s) => { hostState = s.status; modelDownload = s.embedderDownload ?? s.generatorDownload; })
+      .catch(() => { hostState = "unavailable"; modelDownload = null; });
     const term = palette.term;
     if (term === "") {
       semanticHits = [];
@@ -169,8 +172,8 @@
     void prepareAiModel();
     // Re-poll so the row flips prompt → preparing right away.
     void hostStatus()
-      .then((s) => { hostState = s.status; })
-      .catch(() => { hostState = "unavailable"; });
+      .then((s) => { hostState = s.status; modelDownload = s.embedderDownload ?? s.generatorDownload; })
+      .catch(() => { hostState = "unavailable"; modelDownload = null; });
   }
 
   function commit(): void {
@@ -305,7 +308,16 @@
               </li>
             {:else if aiUi === "preparing"}
               <li class="status-row ai-unavailable" role="status">
-                Local AI is preparing… (first run downloads the model)
+                {#if formatModelDownload(modelDownload) !== null}
+                  {@const dl = formatModelDownload(modelDownload)!}
+                  <span>{dl.label}</span>
+                  <div class="dl-bar-track" role="progressbar" aria-valuenow={Math.round(dl.ratio * 100)} aria-valuemin={0} aria-valuemax={100}>
+                    <div class="dl-bar-fill" style="width:{dl.ratio * 100}%"></div>
+                  </div>
+                  {#if dl.detail}<span class="dl-detail">{dl.detail}</span>{/if}
+                {:else}
+                  Local AI is preparing… (first run downloads the model)
+                {/if}
               </li>
             {:else}
               <li class="status-row ai-unavailable" role="status">Local AI is unavailable</li>
@@ -448,5 +460,27 @@
   }
   .ai-enable:hover {
     background: var(--accent-hover);
+  }
+  /* Model download progress bar shown during the "preparing" AI state. */
+  .dl-bar-track {
+    width: 100%;
+    height: var(--sp-1);
+    background: var(--bg-secondary-alt);
+    border-radius: var(--radius-s);
+    overflow: hidden;
+    margin-top: var(--sp-1);
+  }
+  .dl-bar-fill {
+    height: 100%;
+    background: var(--accent);
+    border-radius: var(--radius-s);
+    transition: width 0.4s ease;
+  }
+  /* Byte transfer detail (e.g. "1.2 / 2.9 GB"). */
+  .dl-detail {
+    display: block;
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    margin-top: var(--sp-1);
   }
 </style>

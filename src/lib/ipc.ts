@@ -1,5 +1,6 @@
 import { invoke, Channel } from "@tauri-apps/api/core";
 import type { ChatMessage } from './ask.helpers';
+import type { DownloadSnapshot } from './modelDownload.helpers';
 
 export type NodeKind = "leaf" | "container";
 
@@ -222,8 +223,15 @@ export async function semanticSearch(
   });
 }
 
-export async function hostStatus(): Promise<{ status: HostStatus; generatorReady: boolean; generatorError: string | null }> {
-  return invoke<{ status: HostStatus; generatorReady: boolean; generatorError: string | null }>("host_status");
+export async function hostStatus(): Promise<{
+  status: HostStatus;
+  generatorReady: boolean;
+  generatorError: string | null;
+  embedderError: string | null;
+  embedderDownload: DownloadSnapshot | null;
+  generatorDownload: DownloadSnapshot | null;
+}> {
+  return invoke("host_status");
 }
 
 export type AskEvent =

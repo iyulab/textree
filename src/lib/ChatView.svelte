@@ -4,6 +4,7 @@
   import { getGenerationConsent, setGenerationConsent, setAiConsent } from './aiConsent';
   import { prepareAiModel } from './ipc';
   import type { TreeNode } from './ipc';
+  import { formatModelDownload } from './modelDownload.helpers';
 
   let {
     vault,
@@ -125,7 +126,18 @@
     </div>
 
     {#if chatStore.status === 'preparing'}
-      <p class="chat-status" role="status">Local AI is preparing… (will retry automatically)</p>
+      {#if formatModelDownload(chatStore.modelDownload) !== null}
+        {@const dl = formatModelDownload(chatStore.modelDownload)!}
+        <div class="chat-status chat-dl-progress" role="status">
+          <span>{dl.label}</span>
+          <div class="chat-dl-bar-track" aria-hidden="true">
+            <div class="chat-dl-bar-fill" style="width:{dl.ratio * 100}%"></div>
+          </div>
+          {#if dl.detail}<span class="chat-dl-detail">{dl.detail}</span>{/if}
+        </div>
+      {:else}
+        <p class="chat-status" role="status">Local AI is preparing… (will retry automatically)</p>
+      {/if}
     {:else if chatStore.status === 'searching'}
       <p class="chat-status" role="status">Searching notes…</p>
     {:else if chatStore.status === 'generating'}
@@ -273,6 +285,22 @@
   .chat-citation:hover { background: var(--bg-secondary-alt); }
   .chat-citation:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
   .chat-status { margin: 0 0 var(--sp-2); font-size: var(--font-size-small); color: var(--text-muted); font-style: italic; }
+  /* Model download progress shown during the 'preparing' state. */
+  .chat-dl-progress { display: flex; flex-direction: column; gap: var(--sp-1); font-style: italic; }
+  .chat-dl-bar-track {
+    width: 100%;
+    height: var(--sp-1);
+    background: var(--bg-secondary-alt);
+    border-radius: var(--radius-s);
+    overflow: hidden;
+  }
+  .chat-dl-bar-fill {
+    height: 100%;
+    background: var(--accent);
+    border-radius: var(--radius-s);
+    transition: width 0.4s ease;
+  }
+  .chat-dl-detail { font-size: var(--font-size-smaller); color: var(--text-muted); }
   .chat-error { margin: 0 0 var(--sp-2); font-size: var(--font-size-small); color: var(--text-error); }
   .chat-retry {
     align-self: flex-start;

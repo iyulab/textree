@@ -2,6 +2,7 @@
 // NOT imported by tests (runes module — test only pure logic in ask.helpers.ts).
 import { ask, cancelAsk, hostStatus, prepareGeneration, readNote, semanticSearch } from './ipc';
 import type { SemanticHit, TreeNode } from './ipc';
+import type { DownloadSnapshot } from './modelDownload.helpers';
 import {
   buildChatMessages,
   DEFAULT_FILE_MAX_CHARS,
@@ -33,6 +34,8 @@ class ChatStore {
   errorMessage = $state('');
   draft = $state('');
   started = $state(false);
+  /** Active download snapshot while status === 'preparing'; null otherwise. */
+  modelDownload = $state<DownloadSnapshot | null>(null);
 
   // Monotonic guard — each new run increments it; stale stream callbacks check
   // their captured seq against the current and discard if behind (askStore pattern).
@@ -88,12 +91,13 @@ class ChatStore {
     if (!q) return;
 
     // Gate 1 + 2: host ready + generation model loaded (askStore 3-gate pattern).
-    let st: { status: string; generatorReady: boolean; generatorError: string | null };
+    let st: Awaited<ReturnType<typeof hostStatus>>;
     try {
       st = await hostStatus();
     } catch {
       if (seq !== this.seq) return;
       this.status = 'error';
+      this.modelDownload = null;
       this.errorMessage = 'Could not reach the local AI host.';
       return;
     }
@@ -101,11 +105,14 @@ class ChatStore {
     const gate = resolveGenerationGate(st);
     if (gate === 'error') {
       this.status = 'error';
+      this.modelDownload = null;
       this.errorMessage = `Local AI failed to start: ${st.generatorError}`;
       return;
     }
     if (gate === 'preparing') {
       this.status = 'preparing';
+      // Surface download progress (generator-first; fall back to embedder if generator not yet started).
+      this.modelDownload = st.generatorDownload ?? st.embedderDownload;
       // Only kick a prepare once the host itself is up (matches prior behavior; the host
       // command no-ops when not Ready anyway). The panel's retry timer re-polls.
       if (st.status === 'ready' && !st.generatorReady) {
@@ -117,6 +124,8 @@ class ChatStore {
       }
       return;
     }
+    // gate === 'ready' — clear any stale download snapshot.
+    this.modelDownload = null;
     // gate === 'ready' → fall through to retrieval.
 
     // Retrieval — branch on the latest user turn's intent (summary vs Q&A).
