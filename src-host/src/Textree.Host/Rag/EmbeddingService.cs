@@ -17,29 +17,52 @@ namespace Textree.Host.Rag;
 /// LMSupplyEmbeddingService). The base class supplies <c>IEmbeddingService</c>;
 /// we override the model-backed members.
 /// </summary>
+/// <remarks>
+/// The model is optional at construction time to support lazy / background loading.
+/// <see cref="Dimensions"/> returns <c>0</c> until <see cref="SetModel"/> is called,
+/// which drives <c>VaultManager.EmbedderReady</c> to remain <see langword="false"/>
+/// until the model is fully loaded. All embedding operations throw
+/// <see cref="InvalidOperationException"/> when the model has not been set.
+/// </remarks>
 public sealed class LmSupplyEmbeddingService : EmbeddingServiceBase
 {
-    private readonly IEmbeddingModel _model;
+    private IEmbeddingModel? _model;
 
+    /// <summary>Lazy constructor — model must be provided later via <see cref="SetModel"/>.</summary>
+    public LmSupplyEmbeddingService() { }
+
+    /// <summary>Eager constructor for back-compat (existing tests and Program.cs startup path).</summary>
     public LmSupplyEmbeddingService(IEmbeddingModel model)
     {
         ArgumentNullException.ThrowIfNull(model);
         _model = model;
     }
 
-    /// <summary>Intrinsic embedding dimension of the loaded model (e.g. 384 for e5-small).</summary>
-    public int Dimensions => _model.Dimensions;
+    /// <summary>Sets the embedding model after construction (lazy / background-load path).</summary>
+    public void SetModel(IEmbeddingModel model)
+        => _model = model ?? throw new ArgumentNullException(nameof(model));
+
+    /// <summary>
+    /// Intrinsic embedding dimension of the loaded model (e.g. 384 for e5-small).
+    /// Returns <c>0</c> until the model is loaded — drives <c>VaultManager.EmbedderReady</c>
+    /// naturally false until ready.
+    /// </summary>
+    public int Dimensions => _model?.Dimensions ?? 0;
+
+    // Private guard: all embed paths route through this to get a clean, uniform error.
+    private IEmbeddingModel Model => _model
+        ?? throw new InvalidOperationException("Embedder model not loaded yet.");
 
     protected override async Task<float[]> EmbedCoreAsync(string text, CancellationToken cancellationToken)
-        => await _model.EmbedAsync(text, cancellationToken);
+        => await Model.EmbedAsync(text, cancellationToken);
 
     public override async Task<IEnumerable<float[]>> GenerateEmbeddingsBatchAsync(
         IEnumerable<string> texts, CancellationToken cancellationToken = default)
-        => await _model.EmbedAsync(texts.ToList(), cancellationToken);
+        => await Model.EmbedAsync(texts.ToList(), cancellationToken);
 
-    public override int GetEmbeddingDimension() => _model.Dimensions;
+    public override int GetEmbeddingDimension() => _model?.Dimensions ?? 0;
 
-    public override string GetModelName() => _model.ModelId;
+    public override string GetModelName() => _model?.ModelId ?? "loading";
 
     protected override string GetProviderName() => "local";
 }
