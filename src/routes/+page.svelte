@@ -81,6 +81,10 @@
   let dirty = $state(false);
   let saveError = $state<FriendlyError | null>(null);
   let startupError = $state<string | null>(null);
+  // Path of a previously-opened vault that could not be reopened at startup (moved, deleted, or on a
+  // disconnected drive). Set instead of silently creating a new default — that could mask a temporary
+  // outage and look like the user's notes vanished. Drives a recovery prompt; null when no such failure.
+  let staleVaultPath = $state<string | null>(null);
   // Absolute path where the default vault was created when Documents was unusable (fallback). Drives
   // a dismissible notice so the user knows where their notes live; null when no fallback happened.
   let vaultFallbackPath = $state<string | null>(null);
@@ -183,9 +187,50 @@
     dismissedForeignViews = false; // re-evaluate the foreign-views notice for the new vault
   }
 
+  /** Persist the opened vault as last-vault and auto-select the first note (wedge1 onboarding).
+   *  Shared by startup, the default-vault recovery, and the manual folder picker so every successful
+   *  open is remembered and lands on content instead of the "Select a note." empty state. */
+  async function finalizeOpenedVault() {
+    if (!root) return;
+    localStorage.setItem(LAST_VAULT_KEY, root);
+    if (!activePath) {
+      const first = findFirstOpenableNote(tree, root, nav.order);
+      if (first) await handleSelect(first);
+    }
+  }
+
+  /** Create/open the default vault (first run or recovery), surfacing the fallback location if
+   *  Documents was unusable. Throws if no candidate base could be created. */
+  async function openDefaultVault() {
+    const dv = await ensureDefaultVault();
+    await loadVault(dv.path);
+    // Documents was unusable → the vault landed elsewhere. Surface where, so the user always
+    // knows where their notes live (data sovereignty) instead of a silent relocation.
+    if (dv.fellBack && root) vaultFallbackPath = root;
+    await finalizeOpenedVault();
+  }
+
+  /** Recovery from a missing last vault: start fresh with the default vault instead of dead-ending. */
+  async function startWithDefaultVault() {
+    staleVaultPath = null;
+    startupError = null;
+    try {
+      await openDefaultVault();
+    } catch (e) {
+      root = null;
+      startupError = String(e);
+    }
+  }
+
   async function chooseVault() {
     const selected = await open({ directory: true, multiple: false });
-    if (typeof selected === "string") await loadVault(selected);
+    if (typeof selected === "string") {
+      await loadVault(selected);
+      // A successful manual open clears any prior startup failure and is remembered as last-vault.
+      staleVaultPath = null;
+      startupError = null;
+      await finalizeOpenedVault();
+    }
   }
 
   /**
@@ -995,30 +1040,27 @@
     // Effects (localStorage, IPC) live here; the decision itself is the pure decideStartup().
     void (async () => {
       const plan = decideStartup(localStorage.getItem(LAST_VAULT_KEY));
-      try {
-        if (plan.action === "restore") {
+      if (plan.action === "restore") {
+        try {
           await loadVault(plan.path);
-        } else {
-          const dv = await ensureDefaultVault();
-          await loadVault(dv.path);
-          // Documents was unusable → the vault landed elsewhere. Surface where, so the user always
-          // knows where their notes live (data sovereignty) instead of a silent relocation.
-          if (dv.fellBack && root) vaultFallbackPath = root;
+          await finalizeOpenedVault();
+        } catch (e) {
+          // The stored vault was moved/deleted, or is on a disconnected drive. Do NOT silently
+          // create a new default over the user's intended vault — that could mask a temporary
+          // outage and look like their notes vanished. Surface a recovery prompt instead
+          // (open another folder, or start a fresh default vault).
+          root = null;
+          staleVaultPath = plan.path;
+          startupError = String(e);
         }
-        if (root) localStorage.setItem(LAST_VAULT_KEY, root);
-        // Auto-select the first note so the app opens to content instead of the "Select a note."
-        // empty state (wedge1 onboarding). Only reached after a successful load — the catch path
-        // resets root and lands on the empty state, so a failed startup never auto-selects.
-        if (root && !activePath) {
-          const first = findFirstOpenableNote(tree, root, nav.order);
-          if (first) await handleSelect(first);
+      } else {
+        try {
+          await openDefaultVault();
+        } catch (e) {
+          // First run and the default could not be created anywhere — land on the empty state.
+          root = null;
+          startupError = String(e);
         }
-      } catch (e) {
-        // The stored vault was moved/deleted, or the default could not be created.
-        // Do NOT force the default over a user's intended vault — fall back to the empty state.
-        // Reset root so {#if !root} renders the empty state and startupError becomes visible.
-        root = null;
-        startupError = String(e);
       }
     })();
 
@@ -1280,10 +1322,19 @@
     {:else if !root}
       <div class="empty-state">
         <h1 class="empty-brand">Textree</h1>
-        <p class="empty-sub">{NO_VAULT_PROMPT}</p>
-        <button class="open-cta" onclick={chooseVault}>Open vault</button>
-        {#if startupError}
-          <p class="status error">⚠ Could not open vault: {startupError}</p>
+        {#if staleVaultPath}
+          <p class="empty-sub">Couldn't open your last vault — it may have moved, been deleted, or be on a disconnected drive.</p>
+          <p class="empty-path">{staleVaultPath}</p>
+          <div class="empty-actions">
+            <button class="open-cta" onclick={chooseVault}>Open a folder</button>
+            <button class="open-cta secondary" onclick={startWithDefaultVault}>Start with a default vault</button>
+          </div>
+        {:else}
+          <p class="empty-sub">{NO_VAULT_PROMPT}</p>
+          <button class="open-cta" onclick={chooseVault}>Open vault</button>
+          {#if startupError}
+            <p class="status error">⚠ Could not open vault: {startupError}</p>
+          {/if}
         {/if}
       </div>
     {:else if activePath}
@@ -1761,6 +1812,31 @@
   }
   .open-cta:hover {
     background: var(--accent-hover);
+  }
+  .empty-path {
+    margin: 0;
+    padding: var(--sp-1) var(--sp-2);
+    max-width: 32rem;
+    font-size: var(--font-size-smaller);
+    color: var(--text-muted);
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-s);
+    word-break: break-all;
+  }
+  .empty-actions {
+    display: flex;
+    gap: var(--sp-2);
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+  .open-cta.secondary {
+    color: var(--text-muted);
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+  }
+  .open-cta.secondary:hover {
+    background: var(--bg-secondary-alt);
   }
   .toolbar {
     display: flex;
