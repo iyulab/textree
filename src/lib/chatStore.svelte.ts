@@ -2,6 +2,7 @@
 // NOT imported by tests (runes module — test only pure logic in ask.helpers.ts).
 import { ask, cancelAsk, hostStatus, prepareGeneration, readNote, semanticSearch } from './ipc';
 import type { SemanticHit, TreeNode } from './ipc';
+import { aiHost } from './aiHost.svelte';
 import type { DownloadSnapshot } from './modelDownload.helpers';
 import {
   buildChatMessages,
@@ -113,6 +114,7 @@ class ChatStore {
       this.status = 'preparing';
       // Surface download progress (generator-first; fall back to embedder if generator not yet started).
       this.modelDownload = st.generatorDownload ?? st.embedderDownload;
+      aiHost.startPolling(); // durable app-wide indicator, survives leaving the chat view
       // Only kick a prepare once the host itself is up (matches prior behavior; the host
       // command no-ops when not Ready anyway). The panel's retry timer re-polls.
       if (st.status === 'ready' && !st.generatorReady) {

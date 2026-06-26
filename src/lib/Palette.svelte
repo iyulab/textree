@@ -8,6 +8,7 @@
   import { semanticSearch, hostStatus, prepareAiModel, type SearchHit, type SemanticHit, type HostStatus } from "./ipc";
   import { resolveSemanticAiUi } from "./semanticAiUi.helpers";
   import { getAiConsent, setAiConsent } from "./aiConsent";
+  import { aiHost } from "./aiHost.svelte";
   import { formatModelDownload } from "./modelDownload.helpers";
   import type { DownloadSnapshot } from "./modelDownload.helpers";
 
@@ -222,6 +223,7 @@
     setAiConsent(true);
     consent = true;
     void prepareAiModel();
+    aiHost.startPolling(); // durable cold-download indicator, survives leaving the palette
     // Re-poll so the row flips prompt → preparing right away.
     void hostStatus()
       .then((s) => { hostState = s.status; modelDownload = s.embedderDownload ?? s.generatorDownload; })

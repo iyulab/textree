@@ -40,6 +40,8 @@
   import RelatedNotes from "$lib/RelatedNotes.svelte";
   import ChatView from "$lib/ChatView.svelte";
   import { chatStore, type ChatScope } from "$lib/chatStore.svelte";
+  import { aiHost } from "$lib/aiHost.svelte";
+  import { formatModelDownload } from "$lib/modelDownload.helpers";
   import Trash from "$lib/Trash.svelte";
   import Settings from "$lib/Settings.svelte";
   import PageHeader from "$lib/PageHeader.svelte";
@@ -1066,7 +1068,10 @@
 
     // Auto-start the local-AI host if the user previously consented (device-local flag). On first
     // run / no consent the host stays unspawned until enabled in the ? palette.
-    if (getAiConsent()) void prepareAiModel();
+    if (getAiConsent()) {
+      void prepareAiModel();
+      aiHost.startPolling(); // durable cold-download indicator, independent of which view is open
+    }
 
     const win = getCurrentWindow();
     const unlistenClose = win.onCloseRequested(async (event) => {
@@ -1119,6 +1124,22 @@
   vaultRoot={root}
   scopePath={semanticScopePath}
 />
+
+{#if aiHost.download}
+  {@const dl = formatModelDownload(aiHost.download)}
+  {#if dl}
+    <div class="ai-download-bar" role="status" aria-label="Local AI model download">
+      <span class="ai-dl-label">{dl.label}</span>
+      <div class="ai-dl-track" aria-hidden="true">
+        <div class="ai-dl-fill" style="width:{dl.ratio * 100}%"></div>
+      </div>
+      {#if dl.detail}<span class="ai-dl-detail">{dl.detail}</span>{/if}
+      <button class="ai-dl-cancel" onclick={() => aiHost.cancel()} disabled={aiHost.cancelling}>
+        {aiHost.cancelling ? "Cancelling…" : "Cancel"}
+      </button>
+    </div>
+  {/if}
+{/if}
 
 <div class="app" style="--sidebar-width: {layout.width}px">
   {#if !layout.collapsed}
@@ -1837,6 +1858,61 @@
   }
   .open-cta.secondary:hover {
     background: var(--bg-secondary-alt);
+  }
+  .ai-download-bar {
+    position: fixed;
+    left: 50%;
+    bottom: var(--sp-4);
+    transform: translateX(-50%);
+    z-index: 50;
+    display: flex;
+    align-items: center;
+    gap: var(--sp-3);
+    max-width: min(90vw, 40rem);
+    padding: var(--sp-2) var(--sp-3);
+    font-size: var(--font-size-smaller);
+    color: var(--text-muted);
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-m);
+    box-shadow: var(--shadow-m);
+  }
+  .ai-dl-label {
+    white-space: nowrap;
+  }
+  .ai-dl-track {
+    flex: 1;
+    min-width: 6rem;
+    height: var(--sp-1);
+    background: var(--bg-secondary-alt);
+    border-radius: var(--radius-s);
+    overflow: hidden;
+  }
+  .ai-dl-fill {
+    height: 100%;
+    background: var(--accent);
+    border-radius: var(--radius-s);
+    transition: width var(--transition-normal);
+  }
+  .ai-dl-detail {
+    white-space: nowrap;
+  }
+  .ai-dl-cancel {
+    font: inherit;
+    font-size: var(--font-size-smaller);
+    cursor: pointer;
+    color: var(--text-muted);
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-s);
+    padding: 2px var(--sp-2);
+  }
+  .ai-dl-cancel:hover:not(:disabled) {
+    background: var(--bg-secondary-alt);
+  }
+  .ai-dl-cancel:disabled {
+    opacity: 0.6;
+    cursor: default;
   }
   .toolbar {
     display: flex;
