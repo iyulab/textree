@@ -34,23 +34,37 @@ test.afterAll(async () => {
   await browser?.close();
 });
 
-test("restore failure: falls back to empty state and shows error when last vault is missing", async () => {
+test("restore failure: offers a calm recovery prompt when the last vault cannot be reopened", async () => {
   // Plant a path that cannot possibly exist so openVault throws on the restore branch.
+  const stalePath = "Z:\\nonexistent-textree-vault";
   await page.evaluate(
     ([key, path]) => localStorage.setItem(key, path),
-    [LAST_VAULT_KEY, "Z:\\nonexistent-textree-vault"] as [string, string],
+    [LAST_VAULT_KEY, stalePath] as [string, string],
   );
   await page.reload();
 
-  // The empty state must render (root resets to null in the startup catch) and the CTA must be visible.
+  // The recovery prompt must render instead of a dead-end. It must NOT silently auto-create a
+  // new default over the intended vault — the user is offered an explicit choice.
   await expect(
-    page.getByRole("button", { name: /open vault/i }),
+    page.getByRole("button", { name: /open a folder/i }),
   ).toBeVisible({ timeout: 30_000 });
-
-  // The error paragraph must contain the generic error prefix (covers both failure branches).
   await expect(
-    page.getByText(/Could not open vault/),
+    page.getByRole("button", { name: /start with a default vault/i }),
   ).toBeVisible({ timeout: 5_000 });
+
+  // The calm explanation and the stale path are surfaced (data sovereignty: the user always
+  // knows which vault failed), not the alarming "Could not open vault (os error 3)" dead-end.
+  await expect(
+    page.getByText(/Couldn't open your last vault/),
+  ).toBeVisible({ timeout: 5_000 });
+  await expect(page.getByText(stalePath)).toBeVisible({ timeout: 5_000 });
+
+  // The recovery must actually recover, not just prompt: "Start with a default vault" creates and
+  // opens the default vault (seeded welcome.md), landing the user on content instead of a dead-end.
+  await page.getByRole("button", { name: /start with a default vault/i }).click();
+  await expect(
+    page.getByRole("treeitem", { name: /welcome/i }),
+  ).toBeVisible({ timeout: 30_000 });
 
   // Cleanup: remove the bad key so the next test starts clean.
   await page.evaluate((key) => localStorage.removeItem(key), LAST_VAULT_KEY);
