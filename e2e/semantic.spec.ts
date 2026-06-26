@@ -39,13 +39,19 @@ async function tauriInvoke<T>(page: Page, cmd: string, args: Record<string, unkn
   ) as Promise<T>;
 }
 
-/** Poll hostStatus via Tauri IPC until "ready" (max timeoutMs). */
+/**
+ * Poll host_status via Tauri IPC until status === "ready" (max timeoutMs).
+ * host_status returns an object ({ status, generatorReady, … }); semantic search only
+ * needs the embedder, so this gates on the top-level status, not generatorReady.
+ */
 async function pollHostReady(page: Page, timeoutMs = 300_000): Promise<void> {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
-    const status = await tauriInvoke<string>(page, "host_status").catch(() => "unavailable");
-    if (status === "ready") return;
-    if (status === "unavailable") {
+    const payload = await tauriInvoke<{ status: string }>(page, "host_status").catch(() => ({
+      status: "unavailable",
+    }));
+    if (payload.status === "ready") return;
+    if (payload.status === "unavailable") {
       throw new Error("Host status became unavailable while waiting for ready");
     }
     await new Promise<void>((r) => setTimeout(r, 2_000));
@@ -57,6 +63,12 @@ async function pollHostReady(page: Page, timeoutMs = 300_000): Promise<void> {
 async function dismissPaletteIfOpen(page: Page): Promise<void> {
   const overlay = page.getByTestId("palette-overlay");
   if (await overlay.count() > 0) {
+    // Escape only closes the palette when its input has focus (onKey is bound to the input).
+    // After clicking an in-palette button (e.g. "Enable") focus moves to <body>, so re-focus
+    // the input first — otherwise a page-level Escape never reaches the handler and the
+    // overlay leaks onto the next test (intercepting pointer events).
+    const input = page.getByTestId("palette-input");
+    if ((await input.count()) > 0) await input.focus().catch(() => undefined);
     await page.keyboard.press("Escape");
     await expect(overlay).toHaveCount(0, { timeout: 3_000 }).catch(() => undefined);
   }
@@ -113,8 +125,8 @@ test.describe("host-present: semantic search wired end-to-end", () => {
     // Override timeout: allow up to 5 minutes for first-run model download + initialization.
     test.setTimeout(5 * 60_000 + 10_000);
     await pollHostReady(page, 5 * 60_000);
-    const status = await tauriInvoke<string>(page, "host_status");
-    expect(status).toBe("ready");
+    const payload = await tauriInvoke<{ status: string }>(page, "host_status");
+    expect(payload.status).toBe("ready");
   });
 
   test("semantic palette returns results and navigates to the first hit", async () => {
@@ -285,8 +297,9 @@ test.describe("host-absent: graceful degradation when host is unavailable", () =
 
   test("host status is unavailable when host is absent", async () => {
     // Without TEXTREE_HOST_EXE the handle never starts; status must be unavailable immediately.
-    const status = await tauriInvoke<string>(absentPage, "host_status");
-    expect(status).toBe("unavailable");
+    // host_status returns an object ({ status, generatorReady, … }) — assert the .status field.
+    const payload = await tauriInvoke<{ status: string }>(absentPage, "host_status");
+    expect(payload.status).toBe("unavailable");
   });
 
   test("tantivy body search (/) still works when host is absent", async () => {
@@ -315,9 +328,20 @@ test.describe("host-absent: graceful degradation when host is unavailable", () =
     }
   });
 
-  test("semantic mode (?) shows muted unavailable row, NOT an error", async () => {
+  test("semantic mode (?) degrades calmly: enable prompt → unavailable, never an error", async () => {
     const vault = createTempVault({ "anything.md": "# Anything\n\nSome content.\n" });
     try {
+      // Force the not-consented state deterministically. AI consent is device-local and persists
+      // in the webview profile across app restarts, and the Palette reads it once at mount — so
+      // clear it and reload to guarantee the "Enable" invitation surfaces (rather than a stale
+      // consented "unavailable" row left over from an earlier run/session).
+      await absentPage.evaluate(() => localStorage.removeItem("ai-consent"));
+      await absentPage.reload();
+      await absentPage.waitForFunction(
+        () => Boolean((window as unknown as { __textreeTest?: unknown }).__textreeTest),
+        { timeout: 15_000 },
+      );
+
       await loadVault(absentPage, vault);
 
       await absentPage.keyboard.press("Control+p");
@@ -327,21 +351,30 @@ test.describe("host-absent: graceful degradation when host is unavailable", () =
       // Type a semantic query.
       await input.fill("?forest ecology");
 
-      // The palette must show the AI-unavailable status row (not an error, not a crash).
-      // The row has role="status" and class="ai-unavailable" but no data-testid —
-      // select by text content (either variant: starting or unavailable).
-      const unavailRow = absentPage.locator('.ai-unavailable[role="status"]');
-      await expect(unavailRow).toBeVisible({ timeout: 10_000 });
+      // Not consented + host absent → the calm "Enable free local AI" prompt is the correct
+      // graceful-degradation surface (resolveSemanticAiUi: unavailable + !consent → "prompt").
+      // It is an invitation, not an error/crash. Select by role="status" + the enable affordance.
+      const promptRow = absentPage.locator('.ai-prompt[role="status"]');
+      await expect(promptRow).toBeVisible({ timeout: 10_000 });
+      await expect(promptRow).toContainText(/Enable free local AI/i);
+      await expect(absentPage.getByTestId("ai-enable")).toBeVisible();
 
-      // The text must be the calm muted message, NOT anything alarming or error-like.
-      const text = await unavailRow.innerText();
-      expect(text.trim()).toMatch(/^Local AI (is indexing…|is unavailable)$/);
-
-      // No regular palette result items should appear in semantic mode with no host.
+      // No regular palette result items leak in while AI is not ready.
       await expect(absentPage.getByTestId("palette-item")).toHaveCount(0);
 
-      await absentPage.keyboard.press("Escape");
+      // Consent in-app and confirm the host-absent path still degrades calmly — a muted
+      // role="status" row reading "preparing…" or "unavailable", never an alarm/error.
+      await absentPage.getByTestId("ai-enable").click();
+      const mutedRow = absentPage.locator('.ai-unavailable[role="status"]:not(.ai-prompt)');
+      await expect(mutedRow).toBeVisible({ timeout: 10_000 });
+      await expect(mutedRow).toContainText(/Local AI (is preparing|is unavailable)/i);
+
+      // Still no result items in the unready state.
+      await expect(absentPage.getByTestId("palette-item")).toHaveCount(0);
     } finally {
+      // Always close the palette so a failed assertion above cannot leak the overlay
+      // onto the next test (the prior cascade source for the tree/related-notes tests).
+      await dismissPaletteIfOpen(absentPage);
       removeTempVault(vault);
     }
   });

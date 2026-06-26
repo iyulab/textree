@@ -363,7 +363,10 @@
                 {#if formatModelDownload(modelDownload) !== null}
                   {@const dl = formatModelDownload(modelDownload)!}
                   <span>{dl.label}</span>
-                  <div class="dl-bar-track" role="progressbar" aria-valuenow={Math.round(dl.ratio * 100)} aria-valuemin={0} aria-valuemax={100}>
+                  <!-- The enclosing row is role="status"; its text ({dl.label}, e.g. "42% · 1.2/2.9 GB")
+                       carries the announcement. The bar is decorative — aria-hidden to avoid a
+                       progressbar role double-announcing alongside the live region (mirrors ChatView). -->
+                  <div class="dl-bar-track" aria-hidden="true">
                     <div class="dl-bar-fill" style="width:{dl.ratio * 100}%"></div>
                   </div>
                   {#if dl.detail}<span class="dl-detail">{dl.detail}</span>{/if}
