@@ -1,5 +1,6 @@
 import { check, type Update } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
+import { stopHost } from "./ipc";
 
 export interface UpdateInfo {
   version: string;
@@ -27,6 +28,17 @@ export async function checkForUpdate(): Promise<UpdateInfo | null> {
  * user consent (button click) — never silently (content-safety guard).
  */
 export async function applyUpdate(info: UpdateInfo): Promise<void> {
+  // Stop the local-AI sidecar before the installer runs. The NSIS updater hard-kills
+  // only the main binary, which orphans textree-host.exe and leaves it holding a file
+  // lock on its own .exe — so the installer cannot overwrite it ("Error opening file
+  // for writing"). Stopping it here unloads the model gracefully; the installer's
+  // PREINSTALL hook is the backstop if this races or the host was orphaned earlier.
+  // Best-effort: never block the update if the host refuses to stop.
+  try {
+    await stopHost();
+  } catch {
+    // ignore — the PREINSTALL hook kills any surviving host before extraction
+  }
   await info.handle.downloadAndInstall();
   await relaunch();
 }
