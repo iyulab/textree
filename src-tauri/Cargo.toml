@@ -1,6 +1,6 @@
 [package]
 name = "textree"
-version = "0.2.3"
+version = "0.2.4"
 description = "로컬 파일시스템 기반 노트 앱"
 authors = ["iyulab"]
 edition = "2021"
