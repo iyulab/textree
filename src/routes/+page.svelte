@@ -1321,24 +1321,6 @@
         </div>
       </div>
     {/if}
-    {#if root}
-      <div class="content-bar">
-        <div class="mode-toggle" role="group" aria-label="Main view mode">
-          <button
-            class="mode-btn"
-            class:active={layout.mode === "note"}
-            onclick={() => layout.setMode("note")}
-            aria-pressed={layout.mode === "note"}
-          >Note</button>
-          <button
-            class="mode-btn"
-            class:active={layout.mode === "chat"}
-            onclick={enterChat}
-            aria-pressed={layout.mode === "chat"}
-          >Chat</button>
-        </div>
-      </div>
-    {/if}
     {#if layout.mode === "chat" && root}
       <ChatView
         vault={root}
@@ -1397,16 +1379,25 @@
           >⚠ Save failed: {saveError.summary}</span>
         {:else if removed}
           <span class="status error">⚠ Moved/deleted externally</span>
-        {:else}
-          <span class="status">{dirty ? "● Saving…" : "Saved"}</span>
         {/if}
-        <button
-          class="icon-btn read-toggle"
-          onclick={() => (reading = !reading)}
-          title={reading ? "Switch to editing" : "Switch to reading view"}
-          aria-label={reading ? "Switch to editing" : "Switch to reading view"}
-          aria-pressed={reading}
-        ><Icon name={reading ? "pencil" : "book-open"} /></button>
+        <div class="title-tools">
+          {#if !saveError && !removed}
+            <span class="status">{dirty ? "● Saving…" : "Saved"}</span>
+          {/if}
+          <button
+            class="icon-btn read-toggle"
+            onclick={() => (reading = !reading)}
+            title={reading ? "Switch to editing" : "Switch to reading view"}
+            aria-label={reading ? "Switch to editing" : "Switch to reading view"}
+            aria-pressed={reading}
+          ><Icon name={reading ? "pencil" : "book-open"} /></button>
+          <button
+            class="icon-btn"
+            onclick={enterChat}
+            title="Chat about your notes"
+            aria-label="Switch to chat"
+          ><Icon name="message-square" /></button>
+        </div>
       </header>
       {#if conflictDisk !== null}
         <div class="banner" role="alert">
@@ -1597,13 +1588,26 @@
   .title-input:focus {
     outline: none;
   }
-  /* Reading/editing toggle — pushed to the right edge of the title bar. */
+  /* Reading/editing toggle. */
   .read-toggle {
-    margin-left: auto;
     align-self: center;
   }
   .read-toggle[aria-pressed="true"] {
     color: var(--accent);
+  }
+  /* Chrome on demand: tools stay hidden until the header is hovered/focused,
+     so a captured note shows just title + breadcrumb. */
+  .title-tools {
+    margin-left: auto;
+    display: inline-flex;
+    align-items: center;
+    gap: var(--sp-1);
+    opacity: 0;
+    transition: opacity 0.12s ease;
+  }
+  .title:hover .title-tools,
+  .title:focus-within .title-tools {
+    opacity: 1;
   }
   .status {
     font-size: var(--font-size-smallest);
@@ -2007,38 +2011,6 @@
   .hint {
     color: var(--text-muted);
     padding: var(--sp-3);
-  }
-  .content-bar {
-    display: flex;
-    justify-content: flex-end;
-    padding: var(--sp-1) var(--sp-4);
-    border-bottom: 1px solid var(--border);
-    flex-shrink: 0;
-  }
-  .mode-toggle {
-    display: inline-flex;
-    border: 1px solid var(--border);
-    border-radius: var(--radius-s);
-    overflow: hidden;
-  }
-  .mode-btn {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    font: inherit;
-    font-size: var(--font-size-small);
-    /* min-height 24px (var(--sp-6)) meets the WCAG 2.5.8 (AA) minimum target size; the prior
-       2px vertical padding left the toggle ~17px tall, below the threshold. */
-    min-height: var(--sp-6);
-    padding: var(--sp-1) var(--sp-2);
-    background: var(--bg-primary);
-    color: var(--text-muted);
-    border: none;
-    cursor: pointer;
-  }
-  .mode-btn.active {
-    background: var(--accent);
-    color: var(--text-on-accent);
   }
   /* Fill the remaining height so the empty area below the tree is also a drop target (move to root). */
   .tree-root {
