@@ -1395,7 +1395,7 @@
           <button
             class="icon-btn"
             onclick={enterChat}
-            title="Chat about your notes"
+            title="Switch to chat"
             aria-label="Switch to chat"
           ><Icon name="message-square" /></button>
         </div>

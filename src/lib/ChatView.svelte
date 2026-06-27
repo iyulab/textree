@@ -93,7 +93,7 @@
     </div>
   {:else}
     <div class="chat-scopebar">
-      <button class="chat-back icon-btn" onclick={onBack} title="Back to note" aria-label="Back to note"><Icon name="file-text" /></button>
+      <button class="chat-back" onclick={onBack} title="Back to note" aria-label="Back to note"><Icon name="file-text" /></button>
       <span class="chat-chip" title={chatStore.scope.path ?? 'Whole vault'}>
         ◈ Scope: {chatStore.scope.label}
       </span>

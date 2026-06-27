@@ -22,7 +22,7 @@
  *   - Citations:         .chat-citation
  *   - Status:            [role="status"]
  *   - Error:             [role="alert"]
- *   - Chat toggle:       button[text="Chat"] (content-level toggle in +page.svelte)
+ *   - Chat toggle:       Ctrl+Shift+M (global shortcut) or button[aria-label="Switch to chat"] in .title header
  */
 import { test, expect, type Browser, type Page } from "@playwright/test";
 import {
@@ -143,7 +143,11 @@ const ASK_VAULT_FILES: Record<string, string> = {
 // ── Helper: switch the open note into Chat mode ──────────────────────────────
 
 async function enterChatMode(page: Page): Promise<void> {
-  await page.getByRole("button", { name: /^Chat$/ }).click();
+  // The content-bar (.mode-btn "Chat") was removed; the canonical entry point is the
+  // global Ctrl+Shift+M shortcut (mod+shift+m in commands.ts). The shortcut fires via
+  // svelte:window onkeydown regardless of which non-form element has focus — safe to
+  // call after any treeitem click or editor interaction (both are non-form elements).
+  await page.keyboard.press("Control+Shift+M");
   await expect(page.locator('section[aria-label="Chat about your notes"]')).toBeVisible({
     timeout: 5_000,
   });
