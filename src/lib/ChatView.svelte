@@ -5,17 +5,20 @@
   import { prepareAiModel } from './ipc';
   import type { TreeNode } from './ipc';
   import { formatModelDownload } from './modelDownload.helpers';
+  import Icon from './Icon.svelte';
 
   let {
     vault,
     tree,
     onOpenNote,
     onNewChat,
+    onBack,
   }: {
     vault: string;
     tree: TreeNode[];
     onOpenNote: (path: string) => void;
     onNewChat: () => void;
+    onBack: () => void;
   } = $props();
 
   let consented = $state(getGenerationConsent());
@@ -90,6 +93,7 @@
     </div>
   {:else}
     <div class="chat-scopebar">
+      <button class="chat-back icon-btn" onclick={onBack} title="Back to note" aria-label="Back to note"><Icon name="file-text" /></button>
       <span class="chat-chip" title={chatStore.scope.path ?? 'Whole vault'}>
         ◈ Scope: {chatStore.scope.label}
       </span>
@@ -195,6 +199,23 @@
     align-items: center;
     gap: var(--sp-2);
     margin-bottom: var(--sp-2);
+  }
+  .chat-back {
+    flex-shrink: 0;
+    width: 26px;
+    height: 26px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-muted);
+    background: transparent;
+    border: none;
+    border-radius: var(--radius-s);
+    cursor: pointer;
+  }
+  .chat-back:hover {
+    background: var(--bg-hover);
+    color: var(--text-normal);
   }
   .chat-chip {
     flex: 1;

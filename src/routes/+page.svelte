@@ -1327,6 +1327,7 @@
         tree={tree}
         onOpenNote={openCitedNote}
         onNewChat={newChatFromSelection}
+        onBack={() => layout.setMode("note")}
       />
     {:else if !root}
       <div class="empty-state">
