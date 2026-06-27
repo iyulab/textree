@@ -19,6 +19,8 @@ export interface PaletteActions {
   toggleTheme: () => void;
   toggleSidebar: () => void;
   toggleReading: () => void;
+  /** Switch between Note and Chat main-pane modes (entering Chat ensures a session). */
+  toggleMode: () => void;
   newNoteAtRoot: () => void;
   newFolderAtRoot: () => void;
   hasSelection: () => boolean;
@@ -44,6 +46,7 @@ export function buildCommands(a: PaletteActions): Command[] {
     { id: "view.settings", title: "Settings", run: a.openSettings, keybinding: "mod+," },
     { id: "view.sidebar", title: "Toggle sidebar", run: a.toggleSidebar },
     { id: "view.reading", title: "Toggle reading view", run: a.toggleReading },
+    { id: "view.modeToggle", title: "Toggle Note / Chat", run: a.toggleMode, keybinding: "mod+shift+m", when: a.hasVault },
     { id: "note.new", title: "New note (root)", run: a.newNoteAtRoot, keybinding: "mod+n" },
     { id: "folder.new", title: "New folder (root)", run: a.newFolderAtRoot, keybinding: "mod+shift+n" },
     { id: "node.rename", title: "Rename selected node", run: a.renameSelected, when: sel },

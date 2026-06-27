@@ -39,10 +39,6 @@ class LayoutStore {
     this.mode = m;
   }
 
-  toggleMode(): void {
-    this.mode = this.mode === 'note' ? 'chat' : 'note';
-  }
-
   /** Once at app startup: load stored values. */
   init(): void {
     this.width = readWidth();

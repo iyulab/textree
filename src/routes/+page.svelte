@@ -863,6 +863,12 @@
     toggleTheme: () => { theme.toggle(); },
     toggleSidebar: () => { layout.toggleCollapsed(); },
     toggleReading: () => { reading = !reading; },
+    // Entering Chat must go through enterChat() so the session is started (a bare mode flip
+    // would render ChatView with no active session). Leaving Chat is a plain mode switch.
+    toggleMode: () => {
+      if (layout.mode === "note") enterChat();
+      else layout.setMode("note");
+    },
     // Create at root: parentOverride=root targets the root regardless of selectedNode state.
     newNoteAtRoot: () => { if (root) startMode("new-note", root); },
     newFolderAtRoot: () => { if (root) startMode("new-folder", root); },
