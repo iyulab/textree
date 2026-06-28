@@ -172,8 +172,10 @@ test("create after vault switch targets new vault — stale selection isolation 
 
     await loadVault(page, v2); // vault switch — previous selection must be invalidated
     await page.getByRole("button", { name: "New note" }).click();
-    await page.locator(".name-input").fill("새것");
-    await page.locator(".name-input").press("Enter");
+    // dialog-free: an Untitled note is created in v2; header title input is focused.
+    await expect(page.locator(".title-input")).toBeFocused();
+    await page.locator(".title-input").pressSequentially("새것");
+    await page.locator(".title-input").press("Enter");
 
     await expect.poll(() => exists(v2, "새것.md"), { timeout: 5000 }).toBe(true);
     expect(exists(v1, "새것.md")).toBe(false);
@@ -208,8 +210,10 @@ test("＋child → promote leaf then create child note", async () => {
     await loadVault(page, vault);
     await page.getByRole("treeitem", { name: /부모/ }).click();
     await page.getByRole("button", { name: "Add child note" }).click();
-    await page.locator(".name-input").fill("자식");
-    await page.locator(".name-input").press("Enter");
+    // dialog-free: leaf is promoted, an Untitled child note is created + header focused.
+    await expect(page.locator(".title-input")).toBeFocused();
+    await page.locator(".title-input").pressSequentially("자식");
+    await page.locator(".title-input").press("Enter");
 
     // Promote: 부모.md → 부모/부모.md, and create 부모/자식.md.
     await expect.poll(() => exists(vault, "부모/부모.md"), { timeout: 5000 }).toBe(true);

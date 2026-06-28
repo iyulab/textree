@@ -1,5 +1,5 @@
 import { test, expect, type Browser, type Page } from "@playwright/test";
-import { connectToApp, loadVault, sampleVaultPath } from "./helpers";
+import { connectToApp, loadVault, sampleVaultPath, createTempVault, removeTempVault } from "./helpers";
 
 /**
  * A2 — flagship command keyboard shortcuts + palette discoverability.
@@ -34,17 +34,24 @@ test("palette shows the Ctrl+N hint next to New note", async () => {
 });
 
 test("Ctrl+N creates an Untitled note and focuses the header title (no dialog)", async () => {
-  await loadVault(page, sampleVaultPath());
+  // Isolated temp vault: a fresh vault guarantees the first new note is exactly "Untitled"
+  // (sample-vault would accumulate Untitled litter across runs → "Untitled (1)").
+  const vault = createTempVault({ "기존.md": "x\n" });
+  try {
+    await loadVault(page, vault);
 
-  await page.keyboard.press("Control+n");
-  // No inline name dialog — header title input is focused, pre-filled "Untitled".
-  await expect(page.locator(".name-input")).toHaveCount(0);
-  await expect(page.locator(".title-input")).toBeFocused();
-  await expect(page.locator(".title-input")).toHaveValue("Untitled");
+    await page.keyboard.press("Control+n");
+    // No inline name dialog — header title input is focused, pre-filled "Untitled".
+    await expect(page.locator(".name-input")).toHaveCount(0);
+    await expect(page.locator(".title-input")).toBeFocused();
+    await expect(page.locator(".title-input")).toHaveValue("Untitled");
 
-  // Escape cancels the rename, leaving the note named "Untitled".
-  await page.locator(".title-input").press("Escape");
-  await expect(page.getByRole("treeitem", { name: /^Untitled$/ })).toBeVisible();
+    // Escape cancels the rename, leaving the note named "Untitled".
+    await page.locator(".title-input").press("Escape");
+    await expect(page.getByRole("treeitem", { name: /^Untitled$/ })).toBeVisible();
+  } finally {
+    removeTempVault(vault);
+  }
 });
 
 test("Ctrl+N is suppressed while typing in a form input (no clobbering)", async () => {

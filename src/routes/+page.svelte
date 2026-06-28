@@ -284,10 +284,14 @@
     titleEditing = true;
   }
 
-  /** Focus + select-all on mount (inline title input). */
+  /** Focus + select-all on mount (inline title input). Deferred to the next frame because
+   *  `use:` actions run before `bind:value` populates the input — selecting synchronously
+   *  would select the still-empty value, leaving the caret at the end once value lands. */
   function focusSelect(node: HTMLInputElement) {
-    node.focus();
-    node.select();
+    requestAnimationFrame(() => {
+      node.focus();
+      node.select();
+    });
   }
 
   function cancelTitleEdit() {
