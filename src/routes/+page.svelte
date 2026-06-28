@@ -1,7 +1,7 @@
 <script lang="ts">
   import { open } from "@tauri-apps/plugin-dialog";
   import { getCurrentWindow } from "@tauri-apps/api/window";
-  import { onMount } from "svelte";
+  import { onMount, tick } from "svelte";
   import {
     openVault,
     ensureDefaultVault,
@@ -9,6 +9,7 @@
     readNote,
     writeNote,
     createNote,
+    createUntitledNote,
     createFolder,
     renameNode,
     deleteNode,
@@ -115,7 +116,7 @@
 
   // Structure editing (M4) state.
   let selectedNode = $state<TreeNode | null>(null);
-  let mode = $state<"none" | "new-note" | "new-folder">("none");
+  let mode = $state<"none" | "new-folder">("none");
   let nameInput = $state("");
   let opError = $state<FriendlyError | null>(null);
   // Explicit create-target override (e.g. new container after leaf promote). When set, used instead of selection-based inference.
@@ -475,7 +476,7 @@
   }
 
   function startMode(
-    m: "new-note" | "new-folder",
+    m: "new-folder",
     parentOverride: string | null = null,
   ) {
     createParent = parentOverride;
@@ -486,8 +487,8 @@
 
   /**
    * Add a new note under the selected leaf note (design §3.3 auto-promote).
-   * Promotes leaf `foo.md` to container `foo/foo.md`, then enters new-note mode with the
-   * new container as the create target. If the promoted leaf was open, follow the new body path.
+   * Promotes leaf `foo.md` to container `foo/foo.md`, then immediately creates a new Untitled
+   * note inside the new container. If the promoted leaf was open, follow the new body path.
    */
   async function startAddChild() {
     if (!root || !selectedNode || selectedNode.kind !== "leaf") return;
@@ -504,7 +505,7 @@
       // If the promoted leaf was the open note, its body moved to newDir/<stem>.md → follow it.
       if (wasActive) activePath = joinPath(newDir, `${baseName(newDir)}.md`);
       selectedNode = null;
-      startMode("new-note", newDir); // target the new container
+      void createNewNote(newDir); // target the new container
     } catch (e) {
       opError = friendlyError(e);
     }
@@ -517,6 +518,34 @@
     opError = null;
   }
 
+  /** Create a new "Untitled" note (no dialog), open it, and focus the header title for renaming. */
+  async function createNewNote(parent: string) {
+    if (!root) return;
+    await flush(); // preserve current edits before structure change
+    if (pending) {
+      opError = friendlyError("Operation canceled — could not save your unsaved edits.");
+      return;
+    }
+    try {
+      const p = await createUntitledNote(root, parent);
+      await refreshTree();
+      content = await readNote(root, p);
+      activeName = baseName(p).replace(/\.md$/i, "");
+      activePath = p;
+      dirty = false;
+      removed = false;
+      selectedNode = null;
+      // Wait for the .title header (and its input) to render before focusing.
+      // No focus race: Editor remounts on the new docKey but Editor.svelte calls no
+      // .focus()/autofocus (verified — only a `.cm-focused` style rule), and CodeMirror
+      // does not autofocus by default, so a single tick is enough for .title-input focus.
+      await tick();
+      startTitleEdit();
+    } catch (e) {
+      opError = friendlyError(e);
+    }
+  }
+
   async function confirmMode() {
     if (!root) return;
     const name = nameInput.trim();
@@ -527,24 +556,13 @@
       return;
     }
     try {
-      if (mode === "new-note") {
-        const p = await createNote(root, targetParent(), name);
-        await refreshTree();
-        // open the new note immediately
-        content = await readNote(root, p);
-        activeName = name;
-        activePath = p;
-        dirty = false;
-        removed = false;
-      } else if (mode === "new-folder") {
-        await createFolder(root, targetParent(), name);
-        await refreshTree();
-      }
+      await createFolder(root, targetParent(), name);
+      await refreshTree();
       mode = "none";
       nameInput = "";
       createParent = null;
     } catch (e) {
-      opError = friendlyError(e); // keep mode/createParent → retryable with the same target
+      opError = friendlyError(e);
     }
   }
 
@@ -870,7 +888,7 @@
       else layout.setMode("note");
     },
     // Create at root: parentOverride=root targets the root regardless of selectedNode state.
-    newNoteAtRoot: () => { if (root) startMode("new-note", root); },
+    newNoteAtRoot: () => { if (root) void createNewNote(root); },
     newFolderAtRoot: () => { if (root) startMode("new-folder", root); },
     hasSelection: () => selectedNode !== null,
     renameSelected: () => { beginTreeRename(selectedNode); },
@@ -1175,7 +1193,7 @@
     </div>
     {#if root}
       <div class="toolbar" role="toolbar" aria-label="Note actions">
-        <button onclick={() => startMode("new-note")} title="New note" aria-label="New note"
+        <button onclick={() => void createNewNote(targetParent())} title="New note" aria-label="New note"
           ><Icon name="file-plus" /></button>
         <button onclick={() => startMode("new-folder")} title="New folder" aria-label="New folder"
           ><Icon name="folder-plus" /></button>
@@ -1194,7 +1212,7 @@
         <div class="name-edit">
           <input
             class="name-input"
-            placeholder={mode === "new-folder" ? "Folder name" : "Note name"}
+            placeholder="Folder name"
             bind:value={nameInput}
             onkeydown={(e) => {
               if (e.key === "Enter") confirmMode();
