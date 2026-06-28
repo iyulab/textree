@@ -33,35 +33,34 @@ test("palette shows the Ctrl+N hint next to New note", async () => {
   await expect(page.getByTestId("palette-overlay")).toHaveCount(0);
 });
 
-test("Ctrl+N opens the new-note name editor", async () => {
+test("Ctrl+N creates an Untitled note and focuses the header title (no dialog)", async () => {
   await loadVault(page, sampleVaultPath());
 
-  // Global accelerator → enters new-note mode (inline name input with the "Note name" placeholder).
   await page.keyboard.press("Control+n");
-  await expect(page.locator(".name-input")).toBeVisible();
-  await expect(page.locator(".name-input")).toHaveAttribute("placeholder", "Note name");
-
-  // Escape (sent to the focused name input) cancels the mode, leaving no dangling editor.
-  await page.locator(".name-input").press("Escape");
+  // No inline name dialog — header title input is focused, pre-filled "Untitled".
   await expect(page.locator(".name-input")).toHaveCount(0);
+  await expect(page.locator(".title-input")).toBeFocused();
+  await expect(page.locator(".title-input")).toHaveValue("Untitled");
+
+  // Escape cancels the rename, leaving the note named "Untitled".
+  await page.locator(".title-input").press("Escape");
+  await expect(page.getByRole("treeitem", { name: /^Untitled$/ })).toBeVisible();
 });
 
-test("Ctrl+N is suppressed while typing in the name input (no clobbering the in-progress action)", async () => {
+test("Ctrl+N is suppressed while typing in a form input (no clobbering)", async () => {
   await loadVault(page, sampleVaultPath());
 
-  // Enter new-note mode and start typing a name.
+  // Enter new-FOLDER mode (still a dialog) and start typing a name.
+  await page.keyboard.press("Control+Shift+n");
+  await expect(page.locator(".name-input")).toBeVisible();
+  await page.locator(".name-input").fill("진행중");
+
+  // Ctrl+N while focused in the form input must NOT trigger a new note.
   await page.keyboard.press("Control+n");
-  const input = page.locator(".name-input");
-  await expect(input).toBeVisible();
-  await input.fill("draft-name");
+  await expect(page.locator(".name-input")).toHaveValue("진행중");
+  await expect(page.locator(".name-input")).toBeVisible();
 
-  // Pressing Ctrl+N again *while the input is focused* must NOT restart new-note mode (which would
-  // reset the field). The window handler skips the accelerator for form-field targets. Guards that.
-  await input.press("Control+n");
-  await expect(input).toHaveValue("draft-name");
-
-  await input.press("Escape");
-  await expect(page.locator(".name-input")).toHaveCount(0);
+  await page.locator(".name-input").press("Escape");
 });
 
 test("Ctrl+N is suppressed while the palette is open (no layered editor)", async () => {

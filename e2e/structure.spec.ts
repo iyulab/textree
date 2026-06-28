@@ -22,16 +22,28 @@ test.afterAll(async () => {
 
 const exists = (vault: string, rel: string) => existsSync(join(vault, rel));
 
-test("＋note → create .md on disk + appears in tree", async () => {
+test("＋note → instant Untitled note, header focused, typing renames the file", async () => {
   const vault = createTempVault({ "기존.md": "x\n" });
   try {
     await loadVault(page, vault);
     await page.getByRole("button", { name: "New note" }).click();
-    await page.locator(".name-input").fill("새노트");
-    await page.locator(".name-input").press("Enter");
 
+    // No dialog — an "Untitled" note is created, opened, and the header title input is focused.
+    await expect(page.locator(".title-input")).toBeFocused();
+    await expect(page.locator(".title-input")).toHaveValue("Untitled");
+    expect(exists(vault, "Untitled.md")).toBe(true);
+
+    // The pre-selected "Untitled" text is replaced by typing the first char (not fill,
+    // which would replace regardless of selection) → proves focusSelect's select-all.
+    await page.locator(".title-input").pressSequentially("새노트");
+    await page.locator(".title-input").press("Enter");
     await expect(page.getByRole("treeitem", { name: /새노트/ })).toBeVisible();
     expect(exists(vault, "새노트.md")).toBe(true);
+    expect(exists(vault, "Untitled.md")).toBe(false);
+
+    // A second New note auto-numbers.
+    await page.getByRole("button", { name: "New note" }).click();
+    expect(exists(vault, "Untitled.md")).toBe(true);
   } finally {
     removeTempVault(vault);
   }
