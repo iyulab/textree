@@ -41,6 +41,21 @@ pub fn create_note(root: &Path, parent: &Path, stem: &str) -> io::Result<PathBuf
     Ok(path)
 }
 
+/// Creates an empty `Untitled.md` leaf in `parent`, auto-numbering on collision
+/// (`Untitled`, `Untitled (1)`, …) via `unique_in`. The name is generated and always
+/// valid, so unlike `create_note` there is no explicit name to validate.
+pub fn create_untitled_note(root: &Path, parent: &Path) -> io::Result<PathBuf> {
+    if !parent.is_dir() {
+        return Err(err("parent is not a directory"));
+    }
+    if !is_within(root, parent) {
+        return Err(err("path is outside the vault"));
+    }
+    let path = unique_in(parent, "Untitled.md", false);
+    std::fs::write(&path, "")?;
+    Ok(path)
+}
+
 /// Creates the `parent/name/` container and its folder note `parent/name/name.md`.
 /// Also creates the folder note so it becomes an immediately editable container note (design §3.1).
 pub fn create_folder(root: &Path, parent: &Path, name: &str) -> io::Result<PathBuf> {
@@ -652,5 +667,31 @@ mod tests {
         assert!(adopt_into_leaf(tmp.path(), &src, &leaf).is_err());
         assert!(leaf.is_file(), "no mutation on rejection");
         assert!(!src.join("child").exists(), "not promoted");
+    }
+
+    #[test]
+    fn create_untitled_note_generates_and_auto_numbers() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        let p1 = create_untitled_note(root, root).unwrap();
+        assert_eq!(p1.file_name().unwrap().to_str().unwrap(), "Untitled.md");
+        assert!(p1.is_file());
+        assert_eq!(std::fs::read_to_string(&p1).unwrap(), "");
+
+        let p2 = create_untitled_note(root, root).unwrap();
+        assert_eq!(p2.file_name().unwrap().to_str().unwrap(), "Untitled (1).md");
+
+        let p3 = create_untitled_note(root, root).unwrap();
+        assert_eq!(p3.file_name().unwrap().to_str().unwrap(), "Untitled (2).md");
+    }
+
+    #[test]
+    fn create_untitled_note_rejects_parent_outside_vault() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path().join("vault");
+        std::fs::create_dir(&root).unwrap();
+        // parent is the vault's parent → outside
+        assert!(create_untitled_note(&root, tmp.path()).is_err());
     }
 }

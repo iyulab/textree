@@ -62,6 +62,7 @@ pub fn run() {
             commands::read_note,
             commands::write_note,
             commands::create_note,
+            commands::create_untitled_note,
             commands::create_folder,
             commands::promote_node,
             commands::delete_node,
