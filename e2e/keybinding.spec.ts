@@ -4,8 +4,8 @@ import { connectToApp, loadVault, sampleVaultPath, createTempVault, removeTempVa
 /**
  * A2 — flagship command keyboard shortcuts + palette discoverability.
  *
- * The palette shows each command's accelerator (so users can learn it), and the global key
- * handler wires Ctrl+N (new note) / Ctrl+Shift+N (new folder) to enter the inline name editor.
+ * The palette shows each command's accelerator (so users can learn it). The global key handler
+ * wires Ctrl+N (new note → instant Untitled, header title focused) / Ctrl+Shift+N (new folder dialog).
  */
 
 let browser: Browser;

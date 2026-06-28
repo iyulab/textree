@@ -8,7 +8,6 @@
     listTree,
     readNote,
     writeNote,
-    createNote,
     createUntitledNote,
     createFolder,
     renameNode,
