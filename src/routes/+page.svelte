@@ -11,6 +11,7 @@
     createUntitledNote,
     createFolder,
     renameNode,
+    renameNoteUnique,
     deleteNode,
     moveNode,
     promoteNode,
@@ -60,6 +61,7 @@
   import FolderTableView from "$lib/FolderTable.svelte";
   import Icon from "$lib/Icon.svelte";
   import { friendlyError, type FriendlyError } from "$lib/friendlyError.helpers";
+  import { extractFirstH1, isUnnamed, sanitizeForFilename } from "$lib/h1sync.helpers";
   import { NO_VAULT_HINT, NO_VAULT_PROMPT, NO_NOTE_PROMPT } from "$lib/emptyState";
 
   let root = $state<string | null>(null);
@@ -330,6 +332,39 @@
       opError = null;
     } catch (e) {
       opError = friendlyError(e);
+    }
+  }
+
+  // ── T4: first H1 → filename, unnamed notes only (C70 safe sync) ─────
+  // Fires on editor blur. Renames the open note to match its first H1 *only while it is still
+  // named "Untitled"/"Untitled (n)". Once named, H1 edits never rename (protects inbound links —
+  // fs_ops rename does not rewrite [[wikilinks]]). Reverse (filename→body), on-open and background
+  // sync are never implemented. Best-effort: any failure leaves the filename unchanged.
+  let syncingName = false;
+  async function maybeSyncH1Filename() {
+    if (syncingName) return;
+    if (!root || !activePath || !isUnnamed(activeName)) return;
+    const h1 = extractFirstH1(liveDoc);
+    if (!h1) return;
+    const candidate = sanitizeForFilename(h1);
+    if (!candidate || candidate === activeName) return;
+    syncingName = true;
+    try {
+      await flush(); // persist the body (including the H1) to the current path before renaming
+      if (pending) return; // unsaved edits could not be saved → skip the rename (data safety)
+      const newPath = await renameNoteUnique(root, activePath, candidate);
+      // Keep the recreated editor in sync: changing activePath bumps docKey → Editor rebuilds from
+      // `content`, so `content` must hold the just-typed text (handleEdit only updates liveDoc).
+      content = liveDoc;
+      await refreshTree();
+      activePath = newPath;
+      activeName = baseName(newPath).replace(/\.md$/i, "");
+      selectedNode = null;
+      opError = null;
+    } catch (e) {
+      opError = friendlyError(e);
+    } finally {
+      syncingName = false;
     }
   }
 
@@ -1448,6 +1483,7 @@
               onchange={handleEdit}
               onImagePaste={handleImagePaste}
               onWikiLink={handleWikiLink}
+              onBlur={() => void maybeSyncH1Filename()}
             />
           </div>
           <Backlinks

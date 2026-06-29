@@ -21,6 +21,7 @@
     onchange,
     onImagePaste,
     onWikiLink,
+    onBlur,
   }: {
     /** Identity (path) of the open note. The view is recreated only when this value changes. */
     docKey?: string | null;
@@ -39,6 +40,8 @@
     onImagePaste?: (dataBase64: string, ext: string) => Promise<string | null>;
     /** Wikilink navigation: called with the resolved note path (+ optional heading) when a link is clicked. */
     onWikiLink?: (path: string, heading: string | undefined) => void;
+    /** Fired when the editor loses focus (blur) — the commit boundary for H1→filename sync. */
+    onBlur?: () => void;
   } = $props();
 
   let host: HTMLDivElement;
@@ -190,6 +193,7 @@
     emit?: (t: string) => void,
     onPaste?: (b64: string, ext: string) => Promise<string | null>,
     onLink?: (path: string, heading: string | undefined) => void,
+    onBlur?: () => void,
   ) {
     // Start the cursor at the body (after any frontmatter) so the frontmatter folds by default
     // (a cursor inside the block keeps it expanded). Notes without frontmatter start at offset 0.
@@ -214,6 +218,10 @@
         EditorView.domEventHandlers({
           paste: (event, view) => handlePaste(event, view, onPaste),
           mousedown: (event, view) => handleWikiClick(event, view, onLink),
+          blur: () => {
+            onBlur?.();
+            return false;
+          },
         }),
         EditorView.updateListener.of((u) => {
           if (u.docChanged) emit?.(normalizeLineEndings(u.state.doc.toString(), eol));
@@ -237,8 +245,9 @@
     const emit = untrack(() => onchange);
     const onPaste = untrack(() => onImagePaste);
     const onLink = untrack(() => onWikiLink);
+    const onBlurCb = untrack(() => onBlur);
     const v = new EditorView({
-      state: makeState(doc, ed, rd, paths, emit, onPaste, onLink),
+      state: makeState(doc, ed, rd, paths, emit, onPaste, onLink, onBlurCb),
       parent: host,
     });
     view = v;
