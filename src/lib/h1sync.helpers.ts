@@ -60,7 +60,7 @@ export function isUnnamed(filename: string): boolean {
  */
 export function sanitizeForFilename(text: string): string {
   return text
-    .replace(/[<>:"/\|?*]/g, " ") // Windows-reserved characters -> space
+    .replace(/[<>:"/\\|?*]/g, " ") // Windows-reserved characters -> space
     .replace(/\s+/g, " ")
     .replace(/^\.+/, "")
     .replace(/[. ]+$/, "")

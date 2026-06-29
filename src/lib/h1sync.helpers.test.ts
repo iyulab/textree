@@ -61,4 +61,7 @@ describe("sanitizeForFilename", () => {
     expect(sanitizeForFilename("///")).toBe("");
     expect(sanitizeForFilename("   ")).toBe("");
   });
+  it("strips backslashes", () => {
+    expect(sanitizeForFilename("path\\file")).toBe("path file");
+  });
 });
