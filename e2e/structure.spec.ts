@@ -49,6 +49,84 @@ test("＋note → instant Untitled note, header focused, typing renames the file
   }
 });
 
+test("first H1 names an Untitled note on editor blur", async () => {
+  const vault = createTempVault({ "기존.md": "x\n" });
+  try {
+    await loadVault(page, vault);
+    await page.getByRole("button", { name: "New note" }).click();
+    await expect(page.locator(".title-input")).toBeFocused();
+
+    // Move into the body and type the first H1, then blur by switching notes.
+    await page.locator(".cm-content").click();
+    await page.locator(".cm-content").pressSequentially("# 회의록");
+    await page.getByRole("treeitem", { name: /기존/ }).click();
+
+    await expect.poll(() => exists(vault, "회의록.md"), { timeout: 5000 }).toBe(true);
+    expect(exists(vault, "Untitled.md")).toBe(false);
+    await expect(page.getByRole("treeitem", { name: /회의록/ })).toBeVisible();
+  } finally {
+    removeTempVault(vault);
+  }
+});
+
+test("first H1 auto-numbers when the name is taken", async () => {
+  const vault = createTempVault({ "회의록.md": "기존\n" });
+  try {
+    await loadVault(page, vault);
+    await page.getByRole("button", { name: "New note" }).click();
+    await expect(page.locator(".title-input")).toBeFocused();
+
+    await page.locator(".cm-content").click();
+    await page.locator(".cm-content").pressSequentially("# 회의록");
+    await page.getByRole("treeitem", { name: /회의록$/ }).click(); // blur via the existing note
+
+    await expect.poll(() => exists(vault, "회의록 (1).md"), { timeout: 5000 }).toBe(true);
+    expect(exists(vault, "회의록.md")).toBe(true); // the existing note is untouched
+    expect(exists(vault, "Untitled.md")).toBe(false);
+  } finally {
+    removeTempVault(vault);
+  }
+});
+
+test("editing the first H1 of a NAMED note does not rename it", async () => {
+  // Core boundary regression: a named note's H1 edits must NOT rename (protects inbound links).
+  const vault = createTempVault({ "내노트.md": "본문\n" });
+  try {
+    await loadVault(page, vault);
+    await page.getByRole("treeitem", { name: /내노트/ }).click();
+    await expect(page.locator(".cm-content")).toBeVisible();
+
+    await page.locator(".cm-content").click();
+    await page.keyboard.press("Control+Home");
+    await page.locator(".cm-content").pressSequentially("# 강제제목\n");
+    await page.getByRole("button", { name: "New note" }).click(); // blur the editor
+
+    expect(exists(vault, "내노트.md")).toBe(true);
+    expect(exists(vault, "강제제목.md")).toBe(false);
+  } finally {
+    removeTempVault(vault);
+  }
+});
+
+test("first H1 with reserved characters is sanitized into the filename", async () => {
+  const vault = createTempVault({ "기존.md": "x\n" });
+  try {
+    await loadVault(page, vault);
+    await page.getByRole("button", { name: "New note" }).click();
+    await expect(page.locator(".title-input")).toBeFocused();
+
+    await page.locator(".cm-content").click();
+    await page.locator(".cm-content").pressSequentially("# Plan: A/B");
+    await page.getByRole("treeitem", { name: /기존/ }).click();
+
+    // ":" and "/" are replaced with spaces → "Plan A B".
+    await expect.poll(() => exists(vault, "Plan A B.md"), { timeout: 5000 }).toBe(true);
+    expect(exists(vault, "Untitled.md")).toBe(false);
+  } finally {
+    removeTempVault(vault);
+  }
+});
+
 test("＋folder → create directory on disk", async () => {
   const vault = createTempVault({ "기존.md": "x\n" });
   try {
