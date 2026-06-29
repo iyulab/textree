@@ -758,6 +758,20 @@ mod tests {
     }
 
     #[test]
+    fn rename_note_unique_rejects_non_leaf_targets() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        // A directory is not a leaf .md note.
+        let dir = root.join("folder");
+        std::fs::create_dir(&dir).unwrap();
+        assert!(rename_note_unique(root, &dir, "x").is_err());
+        // A non-.md file is not a leaf note.
+        let txt = root.join("note.txt");
+        std::fs::write(&txt, "x").unwrap();
+        assert!(rename_note_unique(root, &txt, "x").is_err());
+    }
+
+    #[test]
     fn rename_node_still_rejects_collision() {
         // Regression: the explicit rename path must keep rejecting (not auto-number).
         let tmp = TempDir::new().unwrap();

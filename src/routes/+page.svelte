@@ -340,9 +340,16 @@
   // named "Untitled"/"Untitled (n)". Once named, H1 edits never rename (protects inbound links —
   // fs_ops rename does not rewrite [[wikilinks]]). Reverse (filename→body), on-open and background
   // sync are never implemented. Best-effort: any failure leaves the filename unchanged.
-  let syncingName = false;
-  async function maybeSyncH1Filename() {
-    if (syncingName) return;
+  // In-flight sync promise (not a bool): a navigation handler can `await` it to guarantee the
+  // rename completes before it switches notes, while the editor blur fires it fire-and-forget.
+  // Concurrent callers coalesce onto the same run; it is idempotent once the note is named.
+  let syncingName: Promise<void> | null = null;
+  function maybeSyncH1Filename(): Promise<void> {
+    return (syncingName ??= doSyncH1Filename().finally(() => {
+      syncingName = null;
+    }));
+  }
+  async function doSyncH1Filename() {
     if (!root || !activePath || !isUnnamed(activeName)) return;
     const h1 = extractFirstH1(liveDoc);
     if (!h1) return;
@@ -351,7 +358,6 @@
     // Capture the target before any await: if the user navigates to another note during the
     // flush/rename, activePath changes — we must not rename (or follow) the wrong note.
     const pathToRename = activePath;
-    syncingName = true;
     try {
       await flush(); // persist the body (including the H1) to the current path before renaming
       if (pending) return; // unsaved edits could not be saved → skip the rename (data safety)
@@ -370,8 +376,6 @@
       opError = null;
     } catch (e) {
       opError = friendlyError(e);
-    } finally {
-      syncingName = false;
     }
   }
 
@@ -426,6 +430,10 @@
   }
 
   async function handleSelect(node: TreeNode) {
+    // Before navigating away, deterministically rename the (unnamed) note being left from its first
+    // H1 — awaited so it completes before activePath changes (the blur handler may also fire it; the
+    // promise coalesces, so this awaits the same run rather than racing it).
+    await maybeSyncH1Filename();
     selectedNode = node; // structure-edit target (including folders)
     if (!root) return;
     pendingHeading = null; // a direct open does not scroll to a heading (cleared before the open)
