@@ -348,18 +348,25 @@
     if (!h1) return;
     const candidate = sanitizeForFilename(h1);
     if (!candidate || candidate === activeName) return;
+    // Capture the target before any await: if the user navigates to another note during the
+    // flush/rename, activePath changes — we must not rename (or follow) the wrong note.
+    const pathToRename = activePath;
     syncingName = true;
     try {
       await flush(); // persist the body (including the H1) to the current path before renaming
       if (pending) return; // unsaved edits could not be saved → skip the rename (data safety)
-      const newPath = await renameNoteUnique(root, activePath, candidate);
-      // Keep the recreated editor in sync: changing activePath bumps docKey → Editor rebuilds from
-      // `content`, so `content` must hold the just-typed text (handleEdit only updates liveDoc).
-      content = liveDoc;
+      if (activePath !== pathToRename) return; // navigated away during flush → skip
+      const newPath = await renameNoteUnique(root, pathToRename, candidate);
       await refreshTree();
-      activePath = newPath;
-      activeName = baseName(newPath).replace(/\.md$/i, "");
-      selectedNode = null;
+      if (activePath === pathToRename) {
+        // Still on the renamed note → follow the new path. Keep the recreated editor in sync:
+        // changing activePath bumps docKey → Editor rebuilds from `content`, so `content` must hold
+        // the just-typed text (handleEdit only updates liveDoc).
+        content = liveDoc;
+        activePath = newPath;
+        activeName = baseName(newPath).replace(/\.md$/i, "");
+        selectedNode = null;
+      }
       opError = null;
     } catch (e) {
       opError = friendlyError(e);
