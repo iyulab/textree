@@ -185,6 +185,26 @@ pub fn rename_node(root: &Path, target: &Path, new_name: &str) -> io::Result<Pat
     }
 }
 
+/// Renames a leaf `.md` note to `desired_name`, auto-numbering on collision (`name`, `name (1)`,
+/// …) via `unique_in`. Used by the T4 H1→filename sync of *unnamed* notes — distinct from
+/// `rename_node`, whose explicit-rename collision is a hard error (never auto-numbered). Never
+/// overwrites an existing file. Returns the new path.
+pub fn rename_note_unique(root: &Path, target: &Path, desired_name: &str) -> io::Result<PathBuf> {
+    if !is_valid_name(desired_name) {
+        return Err(err("invalid name"));
+    }
+    if !is_within(root, target) {
+        return Err(err("path is outside the vault"));
+    }
+    if target.extension().and_then(|e| e.to_str()) != Some("md") || !target.is_file() {
+        return Err(err("rename target is not a leaf note"));
+    }
+    let parent = target.parent().ok_or_else(|| err("no parent directory"))?;
+    let dest = unique_in(parent, &format!("{desired_name}.md"), false);
+    std::fs::rename(target, &dest)?;
+    Ok(dest)
+}
+
 /// Moves a node to a different folder (changes its parent). Returns the new path.
 pub fn move_node(root: &Path, src: &Path, dest_dir: &Path) -> io::Result<PathBuf> {
     if !is_within(root, src) {
@@ -693,5 +713,57 @@ mod tests {
         std::fs::create_dir(&root).unwrap();
         // parent is the vault's parent → outside
         assert!(create_untitled_note(&root, tmp.path()).is_err());
+    }
+
+    #[test]
+    fn rename_note_unique_renames_leaf() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        let src = root.join("Untitled.md");
+        std::fs::write(&src, "# Meeting\n").unwrap();
+
+        let dest = rename_note_unique(root, &src, "Meeting").unwrap();
+        assert_eq!(dest.file_name().unwrap().to_str().unwrap(), "Meeting.md");
+        assert!(dest.is_file());
+        assert!(!src.exists());
+        assert_eq!(std::fs::read_to_string(&dest).unwrap(), "# Meeting\n");
+    }
+
+    #[test]
+    fn rename_note_unique_auto_numbers_on_collision() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        std::fs::write(root.join("Notes.md"), "existing\n").unwrap();
+        let src = root.join("Untitled.md");
+        std::fs::write(&src, "new\n").unwrap();
+
+        let dest = rename_note_unique(root, &src, "Notes").unwrap();
+        assert_eq!(dest.file_name().unwrap().to_str().unwrap(), "Notes (1).md");
+        assert!(root.join("Notes.md").is_file()); // existing note untouched
+        assert_eq!(std::fs::read_to_string(&dest).unwrap(), "new\n");
+    }
+
+    #[test]
+    fn rename_note_unique_rejects_invalid_name_and_outside_vault() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        let src = root.join("Untitled.md");
+        std::fs::write(&src, "x\n").unwrap();
+
+        assert!(rename_note_unique(root, &src, "a/b").is_err()); // separator rejected by is_valid_name
+        assert!(src.exists()); // not renamed on rejection
+        // target outside the vault
+        let outside = tmp.path().parent().unwrap().join("x.md");
+        assert!(rename_note_unique(root, &outside, "ok").is_err());
+    }
+
+    #[test]
+    fn rename_node_still_rejects_collision() {
+        // Regression: the explicit rename path must keep rejecting (not auto-number).
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        std::fs::write(root.join("a.md"), "a\n").unwrap();
+        std::fs::write(root.join("b.md"), "b\n").unwrap();
+        assert!(rename_node(root, &root.join("a.md"), "b").is_err());
     }
 }

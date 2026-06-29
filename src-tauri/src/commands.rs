@@ -359,6 +359,14 @@ pub fn create_untitled_note(root: String, parent: String) -> Result<String, Stri
 }
 
 #[tauri::command]
+pub fn rename_note_unique(root: String, path: String, name: String) -> Result<String, String> {
+    let p = crate::fs_ops::rename_note_unique(Path::new(&root), Path::new(&path), &name)
+        .map_err(|e| e.to_string())?;
+    log::info!("rename_note_unique: {} -> {}", path, p.display());
+    Ok(p.display().to_string())
+}
+
+#[tauri::command]
 pub fn create_folder(root: String, parent: String, name: String) -> Result<String, String> {
     let dir = crate::fs_ops::create_folder(Path::new(&root), Path::new(&parent), &name)
         .map_err(|e| e.to_string())?;

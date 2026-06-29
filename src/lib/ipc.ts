@@ -77,6 +77,14 @@ export async function renameNode(
   return invoke<string>("rename_node", { root, path, name });
 }
 
+export async function renameNoteUnique(
+  root: string,
+  path: string,
+  name: string,
+): Promise<string> {
+  return invoke<string>("rename_note_unique", { root, path, name });
+}
+
 export async function moveNode(
   root: string,
   path: string,

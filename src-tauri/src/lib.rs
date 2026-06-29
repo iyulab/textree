@@ -68,6 +68,7 @@ pub fn run() {
             commands::delete_node,
             commands::restore_node,
             commands::rename_node,
+            commands::rename_note_unique,
             commands::move_node,
             commands::adopt_node,
             commands::save_attachment,
