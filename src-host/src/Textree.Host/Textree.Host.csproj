@@ -5,6 +5,7 @@
     <RootNamespace>Textree.Host</RootNamespace>
   </PropertyGroup>
   <ItemGroup>
+    <PackageReference Include="Microsoft.ApplicationInsights" />
     <PackageReference Include="FluxIndex.SDK" />
     <PackageReference Include="FluxIndex.Core" />
     <PackageReference Include="FluxIndex.Storage.SQLite" />
