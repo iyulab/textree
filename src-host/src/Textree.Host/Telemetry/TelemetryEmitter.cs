@@ -27,13 +27,19 @@ public sealed class TelemetryEmitter : ITelemetryEmitter
     public static ITelemetryEmitter Create(
         TelemetryOptions options, ILogger logger, EnvFacts env, ITelemetryChannel? channel = null)
     {
-        if (!options.IsEnabled) return new NullTelemetryEmitter();
+        // Fail-closed: disabled, or enabled-but-no-endpoint, both yield the no-op emitter.
+        if (!options.IsEnabled || string.IsNullOrWhiteSpace(options.ConnectionString))
+            return new NullTelemetryEmitter();
 
         // Hand-built config: no default initializers, InMemoryChannel (in-memory only, drops on
         // prolonged failure → offline = skip, no disk buffering). The optional channel lets tests
         // capture from the REAL production chain. Scrubbing lives in ContextScrubProcessor — NOT an
         // ITelemetryInitializer — because TelemetryClient.Initialize() re-stamps Cloud.RoleInstance
         // with the machine hostname AFTER initializers run; a processor runs later and overwrites it.
+        // Hand-built config on purpose: do NOT switch to TelemetryConfiguration.CreateDefault() or the
+        // Microsoft.ApplicationInsights.AspNetCore package — either reintroduces default initializers and
+        // auto-collection (request/dependency/exception telemetry, machine-name context), defeating the
+        // by-construction + allowlist + scrub design.
         var config = new TelemetryConfiguration
         {
             ConnectionString = options.ConnectionString,
@@ -50,7 +56,7 @@ public sealed class TelemetryEmitter : ITelemetryEmitter
     public void ReportError(string eventName, string? modelSlot, ModelPhase phase, Exception ex)
     {
         var props = TelemetryPayload.BuildErrorProperties(modelSlot, phase, ex.GetType().Name, _env);
-        _client.TrackEvent(eventName, (IDictionary<string, string>)new Dictionary<string, string>(props));
+        _client.TrackEvent(eventName, new Dictionary<string, string>(props));
         _logger.LogInformation("telemetry: {Event} sent (slot={Slot}, phase={Phase}, type={Type})",
             eventName, modelSlot ?? "-", phase, ex.GetType().Name);
     }

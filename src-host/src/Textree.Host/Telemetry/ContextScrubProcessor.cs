@@ -1,5 +1,6 @@
 using Microsoft.ApplicationInsights.Channel;
 using Microsoft.ApplicationInsights.Extensibility;
+using Microsoft.ApplicationInsights.Extensibility.Implementation;
 
 namespace Textree.Host.Telemetry;
 
@@ -19,6 +20,7 @@ public sealed class ContextScrubProcessor(ITelemetryProcessor next) : ITelemetry
         item.Context.User.Id = string.Empty;
         item.Context.User.AuthenticatedUserId = string.Empty;
         item.Context.Location.Ip = string.Empty;
+        item.Context.GetInternalContext().NodeName = string.Empty;
         next.Process(item);
     }
 }

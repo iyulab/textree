@@ -21,7 +21,7 @@ builder.Services.AddSingleton(opts);
 builder.Services.AddSingleton(status);
 builder.Services.AddSingleton(embedder);
 // Telemetry: disabled (no-op) unless TEXTREE_TELEMETRY_CONNECTION is set. Hand-built pipe
-// (allowlist processor + scrub initializer) lives entirely inside TelemetryEmitter.Create.
+// (allowlist processor + context scrub processor) lives entirely inside TelemetryEmitter.Create.
 var telemetryOptions = TelemetryOptions.Read(
     Environment.GetEnvironmentVariables()
         .Cast<System.Collections.DictionaryEntry>()
