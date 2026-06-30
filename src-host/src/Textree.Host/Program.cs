@@ -136,7 +136,7 @@ app.MapPost("/reindex", (ReindexRequest req) =>
         {
             reindexLog.LogError(ex, "Reindex failed for {Vault}", req.VaultPath);
             app.Services.GetRequiredService<ITelemetryEmitter>()
-                .ReportError(TelemetryEventName.EmbedderInitFailed, "embedder", ModelPhase.Error, ex);
+                .ReportError(TelemetryEventName.ReindexFailed, "embedder", ModelPhase.Error, ex);
         }
     });
     return Results.Accepted();
@@ -166,7 +166,18 @@ app.MapPost("/chat", async (ChatRequestDto req, ITextGenerator gen, HttpContext 
     // Lazy-load safety net: if the model has not been prepared yet (no prior
     // /prepare-generation call), load it now before we begin streaming.
     if (!gen.Ready)
-        await gen.PrepareAsync(ct);
+    {
+        try
+        {
+            await gen.PrepareAsync(ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            app.Services.GetRequiredService<ITelemetryEmitter>()
+                .ReportError(TelemetryEventName.GenerationPrepareFailed, "generator", ModelPhase.Error, ex);
+            throw;
+        }
+    }
 
     ctx.Response.ContentType = "text/event-stream";
     var msgs = req.Messages.Select(m => new ChatMessage(m.Role, m.Content)).ToList();
