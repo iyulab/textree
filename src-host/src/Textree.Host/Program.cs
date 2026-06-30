@@ -3,6 +3,7 @@ using LMSupply.Embedder;
 using Textree.Host;
 using Textree.Host.Contracts;
 using Textree.Host.Rag;
+using Textree.Host.Telemetry;
 
 // ── DI / builder ──────────────────────────────────────────────────────────────
 // The embedder loads in the background so the host begins accepting requests
@@ -19,6 +20,18 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddSingleton(opts);
 builder.Services.AddSingleton(status);
 builder.Services.AddSingleton(embedder);
+// Telemetry: disabled (no-op) unless TEXTREE_TELEMETRY_CONNECTION is set. Hand-built pipe
+// (allowlist processor + scrub initializer) lives entirely inside TelemetryEmitter.Create.
+var telemetryOptions = TelemetryOptions.Read(
+    Environment.GetEnvironmentVariables()
+        .Cast<System.Collections.DictionaryEntry>()
+        .ToDictionary(e => (string)e.Key, e => (string?)(e.Value?.ToString())));
+builder.Services.AddSingleton(telemetryOptions);
+builder.Services.AddSingleton<ITelemetryEmitter>(sp =>
+    TelemetryEmitter.Create(
+        telemetryOptions,
+        sp.GetRequiredService<ILoggerFactory>().CreateLogger("Textree.Host.Telemetry"),
+        EnvFacts.Current()));
 builder.Services.AddSingleton<IEmbedderLoader, DefaultEmbedderLoader>();
 builder.Services.AddSingleton<VaultManager>();
 // Local CPU text generator for /chat. Singleton: the model loads once (lazily, on first
@@ -43,7 +56,10 @@ _ = Task.Run(async () =>
     }
     catch (Exception ex)
     {
-        status.SetEmbedderError(ex.Message);
+        var phaseAtFailure = status.Embedder.Phase; // Downloading/Loading/... before we flip to Error
+        status.SetEmbedderError(ex.Message);        // local-only; message keeps the path (data sovereignty OK locally)
+        app.Services.GetRequiredService<ITelemetryEmitter>()
+            .ReportError(TelemetryPayload.EventForModelFailure(phaseAtFailure), "embedder", phaseAtFailure, ex);
     }
 });
 
@@ -87,7 +103,12 @@ app.MapPost("/prepare-generation", (ITextGenerator gen) =>
     _ = Task.Run(async () =>
     {
         try { await gen.PrepareAsync(CancellationToken.None); }
-        catch (Exception ex) { genLog.LogError(ex, "Generation model PrepareAsync failed"); }
+        catch (Exception ex)
+        {
+            genLog.LogError(ex, "Generation model PrepareAsync failed");
+            app.Services.GetRequiredService<ITelemetryEmitter>()
+                .ReportError(TelemetryEventName.GenerationPrepareFailed, "generator", ModelPhase.Error, ex);
+        }
     });
     return Results.Accepted();
 });
@@ -111,7 +132,12 @@ app.MapPost("/reindex", (ReindexRequest req) =>
     _ = Task.Run(async () =>
     {
         try { await mgr.ReindexAsync(req.VaultPath, CancellationToken.None); }
-        catch (Exception ex) { reindexLog.LogError(ex, "Reindex failed for {Vault}", req.VaultPath); }
+        catch (Exception ex)
+        {
+            reindexLog.LogError(ex, "Reindex failed for {Vault}", req.VaultPath);
+            app.Services.GetRequiredService<ITelemetryEmitter>()
+                .ReportError(TelemetryEventName.EmbedderInitFailed, "embedder", ModelPhase.Error, ex);
+        }
     });
     return Results.Accepted();
 });
