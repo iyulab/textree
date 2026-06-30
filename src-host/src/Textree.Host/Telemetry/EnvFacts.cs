@@ -22,9 +22,17 @@ public sealed record EnvFacts(string AppVersion, string Os, string Arch, string 
 
         return new EnvFacts(
             AppVersion: version,
-            Os: RuntimeInformation.OSDescription.Split(' ')[0], // platform word only, no full build string
+            Os: OsName(),
             Arch: RuntimeInformation.OSArchitecture.ToString(),
             HardwareClass: ComputeHardwareClass());
+    }
+
+    private static string OsName()
+    {
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows)) return "Windows";
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX)) return "macOS";
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux)) return "Linux";
+        return "Unknown";
     }
 
     private static string ComputeHardwareClass()

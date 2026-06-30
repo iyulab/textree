@@ -15,7 +15,7 @@ public static class TelemetryPayload
         var props = new Dictionary<string, string>
         {
             ["phase"] = phase.ToString(),
-            ["exception_type"] = exceptionType,
+            ["exception_type"] = SanitizeTypeName(exceptionType),
             ["app_version"] = env.AppVersion,
             ["os"] = env.Os,
             ["arch"] = env.Arch,
@@ -23,6 +23,16 @@ public static class TelemetryPayload
         };
         if (modelSlot is not null) props["model_slot"] = modelSlot;
         return props;
+    }
+
+    // Defense in depth: exception_type must be a type name (callers pass ex.GetType().Name).
+    // Keep only the leading non-whitespace token so a message/path can never ride through.
+    // Never throws — telemetry must not break the app.
+    private static string SanitizeTypeName(string value)
+    {
+        var trimmed = value.AsSpan().TrimStart();
+        var space = trimmed.IndexOfAny(' ', '\t');
+        return space >= 0 ? trimmed[..space].ToString() : trimmed.ToString();
     }
 
     public static string EventForModelFailure(ModelPhase phaseAtFailure) => phaseAtFailure switch

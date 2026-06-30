@@ -25,6 +25,8 @@ public class TelemetryPayloadTests
         Assert.Equal("Loading", props["phase"]);
         Assert.Equal("IOException", props["exception_type"]);
         Assert.Equal("1.2.3", props["app_version"]);
+        Assert.Equal("Windows", props["os"]);
+        Assert.Equal("X64", props["arch"]);
         Assert.Equal("cpu8_ram16", props["hardware_class"]);
     }
 
@@ -52,5 +54,15 @@ public class TelemetryPayloadTests
         Assert.False(string.IsNullOrWhiteSpace(env.Os));
         Assert.False(string.IsNullOrWhiteSpace(env.Arch));
         Assert.StartsWith("cpu", env.HardwareClass);
+    }
+
+    [Fact]
+    public void BuildErrorProperties_sanitizes_freetext_exception_type()
+    {
+        var props = TelemetryPayload.BuildErrorProperties(
+            "embedder", ModelPhase.Error, "No such file: /Users/alice/일기.md", Env);
+        Assert.DoesNotContain(' ', props["exception_type"]);
+        Assert.DoesNotContain("alice", props["exception_type"]);
+        Assert.DoesNotContain("일기", props["exception_type"]);
     }
 }
