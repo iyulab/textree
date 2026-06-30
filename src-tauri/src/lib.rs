@@ -6,6 +6,7 @@ pub(crate) mod process_ext;
 pub(crate) mod publish;
 pub(crate) mod search;
 pub(crate) mod self_write;
+mod telemetry;
 pub(crate) mod vault;
 pub(crate) mod watcher;
 
