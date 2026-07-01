@@ -29,6 +29,10 @@ pub struct DownloadSnapshot {
 
 #[derive(Debug, Deserialize)]
 pub struct HealthResponse {
+    // Mirrors the /health wire contract alongside its sibling fields and is
+    // asserted by the parse_health test; Rust derives readiness from the
+    // boolean flags below, so it is unread in non-test builds.
+    #[allow(dead_code)]
     pub status: String,
     #[serde(rename = "embedderReady")]
     pub embedder_ready: bool,
