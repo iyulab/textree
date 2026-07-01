@@ -66,15 +66,21 @@
     scheduleRetryIfPreparing();
   }
 
+  let saveError = $state<string | null>(null);
+
   function summarize() {
     clearRetry();
+    saveError = null;
     void (async () => {
       await chatStore.summarize(vault, tree);
       scheduleRetryIfPreparing();
     })();
   }
 
-  let saveError = $state<string | null>(null);
+  function handleNewChat() {
+    saveError = null;
+    onNewChat();
+  }
 
   function saveToNote(text: string) {
     saveError = null;
@@ -111,7 +117,7 @@
         ◈ Scope: {chatStore.scope.label}
       </span>
       <button class="chat-summarize" onclick={summarize} disabled={busy} aria-label="Summarize this scope">Summarize</button>
-      <button class="chat-newchat" onclick={onNewChat}>New chat</button>
+      <button class="chat-newchat" onclick={handleNewChat}>New chat</button>
     </div>
 
     <div class="chat-turns">
@@ -128,7 +134,7 @@
               onclick={() => navigator.clipboard.writeText(turn.text).catch(() => {})}>Copy</button>
             {#if chatStore.turns[i - 1]?.kind === 'summary'}
               <button class="chat-save" type="button" aria-label="Save summary to a new note"
-                onclick={() => saveToNote(turn.text)}>Save to note</button>
+                disabled={busy} onclick={() => saveToNote(turn.text)}>Save to note</button>
             {/if}
           {/if}
           {#if turn.citations.length}

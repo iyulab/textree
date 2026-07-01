@@ -373,9 +373,13 @@ pub fn create_note_with_content(
     name: String,
     content: String,
 ) -> Result<String, String> {
-    let path =
-        crate::fs_ops::create_note_with_content(Path::new(&root), Path::new(&parent), &name, &content)
-            .map_err(|e| e.to_string())?;
+    let path = crate::fs_ops::create_note_with_content(
+        Path::new(&root),
+        Path::new(&parent),
+        &name,
+        &content,
+    )
+    .map_err(|e| e.to_string())?;
     log::info!("create_note_with_content: {}", path.display());
     Ok(path.display().to_string())
 }
