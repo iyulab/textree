@@ -1,10 +1,15 @@
 using System.Runtime.CompilerServices;
+using IronProw.LMSupply;
 using LMSupply;
 using LMSupply.Generator;
 using LMSupply.Generator.Abstractions;
-using LmChatMessage = LMSupply.Generator.Models.ChatMessage;
-using LmChatRole = LMSupply.Generator.Models.ChatRole;
-using LmGenerationOptions = LMSupply.Generator.Models.GenerationOptions;
+using Microsoft.Extensions.AI;
+// The current namespace (Textree.Host.Rag) declares its own ChatMessage record (see
+// ITextGenerator.cs), which takes precedence over the M.E.AI ChatMessage brought in by the
+// `using Microsoft.Extensions.AI;` above for any unqualified `ChatMessage` reference in this
+// file. Alias the M.E.AI type explicitly so ToChatMessage's return type/construction are
+// unambiguous.
+using MeaiChatMessage = Microsoft.Extensions.AI.ChatMessage;
 
 namespace Textree.Host.Rag;
 
@@ -113,46 +118,50 @@ public sealed class LocalTextGenerator : ITextGenerator, IAsyncDisposable
         await PrepareAsync(ct);
         var model = Volatile.Read(ref _model)!;
 
-        var lmMessages = messages.Select(ToLmMessage).ToList();
-        var lmOpts = new LmGenerationOptions
+        // Borrow the iron-prow D12 bridge: the lightweight 2-decorator path (NOT AddLMSupplyLocal,
+        // whose selection/registry/resilience gateway is inert for a single local provider).
+        // GeneratorChatClient wraps our already-loaded IGeneratorModel (IGeneratorModel : ITextGenerator,
+        // compile-proven) as an IChatClient; LocalSafetyChatClient adds length-bounding + a readiness gate.
+        var chat = new LocalSafetyChatClient(
+            new GeneratorChatClient(model),
+            new LocalSafetyOptions { DefaultMaxOutputTokens = 512 }, // belt-and-suspenders; we always set a cap below
+            new LazyReadinessProbe(() => Ready, new[] { ModelId }));
+
+        var chatMessages = messages.Select(ToChatMessage).ToList();
+        var chatOptions = new ChatOptions
         {
-            // Bound generation on BOTH paths. The GGUF/llama-server path honors MaxTokens, but
-            // the ONNX path (which we pin via "phi-4-mini") only checks MaxNewTokens and defaults
-            // it to int.MaxValue when null — i.e. UNBOUNDED. Without setting MaxNewTokens, a 128-cap
-            // request ran 3856 tokens (~30x over) in the GATE bench, burning minutes of CPU even
-            // for an attached client. Setting both makes the cap effective regardless of backend.
-            MaxTokens = opts.MaxTokens,
-            MaxNewTokens = opts.MaxTokens,
+            // 0.35.1 ResolveMaxOutputTokens (MaxNewTokens ?? MaxTokens) makes a single mapping enough;
+            // the old dual-set (MaxTokens + MaxNewTokens) hack is no longer needed.
+            MaxOutputTokens = opts.MaxTokens,
             Temperature = opts.Temperature,
         };
 
-        // ct is already passed to GenerateChatAsync so the library can check it between tokens.
-        // ThrowIfCancellationRequested guards the case where the library yields a chunk without
-        // rechecking ct internally — ensures we stop promptly on client disconnect regardless
-        // of the backend's internal cancellation discipline.
-        await foreach (var chunk in model.GenerateChatAsync(lmMessages, lmOpts, ct))
+        // ct is threaded into GetStreamingResponseAsync so the library can observe it between tokens.
+        // ThrowIfCancellationRequested keeps our belt-and-suspenders guard: stop promptly on client
+        // disconnect regardless of the bridge's internal cancellation discipline (free CPU).
+        await foreach (var update in chat.GetStreamingResponseAsync(chatMessages, chatOptions, ct))
         {
             ct.ThrowIfCancellationRequested();
-            yield return chunk;
+            if (!string.IsNullOrEmpty(update.Text))
+                yield return update.Text;
         }
     }
 
-    private static LmChatMessage ToLmMessage(ChatMessage m) =>
+    private static MeaiChatMessage ToChatMessage(Rag.ChatMessage m) =>
         new(ParseRole(m.Role), m.Content);
 
-    private static LmChatRole ParseRole(string? role)
+    private static ChatRole ParseRole(string? role)
     {
         if (string.IsNullOrWhiteSpace(role))
             throw new ArgumentException("Message role must not be null or empty.", nameof(role));
 
         return role.ToLowerInvariant() switch
         {
-            "system" => LmChatRole.System,
-            "assistant" => LmChatRole.Assistant,
-            "tool" => LmChatRole.Tool,
-            // Unknown non-empty roles (e.g. "function") are treated as User — the caller
-            // controls message construction, so non-empty unknown values are a soft mismatch.
-            _ => LmChatRole.User,
+            "system" => ChatRole.System,
+            "assistant" => ChatRole.Assistant,
+            "tool" => ChatRole.Tool,
+            // Unknown non-empty roles are treated as User — the caller controls message construction.
+            _ => ChatRole.User,
         };
     }
 

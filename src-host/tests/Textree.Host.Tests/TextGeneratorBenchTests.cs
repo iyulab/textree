@@ -72,11 +72,16 @@ public sealed class TextGeneratorBenchTests
         _out.WriteLine($"[GATE] throughput    : {chunksPerSec:F2} chunks(tokens)/s");
         _out.WriteLine($"[GATE] output        : {sb}");
 
-        // Observed on this hardware (2026-06) with phi-4-mini (3.8B, ONNX CPU-int4), ~8s cold
-        // load: ~15.66 chunks/s, generation bounded to exactly MaxTokens (128) and coherent.
-        // NOTE: bounding REQUIRES LocalTextGenerator to set LmGenerationOptions.MaxNewTokens —
-        // the ONNX path ignores MaxTokens and defaults MaxNewTokens to int.MaxValue (unbounded).
-        // An earlier run without MaxNewTokens ran 3856 tokens (~30x the cap) and looped.
+        // After the 0.35.1 + iron-prow bridge migration, bounding no longer depends on
+        // LocalTextGenerator setting LmGenerationOptions.MaxNewTokens by hand: LMSupply 0.35.1's
+        // ResolveMaxOutputTokens (MaxNewTokens ?? MaxTokens) closes the ONNX "ignore MaxTokens" gap,
+        // and the bridge maps ChatOptions.MaxOutputTokens -> that path. This test is the manual proof
+        // that the cap still holds WITHOUT the removed dual-set hack.
         Assert.True(chunkCount > 0, "generator produced no tokens");
+        // Each chunk is >= 1 token, so chunkCount is a lower bound on emitted tokens. With a 128-token
+        // cap, a correct bound keeps chunkCount at or below the cap plus a small tolerance for chunking
+        // (a regression to the old unbounded behavior ran ~3856). Allow generous headroom to avoid
+        // tokenizer-boundary flakiness while still catching a 30x blowout.
+        Assert.True(chunkCount <= 256, $"generation exceeded the bound (chunks={chunkCount}); MaxTokens cap not honored");
     }
 }
