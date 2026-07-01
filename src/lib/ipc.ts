@@ -61,6 +61,15 @@ export async function createUntitledNote(root: string, parent: string): Promise<
   return invoke<string>("create_untitled_note", { root, parent });
 }
 
+export async function createNoteWithContent(
+  root: string,
+  parent: string,
+  name: string,
+  content: string,
+): Promise<string> {
+  return invoke<string>("create_note_with_content", { root, parent, name, content });
+}
+
 export async function createFolder(
   root: string,
   parent: string,

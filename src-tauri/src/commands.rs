@@ -367,6 +367,20 @@ pub fn create_untitled_note(root: String, parent: String) -> Result<String, Stri
 }
 
 #[tauri::command]
+pub fn create_note_with_content(
+    root: String,
+    parent: String,
+    name: String,
+    content: String,
+) -> Result<String, String> {
+    let path =
+        crate::fs_ops::create_note_with_content(Path::new(&root), Path::new(&parent), &name, &content)
+            .map_err(|e| e.to_string())?;
+    log::info!("create_note_with_content: {}", path.display());
+    Ok(path.display().to_string())
+}
+
+#[tauri::command]
 pub fn rename_note_unique(root: String, path: String, name: String) -> Result<String, String> {
     let p = crate::fs_ops::rename_note_unique(Path::new(&root), Path::new(&path), &name)
         .map_err(|e| e.to_string())?;
