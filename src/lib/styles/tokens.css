@@ -14,6 +14,10 @@
  */
 
 :root {
+  /* Match native UI (scrollbars, form controls) to the active theme. Without this the WebView
+     renders a light scrollbar even in the dark theme. Set per theme root so it follows the
+     same [data-theme] switch as every other token. */
+  color-scheme: light;
   /* ── Type ───────────────────────────────────────────────── */
   --font-ui:
     system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial,
@@ -108,6 +112,7 @@
 }
 
 [data-theme="dark"] {
+  color-scheme: dark;
   --bg-primary: #1e1f23;
   --bg-secondary: #181a1d;
   --bg-secondary-alt: #25272c;

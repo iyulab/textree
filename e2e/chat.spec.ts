@@ -17,6 +17,7 @@
  *   - Consent button:    button "Enable local AI Q&A"  (text; no aria-label)
  *   - Question input:    aria-label="Question"
  *   - Send button:       aria-label="Send question"    (visible text is "Ask")
+ *   - Stop button:       aria-label="Stop generating"  (same button while an answer streams; text "Stop")
  *   - Turn bubbles:      .chat-bubble
  *   - Assistant bubble:  .chat-turn.assistant .chat-bubble
  *   - Citations:         .chat-citation
@@ -226,6 +227,125 @@ test.describe("host-present: chat streams answers, keeps multi-turn history", ()
       await expect(panel.locator(".chat-bubble").count()).resolves.toBeGreaterThan(
         bubblesAfterTurn1,
       );
+    } finally {
+      await clearAiConsent(page);
+      removeTempVault(vault);
+    }
+  });
+
+  test("Stop halts a streaming answer in place and keeps the partial text", async () => {
+    test.setTimeout(6 * 60_000);
+    const vault = createTempVault(ASK_VAULT_FILES);
+    try {
+      await loadVault(page, vault);
+      await expect(page.getByRole("treeitem", { name: /photosynthesis/i })).toBeVisible({
+        timeout: 10_000,
+      });
+      await setGenerationConsent(page, true);
+      await page.getByRole("treeitem", { name: /photosynthesis/i }).click();
+      await expect(page.locator(".cm-content")).toBeVisible({ timeout: 5_000 });
+
+      await enterChatMode(page);
+      const panel = page.locator('section[aria-label="Chat about your notes"]');
+      const input = panel.getByRole("textbox", { name: /question/i });
+      await expect(input).toBeVisible({ timeout: 5_000 });
+
+      // A deliberately open-ended prompt so the answer streams long enough to interrupt.
+      await input.fill("Explain photosynthesis in detail, step by step, at length.");
+      await page.getByRole("button", { name: /Send question/i }).click();
+
+      // While the answer streams, the send button toggles into a Stop control.
+      const stopBtn = page.getByRole("button", { name: /Stop generating/i });
+      await expect(stopBtn).toBeVisible({ timeout: 5 * 60_000 });
+
+      // Capture some streamed text, then stop mid-stream.
+      await expect
+        .poll(
+          async () =>
+            (await panel.locator(".chat-turn.assistant .chat-bubble").innerText()).trim().length,
+          { timeout: 4 * 60_000 },
+        )
+        .toBeGreaterThan(5);
+      const partialLen = (
+        await panel.locator(".chat-turn.assistant .chat-bubble").innerText()
+      ).trim().length;
+      await stopBtn.click();
+
+      // Reverts to Ask (no longer busy), partial answer is preserved, and nothing errors.
+      await expect(page.getByRole("button", { name: /Send question/i })).toBeVisible({
+        timeout: 5_000,
+      });
+      await expect(page.locator('[role="alert"]')).toHaveCount(0);
+      const afterLen = (
+        await panel.locator(".chat-turn.assistant .chat-bubble").innerText()
+      ).trim().length;
+      expect(afterLen).toBeGreaterThan(0);
+      expect(afterLen).toBeGreaterThanOrEqual(partialLen);
+    } finally {
+      await clearAiConsent(page);
+      removeTempVault(vault);
+    }
+  });
+
+  test("streaming answer stays pinned to the bottom; scroll-up reveals the jump button", async () => {
+    test.setTimeout(6 * 60_000);
+    const vault = createTempVault(ASK_VAULT_FILES);
+    try {
+      await loadVault(page, vault);
+      await expect(page.getByRole("treeitem", { name: /photosynthesis/i })).toBeVisible({
+        timeout: 10_000,
+      });
+      await setGenerationConsent(page, true);
+      await page.getByRole("treeitem", { name: /photosynthesis/i }).click();
+      await expect(page.locator(".cm-content")).toBeVisible({ timeout: 5_000 });
+
+      await enterChatMode(page);
+      const panel = page.locator('section[aria-label="Chat about your notes"]');
+      const input = panel.getByRole("textbox", { name: /question/i });
+      await expect(input).toBeVisible({ timeout: 5_000 });
+
+      await input.fill("Explain photosynthesis in detail, step by step, at length.");
+      await page.getByRole("button", { name: /Send question/i }).click();
+
+      // Wait for content to stream, then for the run to finish (button reverts to Ask).
+      await expect
+        .poll(
+          async () =>
+            (await panel.locator(".chat-turn.assistant .chat-bubble").innerText()).trim().length,
+          { timeout: 4 * 60_000 },
+        )
+        .toBeGreaterThan(10);
+      await expect(page.getByRole("button", { name: /Send question/i })).toBeVisible({
+        timeout: 4 * 60_000,
+      });
+
+      const turns = panel.locator(".chat-turns");
+      // Autofollow invariant: as content grew, the effect kept the transcript pinned to the end.
+      // Holds trivially if it never overflowed, and is a real regression guard if it did.
+      const pinned = await turns.evaluate(
+        (el) => el.scrollHeight - el.scrollTop - el.clientHeight < 48,
+      );
+      expect(pinned).toBe(true);
+
+      // Jump button is meaningful only when the transcript overflows.
+      const overflows = await turns.evaluate((el) => el.scrollHeight - el.clientHeight > 48);
+      const scrollBtn = panel.locator(".chat-scrollbtn");
+      if (overflows) {
+        await turns.evaluate((el) => {
+          el.scrollTop = 0;
+          el.dispatchEvent(new Event("scroll"));
+        });
+        await expect(scrollBtn).toBeVisible({ timeout: 3_000 });
+        await scrollBtn.click();
+        await expect(scrollBtn).toBeHidden({ timeout: 3_000 });
+        const repinned = await turns.evaluate(
+          (el) => el.scrollHeight - el.scrollTop - el.clientHeight < 48,
+        );
+        expect(repinned).toBe(true);
+      } else {
+        // Not overflowing → nothing to jump to → button must stay hidden.
+        await expect(scrollBtn).toBeHidden();
+      }
     } finally {
       await clearAiConsent(page);
       removeTempVault(vault);

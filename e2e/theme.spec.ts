@@ -29,19 +29,27 @@ test("theme toggle: data-theme switch + actual background color change", async (
   const bg = () =>
     page.evaluate(() => getComputedStyle(document.body).backgroundColor);
 
+  // Native UI (scrollbars, form controls) must follow the theme via color-scheme — without it
+  // the WebView paints a light scrollbar in the dark theme. Assert it tracks the same switch.
+  const scheme = () =>
+    page.evaluate(() => getComputedStyle(document.documentElement).colorScheme);
+
   const before = (await html.getAttribute("data-theme")) ?? "light";
   const beforeBg = await bg();
+  expect(await scheme()).toBe(before);
 
   await page.getByRole("button", { name: "Toggle theme" }).click();
   await expect(html).toHaveAttribute("data-theme", opposite(before));
 
   // If tokens are actually applied, the background color must differ after the switch (wait for the transition animation to settle).
   await expect.poll(bg).not.toBe(beforeBg);
+  await expect.poll(scheme).toBe(opposite(before));
 
   // Toggling again returns to the original theme (+ background color reverts).
   await page.getByRole("button", { name: "Toggle theme" }).click();
   await expect(html).toHaveAttribute("data-theme", before);
   await expect.poll(bg).toBe(beforeBg);
+  await expect.poll(scheme).toBe(before);
 });
 
 test("theme selection persists in localStorage", async () => {

@@ -98,7 +98,45 @@
     }
   }
 
+  // Stop an in-flight answer, keeping whatever streamed so far (chatStore.stop preserves the
+  // partial assistant turn). Also clears the 'preparing' retry timer so it can't relaunch.
+  function stopGeneration() {
+    clearRetry();
+    chatStore.stop();
+  }
+
   const busy = $derived(chatStore.status === 'searching' || chatStore.status === 'generating');
+
+  // ── Scroll follow ──────────────────────────────────────────────────────────
+  // Keep the transcript pinned to the newest tokens while streaming, but only when the reader
+  // is already at the bottom — scrolling up to re-read must not be yanked back down. When not
+  // pinned, a floating button offers a one-click jump to the latest.
+  let turnsEl = $state<HTMLDivElement | null>(null);
+  let atBottom = $state(true);
+  const NEAR_BOTTOM_PX = 48; // treat "within 48px of the end" as pinned (tolerates sub-pixel rounding)
+
+  function updateAtBottom() {
+    const el = turnsEl;
+    if (!el) return;
+    atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < NEAR_BOTTOM_PX;
+  }
+
+  function scrollToBottom() {
+    const el = turnsEl;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+    atBottom = true;
+  }
+
+  // Re-runs as turns are pushed and as tokens append to the streaming bubble (deep runes
+  // reactivity on turns.length + the last bubble's text). Effects flush after the DOM updates,
+  // so scrollHeight already reflects the new content. Follow only while pinned.
+  $effect(() => {
+    const turns = chatStore.turns;
+    void turns.length;
+    void turns.at(-1)?.text;
+    if (atBottom) scrollToBottom();
+  });
 </script>
 
 <section class="chat-view" aria-label="Chat about your notes">
@@ -120,7 +158,8 @@
       <button class="chat-newchat" onclick={handleNewChat}>New chat</button>
     </div>
 
-    <div class="chat-turns">
+    <div class="chat-scroll-wrap">
+    <div class="chat-turns" bind:this={turnsEl} onscroll={updateAtBottom}>
       {#each chatStore.turns as turn, i (i)}
         <div class="chat-turn {turn.role}">
           <span class="chat-speaker">{turn.role === 'user' ? 'You' : 'Assistant'}:</span>
@@ -150,6 +189,15 @@
           {/if}
         </div>
       {/each}
+    </div>
+      {#if !atBottom}
+        <button
+          class="chat-scrollbtn"
+          type="button"
+          onclick={scrollToBottom}
+          aria-label="Scroll to latest"
+        ><Icon name="chevron-down" /></button>
+      {/if}
     </div>
 
     {#if saveError}
@@ -188,12 +236,13 @@
         placeholder="Ask about your notes…"
         aria-label="Question"
       />
+      <!-- Ask ⇄ Stop: while an answer streams, the same button becomes a Stop control
+           (chatStore.stop keeps the partial answer). Toggling in place keeps one focus target. -->
       <button
         class="chat-send"
-        onclick={() => { clearRetry(); void sendAndPoll(); }}
-        disabled={busy}
-        aria-label="Send question"
-      >Ask</button>
+        onclick={busy ? stopGeneration : () => { clearRetry(); void sendAndPoll(); }}
+        aria-label={busy ? 'Stop generating' : 'Send question'}
+      >{busy ? 'Stop' : 'Ask'}</button>
     </div>
   {/if}
 </section>
@@ -291,6 +340,17 @@
     cursor: pointer;
   }
   .chat-save:hover { background: var(--bg-secondary-alt); }
+  /* Positioned wrapper so the scroll-to-latest button can float over the transcript's bottom
+     edge without scrolling away with the content (the button is a sibling of, not inside, the
+     overflow container). */
+  .chat-scroll-wrap {
+    position: relative;
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    margin-bottom: var(--sp-2);
+  }
   .chat-turns {
     flex: 1;
     min-height: 0;
@@ -298,8 +358,27 @@
     display: flex;
     flex-direction: column;
     gap: var(--sp-3);
-    margin-bottom: var(--sp-2);
   }
+  .chat-scrollbtn {
+    position: absolute;
+    bottom: var(--sp-2);
+    left: 50%;
+    transform: translateX(-50%);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    color: var(--text-normal);
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-strong);
+    border-radius: 50%;
+    box-shadow: var(--shadow-m);
+    cursor: pointer;
+  }
+  .chat-scrollbtn:hover { background: var(--bg-secondary-alt); }
+  .chat-scrollbtn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   .chat-turn { display: flex; flex-direction: column; gap: var(--sp-1); }
   .chat-turn.user { align-items: flex-end; }
   /* Visually hidden, screen-reader only: announces the speaker (the bubble alignment/colour
@@ -400,6 +479,5 @@
     border: none;
     border-radius: var(--radius-s);
   }
-  .chat-send:hover:not(:disabled) { background: var(--accent-hover); }
-  .chat-send:disabled { opacity: 0.5; cursor: default; }
+  .chat-send:hover { background: var(--accent-hover); }
 </style>

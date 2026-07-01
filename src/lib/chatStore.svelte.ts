@@ -241,6 +241,18 @@ class ChatStore {
     await this.run(vault);
   }
 
+  /** User-initiated Stop of an in-flight answer (Stop button). Unlike cancel(), this PRESERVES
+   *  the partially streamed assistant turn — the user asked to keep what arrived so far — and
+   *  settles into 'done' rather than discarding to 'idle'. Bumping seq makes any late stream
+   *  callbacks no-op; cancelAsk() tells the host to stop generating (free CPU). No-op unless a
+   *  run is actually in flight, so a stray call in an idle state cannot fake a 'done'. */
+  stop() {
+    if (this.status !== 'searching' && this.status !== 'generating') return;
+    this.seq++;
+    void cancelAsk(); // fire-and-forget: bump Rust ask_generation → host stops
+    this.status = 'done';
+  }
+
   /** Cancel any in-flight stream and stop the host generating (mode switch, app close). */
   cancel() {
     this.seq++;
