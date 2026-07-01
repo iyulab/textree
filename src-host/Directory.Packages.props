@@ -10,8 +10,9 @@
     <PackageVersion Include="FluxIndex.Extensions.FileVault" Version="0.13.19" />
     <PackageVersion Include="FileFlux" Version="0.10.11" />
     <PackageVersion Include="FluxCurator" Version="0.7.6" />
-    <PackageVersion Include="LMSupply.Embedder" Version="0.34.20" />
-    <PackageVersion Include="LMSupply.Generator" Version="0.34.28" />
+    <PackageVersion Include="LMSupply.Embedder" Version="0.35.1" />
+    <PackageVersion Include="LMSupply.Generator" Version="0.35.1" />
+    <PackageVersion Include="IronProw.LMSupply" Version="0.1.0" />
     <PackageVersion Include="sqlite-vec" Version="0.1.7-alpha.2.1" />
     <PackageVersion Include="Microsoft.Data.Sqlite" Version="10.0.8" />
   </ItemGroup>
