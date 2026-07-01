@@ -99,6 +99,8 @@ mod tests {
     /// Regression guard: no forbidden (PII-shaped) key may ever appear in a serialized envelope.
     #[test]
     fn no_forbidden_keys_in_any_envelope() {
+        // Maintainers: add any NEW `TelemetryEvent` variant here too, so this regression guard
+        // keeps covering every event that can be emitted.
         let events = [
             TelemetryEvent::AppLaunch,
             TelemetryEvent::VaultOpenFailed { os_error_code: Some(3) },

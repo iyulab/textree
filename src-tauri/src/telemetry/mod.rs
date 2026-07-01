@@ -1,5 +1,7 @@
-//! Content-free, by-construction telemetry egress (D25). See
-//! docs/superpowers/specs/2026-07-01-app-telemetry-emit-design.md.
+//! Content-free, by-construction telemetry egress (D25 diagnostic telemetry design).
+//! Emits a small, fixed set of events — `app.launch`, `vault.open.failed`, `app.panic` — whose
+//! payloads are, by construction, PII-free: no paths, filenames, note titles, vault identifiers,
+//! search queries, or content ever enter an envelope.
 
 pub mod config;
 pub mod event;
@@ -42,7 +44,12 @@ pub fn emit(event: TelemetryEvent) {
         return;
     };
     log::info!("[telemetry] emit {}", event.name());
-    std::thread::spawn(move || {
+    // `Builder::spawn` (unlike `thread::spawn`) returns a `Result` instead of panicking when the
+    // OS fails to create a thread. `emit` is also called from the panic hook, so panicking here
+    // would panic inside the panic hook — a double-panic that aborts the process. Discard the
+    // `Result` instead: a failed spawn just means this event is dropped, matching the "never
+    // blocks, never propagates errors" contract above.
+    let _ = std::thread::Builder::new().spawn(move || {
         let secs = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs())
