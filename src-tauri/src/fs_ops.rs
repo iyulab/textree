@@ -56,6 +56,22 @@ pub fn create_untitled_note(root: &Path, parent: &Path) -> io::Result<PathBuf> {
     Ok(path)
 }
 
+/// Creates `parent/<stem>.md` with `content`, auto-numbering on collision via `unique_in`
+/// (`Summary of X`, `Summary of X (1)`, …). Like the other `create_*` fns it always writes a
+/// brand-new unique path, so it uses a plain `fs::write` (no atomic_write / self_write: no
+/// existing data is at risk, and the watcher reflects the new file into the tree).
+pub fn create_note_with_content(
+    root: &Path,
+    parent: &Path,
+    stem: &str,
+    content: &str,
+) -> io::Result<PathBuf> {
+    check_parent_and_name(root, parent, stem)?;
+    let path = unique_in(parent, &format!("{stem}.md"), false);
+    std::fs::write(&path, content)?;
+    Ok(path)
+}
+
 /// Creates the `parent/name/` container and its folder note `parent/name/name.md`.
 /// Also creates the folder note so it becomes an immediately editable container note (design §3.1).
 pub fn create_folder(root: &Path, parent: &Path, name: &str) -> io::Result<PathBuf> {
@@ -779,5 +795,30 @@ mod tests {
         std::fs::write(root.join("a.md"), "a\n").unwrap();
         std::fs::write(root.join("b.md"), "b\n").unwrap();
         assert!(rename_node(root, &root.join("a.md"), "b").is_err());
+    }
+
+    #[test]
+    fn create_note_with_content_writes_and_auto_numbers() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        let p1 = create_note_with_content(root, root, "Summary of X", "# hi\n").unwrap();
+        assert_eq!(p1, root.join("Summary of X.md"));
+        assert_eq!(std::fs::read_to_string(&p1).unwrap(), "# hi\n");
+        // Second save with the same base name auto-numbers instead of overwriting.
+        let p2 = create_note_with_content(root, root, "Summary of X", "# other\n").unwrap();
+        assert_eq!(p2, root.join("Summary of X (1).md"));
+        assert_eq!(std::fs::read_to_string(&p1).unwrap(), "# hi\n"); // original untouched
+    }
+
+    #[test]
+    fn create_note_with_content_rejects_bad_name_and_outside_parent() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path().join("vault");
+        std::fs::create_dir(&root).unwrap();
+        // separator in the stem -> is_valid_name rejects
+        assert!(create_note_with_content(&root, &root, "a/b", "x").is_err());
+        // parent outside the vault
+        let outside = tmp.path().parent().unwrap();
+        assert!(create_note_with_content(&root, outside, "a", "x").is_err());
     }
 }
