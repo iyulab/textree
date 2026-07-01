@@ -18,6 +18,19 @@ use watcher::WatcherHandle;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Content-free crash signal: capture only our own source location, never the panic payload
+    // (which could interpolate user data). Chains to the previous hook so default logging/abort
+    // behaviour is preserved.
+    let prev_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let location = info
+            .location()
+            .map(|l| format!("{}:{}", l.file(), l.line()))
+            .unwrap_or_default();
+        telemetry::emit(telemetry::event::TelemetryEvent::AppPanic { location });
+        prev_hook(info);
+    }));
+
     tauri::Builder::default()
         .plugin(
             tauri_plugin_log::Builder::new()
@@ -36,6 +49,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_process::init())
         .setup(|app| {
+            telemetry::emit(telemetry::event::TelemetryEvent::AppLaunch);
             // Log startup here (after plugin init) so the logger is already wired.
             log::info!("textree starting (v{})", env!("CARGO_PKG_VERSION"));
             #[cfg(windows)]
