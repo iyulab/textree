@@ -208,9 +208,15 @@ pub fn spawn_host(handle: Arc<HostHandle>, exe: String, log_dir: std::path::Path
     let mut cmd = Command::new(&exe);
     cmd.arg("--urls")
         .arg(&url)
-        .env("ASPNETCORE_URLS", &url)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+        .env("ASPNETCORE_URLS", &url);
+    // Forward the single embedded connection string (if telemetry is compiled in and
+    // configured) so the host's own telemetry activates from the same source of truth.
+    // Compile-time embedding means this is not already in the process env — it must be
+    // passed explicitly. Absent => no env set => host telemetry stays off (unchanged).
+    if let Some(conn) = crate::telemetry::host_connection() {
+        cmd.env(crate::telemetry::config::ENV_VAR, conn);
+    }
+    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
     // Run the sidecar without flashing a console window (Windows). Without this,
     // a GUI app gives the console-subsystem .NET host its own console window.
     crate::process_ext::no_console_window(&mut cmd);
