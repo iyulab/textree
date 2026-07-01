@@ -30,6 +30,7 @@ import {
   loadVault,
   createTempVault,
   removeTempVault,
+  readVaultFile,
 } from "./helpers";
 
 // ── Profile detection ────────────────────────────────────────────────────────
@@ -299,7 +300,11 @@ test.describe("host-present: Save to note writes and opens a summary note", () =
   });
 
   test("Save to note writes the summary to a new note and opens it", async () => {
-    test.setTimeout(5 * 60_000 + 30_000);
+    // Must comfortably exceed the sum of this test's own inner waits: pollHostReady (up to
+    // 5 * 60_000) + the summary-stream expect.poll (up to 4 * 60_000) + the smaller fixed
+    // timeouts below (~35s) + margin. Otherwise the outer timeout can fire first and mask a
+    // real pass/fail behind a generic "test timeout exceeded".
+    test.setTimeout(10 * 60_000);
     const vault = createTempVault(SAVE_TO_NOTE_VAULT_FILES);
     try {
       // Consent must be set before ChatView renders so the scopebar (and Summarize button) shows.
@@ -338,11 +343,25 @@ test.describe("host-present: Save to note writes and opens a summary note", () =
       await expect(saveBtn).toBeVisible({ timeout: 5_000 });
       await saveBtn.click();
 
-      // Lands in Note mode with the new summary note open: header title + H1 + Sources heading.
+      // Lands in Note mode with the new summary note open: header title + editor visible.
+      // The scope is the "garden" folder (chatScopeFromSelection() sets label = the selected
+      // container node's name), so createNoteWithContent's target is
+      // "garden/Summary of garden.md" (no collision on a fresh temp vault -> no " (1)" suffix).
       await expect(savePage.locator(".title")).toContainText("Summary of", { timeout: 10_000 });
       await expect(savePage.locator(".cm-content")).toBeVisible({ timeout: 5_000 });
+      // The H1 is always in the initial viewport, so this lightly confirms Note mode rendered
+      // the right document without relying on CodeMirror's virtualized viewport for content
+      // further down the page.
       await expect(savePage.locator(".cm-content")).toContainText("# Summary of");
-      await expect(savePage.locator(".cm-content")).toContainText("## Sources");
+
+      // Assert the real proof of "writes the summary to a new note": the on-disk file. CodeMirror
+      // 6 (constructed without viewportMargin: Infinity in src/lib/Editor.svelte) only renders the
+      // viewport + margin, and "## Sources" sits at the bottom of a long summary note, so asserting
+      // it via .cm-content can fail on a correct implementation once the note is long enough to be
+      // virtualized. Reading the file directly is both flake-proof and more on-spec for this test.
+      const noteContent = readVaultFile(vault, "garden/Summary of garden.md");
+      expect(noteContent).toContain("# Summary of");
+      expect(noteContent).toContain("## Sources");
     } finally {
       await clearAiConsent(savePage);
       removeTempVault(vault);
