@@ -1042,6 +1042,13 @@
     openFileFromPalette(path);
   }
 
+  /** Open a just-saved summary note in Note mode (refresh the tree so it appears in the sidebar). */
+  async function openSavedNote(path: string) {
+    await refreshTree();
+    layout.setMode("note");
+    openFileFromPalette(path);
+  }
+
   /** Palette file selection → find the matching TreeNode and delegate to handleSelect.
    *  Accepts both absolute TreeNode paths (file/command mode) and vault-relative POSIX
    *  paths (semantic search hits from the sidecar) so all modes converge here. */
@@ -1399,6 +1406,7 @@
         onOpenNote={openCitedNote}
         onNewChat={newChatFromSelection}
         onBack={() => layout.setMode("note")}
+        onSaved={openSavedNote}
       />
     {:else if !root}
       <div class="empty-state">

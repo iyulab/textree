@@ -5,6 +5,7 @@
   import { prepareAiModel } from './ipc';
   import type { TreeNode } from './ipc';
   import { formatModelDownload } from './modelDownload.helpers';
+  import { friendlyError } from './friendlyError.helpers';
   import Icon from './Icon.svelte';
 
   let {
@@ -13,12 +14,14 @@
     onOpenNote,
     onNewChat,
     onBack,
+    onSaved,
   }: {
     vault: string;
     tree: TreeNode[];
     onOpenNote: (path: string) => void;
     onNewChat: () => void;
     onBack: () => void;
+    onSaved: (path: string) => void;
   } = $props();
 
   let consented = $state(getGenerationConsent());
@@ -71,6 +74,16 @@
     })();
   }
 
+  let saveError = $state<string | null>(null);
+
+  function saveToNote(text: string) {
+    saveError = null;
+    void chatStore
+      .saveSummaryToNote(vault, text)
+      .then((p) => onSaved(p))
+      .catch((e) => { saveError = friendlyError(e).summary; });
+  }
+
   function handleKeydown(e: KeyboardEvent) {
     if (e.key === 'Enter') {
       if (busy) return;
@@ -113,6 +126,10 @@
           {#if turn.role === 'assistant' && turn.text}
             <button class="chat-copy" type="button" aria-label="Copy message"
               onclick={() => navigator.clipboard.writeText(turn.text).catch(() => {})}>Copy</button>
+            {#if chatStore.turns[i - 1]?.kind === 'summary'}
+              <button class="chat-save" type="button" aria-label="Save summary to a new note"
+                onclick={() => saveToNote(turn.text)}>Save to note</button>
+            {/if}
           {/if}
           {#if turn.citations.length}
             <ul class="chat-citations">
@@ -128,6 +145,10 @@
         </div>
       {/each}
     </div>
+
+    {#if saveError}
+      <p class="chat-error" role="alert">Save failed: {saveError}</p>
+    {/if}
 
     {#if chatStore.status === 'preparing'}
       {#if formatModelDownload(chatStore.modelDownload) !== null}
@@ -252,6 +273,18 @@
     cursor: pointer;
   }
   .chat-copy:hover { background: var(--bg-secondary-alt); }
+  .chat-save {
+    align-self: flex-start;
+    margin-top: var(--sp-1);
+    padding: var(--sp-1) var(--sp-2);
+    font-size: var(--font-size-smaller);
+    color: var(--text-muted);
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-s);
+    cursor: pointer;
+  }
+  .chat-save:hover { background: var(--bg-secondary-alt); }
   .chat-turns {
     flex: 1;
     min-height: 0;

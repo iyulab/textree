@@ -16,6 +16,8 @@ import {
   type ChatTurn,
 } from './ask.helpers';
 import { collectScopeNotes, budgetConcat, buildSummaryMessages } from './summary.helpers';
+import { buildSummaryNote, summaryNoteParent, summaryNoteBaseName } from './summaryNote.helpers';
+import { createNoteWithContent } from './ipc';
 
 export type ChatScopeKind = 'file' | 'folder' | 'vault';
 export interface ChatScope {
@@ -82,6 +84,26 @@ class ChatStore {
   /** Re-attempt the latest user turn (used by the 'preparing' retry timer). */
   async retry(vault: string) {
     await this.run(vault);
+  }
+
+  /** Save the current summary as a new note in the scope's folder; returns the new note path.
+   *  `summaryText` is the summary turn's rendered text (passed by the UI so a follow-up Q&A
+   *  turn cannot be mistaken for the summary). Throws if there is no summary to save. */
+  async saveSummaryToNote(vault: string, summaryText: string): Promise<string> {
+    if (!this.summaryResult) throw new Error('No summary to save');
+    const parent = summaryNoteParent(this.scope.kind, this.scope.path, vault);
+    const name = summaryNoteBaseName(this.scope.label);
+    const content = buildSummaryNote(
+      this.scope.label,
+      summaryText,
+      this.summaryResult.hits.map((h) => h.path),
+      {
+        includedCount: this.summaryResult.includedCount,
+        totalCount: this.summaryResult.totalCount,
+        bodyTruncated: this.summaryResult.bodyTruncated,
+      },
+    );
+    return createNoteWithContent(vault, parent, name, content);
   }
 
   private async run(vault: string) {
