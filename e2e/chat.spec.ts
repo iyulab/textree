@@ -265,6 +265,91 @@ test.describe("host-present: chat streams answers, keeps multi-turn history", ()
   });
 });
 
+// ── HOST-PRESENT: Save to note (folder summary → new note) ──────────────────
+
+const SAVE_TO_NOTE_VAULT_FILES: Record<string, string> = {
+  "garden/soil.md": [
+    "# Soil",
+    "",
+    "Healthy garden soil is loose, dark, and rich in organic matter.",
+    "Compost improves soil structure and feeds beneficial microbes.",
+    "",
+  ].join("\n"),
+  "garden/watering.md": [
+    "# Watering",
+    "",
+    "Most vegetables need about an inch of water per week.",
+    "Watering deeply and less often encourages stronger root growth.",
+    "",
+  ].join("\n"),
+};
+
+test.describe("host-present: Save to note writes and opens a summary note", () => {
+  test.skip(PROFILE !== "host", "Set TEXTREE_ASK_E2E=host + launch with TEXTREE_HOST_EXE.");
+
+  let saveBrowser: Browser;
+  let savePage: Page;
+
+  test.beforeAll(async () => {
+    ({ browser: saveBrowser, page: savePage } = await connectToApp());
+  });
+
+  test.afterAll(async () => {
+    await saveBrowser?.close();
+  });
+
+  test("Save to note writes the summary to a new note and opens it", async () => {
+    test.setTimeout(5 * 60_000 + 30_000);
+    const vault = createTempVault(SAVE_TO_NOTE_VAULT_FILES);
+    try {
+      // Consent must be set before ChatView renders so the scopebar (and Summarize button) shows.
+      await setGenerationConsent(savePage, true);
+      await loadVault(savePage, vault);
+      await expect(savePage.getByRole("treeitem", { name: /garden/i })).toBeVisible({
+        timeout: 10_000,
+      });
+
+      // Select the folder (container node) so the chat scope pins to it, not to a single file —
+      // mirrors folder-table.spec.ts's folder selection (chatScopeFromSelection() in +page.svelte
+      // reads selectedNode.kind === "container" into a { kind: 'folder' } scope).
+      await savePage.getByRole("treeitem", { name: /garden/i }).click();
+      await enterChatMode(savePage);
+      const panel = savePage.locator('section[aria-label="Chat about your notes"]');
+
+      // Ensure the local generator is actually loaded before triggering a real summary —
+      // otherwise Summarize would just sit in the 'preparing' gate.
+      await pollHostReady(savePage, 5 * 60_000);
+
+      const summarizeBtn = panel.getByRole("button", { name: "Summarize this scope" });
+      await expect(summarizeBtn).toBeVisible({ timeout: 5_000 });
+      await summarizeBtn.click();
+
+      // Assistant summary turn streams in; wait for non-trivial content (same threshold the
+      // multi-turn Q&A test above uses) before treating the summary as ready to save.
+      await expect
+        .poll(
+          async () =>
+            (await panel.locator(".chat-turn.assistant .chat-bubble").innerText()).trim().length,
+          { timeout: 4 * 60_000 },
+        )
+        .toBeGreaterThan(10);
+
+      const saveBtn = panel.getByRole("button", { name: "Save summary to a new note" });
+      await expect(saveBtn).toBeVisible({ timeout: 5_000 });
+      await saveBtn.click();
+
+      // Lands in Note mode with the new summary note open: header title + H1 + Sources heading.
+      await expect(savePage.locator(".title")).toContainText("Summary of", { timeout: 10_000 });
+      await expect(savePage.locator(".cm-content")).toBeVisible({ timeout: 5_000 });
+      await expect(savePage.locator(".cm-content")).toContainText("# Summary of");
+      await expect(savePage.locator(".cm-content")).toContainText("## Sources");
+    } finally {
+      await clearAiConsent(savePage);
+      removeTempVault(vault);
+    }
+  });
+});
+
 // ── HOST-ABSENT: graceful degradation ────────────────────────────────────────
 
 test.describe("host-absent: chat degrades calmly, Note mode stays functional", () => {
