@@ -122,7 +122,7 @@ public sealed class LocalTextGenerator : ITextGenerator, IAsyncDisposable
         // whose selection/registry/resilience gateway is inert for a single local provider).
         // GeneratorChatClient wraps our already-loaded IGeneratorModel (IGeneratorModel : ITextGenerator,
         // compile-proven) as an IChatClient; LocalSafetyChatClient adds length-bounding + a readiness gate.
-        var chat = new LocalSafetyChatClient(
+        using var chat = new LocalSafetyChatClient(
             new GeneratorChatClient(model),
             new LocalSafetyOptions { DefaultMaxOutputTokens = 512 }, // belt-and-suspenders; we always set a cap below
             new LazyReadinessProbe(() => Ready, new[] { ModelId }));
