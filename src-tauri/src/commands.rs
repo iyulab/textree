@@ -64,11 +64,12 @@ fn has_markdown(dir: &Path) -> bool {
 
 /// Ensures `base/Textree/` exists and, only when it has no Markdown yet, seeds `welcome.md`
 /// atomically. Never overwrites existing content (non-destructive). Returns the vault path.
-fn ensure_vault_at(base: &Path) -> Result<PathBuf, String> {
+fn ensure_vault_at(base: &Path) -> Result<PathBuf, (String, Option<i32>)> {
     let vault = base.join("Textree");
-    std::fs::create_dir_all(&vault).map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(&vault).map_err(|e| (e.to_string(), e.raw_os_error()))?;
     if !has_markdown(&vault) {
-        atomic_write(&vault, &vault.join("welcome.md"), WELCOME_MD).map_err(|e| e.to_string())?;
+        atomic_write(&vault, &vault.join("welcome.md"), WELCOME_MD)
+            .map_err(|e| (e.to_string(), e.raw_os_error()))?;
     }
     Ok(vault)
 }
@@ -108,8 +109,8 @@ fn candidate_vault_bases(app: &AppHandle) -> Vec<PathBuf> {
 /// i.e. the Documents location was unusable and the vault landed elsewhere, which the UI surfaces
 /// so the user always knows where their notes live (data sovereignty). Errors only when *every*
 /// candidate fails — never silently no-ops into a blank app.
-fn first_creatable_vault(bases: &[PathBuf]) -> Result<(PathBuf, bool), String> {
-    let mut last_err = "no candidate base directory could be resolved".to_string();
+fn first_creatable_vault(bases: &[PathBuf]) -> Result<(PathBuf, bool), (String, Option<i32>)> {
+    let mut last_err = ("no candidate base directory could be resolved".to_string(), None);
     for (i, base) in bases.iter().enumerate() {
         match ensure_vault_at(base) {
             Ok(vault) => return Ok((vault, i > 0)),
@@ -134,13 +135,20 @@ pub struct DefaultVault {
 #[tauri::command]
 pub fn ensure_default_vault(app: AppHandle) -> Result<DefaultVault, String> {
     let bases = candidate_vault_bases(&app);
-    let (vault, fell_back) = first_creatable_vault(&bases)?;
-    if fell_back {
-        log::warn!("ensure_default_vault: preferred base unusable, fell back to {}", vault.display());
-    } else {
-        log::info!("ensure_default_vault: {}", vault.display());
+    match first_creatable_vault(&bases) {
+        Ok((vault, fell_back)) => {
+            if fell_back {
+                log::warn!("ensure_default_vault: preferred base unusable, fell back to {}", vault.display());
+            } else {
+                log::info!("ensure_default_vault: {}", vault.display());
+            }
+            Ok(DefaultVault { path: vault.display().to_string(), fell_back })
+        }
+        Err((msg, os_error_code)) => {
+            crate::telemetry::emit(crate::telemetry::event::TelemetryEvent::VaultOpenFailed { os_error_code });
+            Err(msg)
+        }
     }
-    Ok(DefaultVault { path: vault.display().to_string(), fell_back })
 }
 
 /// Builds the `.textree/<rel>` sidecar path. `rel` is confined under `.textree/`, and
@@ -1003,9 +1011,9 @@ mod onboarding_tests {
     fn errors_when_every_candidate_base_fails() {
         let (_holder, invalid) = uncreatable_base();
         let bases = vec![invalid];
-        assert!(
-            first_creatable_vault(&bases).is_err(),
-            "with no creatable base, the whole resolution must error (never silently no-op)"
-        );
+        let err = first_creatable_vault(&bases)
+            .expect_err("with no creatable base, resolution must error (never silently no-op)");
+        // The os error code is preserved (not stringified away) so telemetry can carry it.
+        assert!(err.1.is_some(), "the failing candidate's raw os error code must be captured");
     }
 }
