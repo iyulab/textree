@@ -8,12 +8,15 @@ import {
   fileToContext,
   resolveGenerationGate,
   pruneOrphanedAssistantTurn,
+  dropTrailingAssistantTurn,
   type ChatTurn,
 } from './ask.helpers';
 import type { SemanticHit } from './ipc';
 
 const hit = (path: string, score = 0.9) => ({ path, snippet: `snippet of ${path}`, score });
 const hit2 = (path: string, snippet: string): SemanticHit => ({ path, snippet, score: 1 });
+const u = (text: string): ChatTurn => ({ role: 'user', text, citations: [] });
+const a = (text: string): ChatTurn => ({ role: 'assistant', text, citations: [] });
 
 describe('ask.helpers', () => {
   it('hasUsableContext is false for empty hits', () => {
@@ -141,9 +144,6 @@ describe('resolveGenerationGate', () => {
 });
 
 describe('pruneOrphanedAssistantTurn', () => {
-  const u = (text: string): ChatTurn => ({ role: 'user', text, citations: [] });
-  const a = (text: string): ChatTurn => ({ role: 'assistant', text, citations: [] });
-
   it('drops a trailing assistant turn left orphaned by a generation error', () => {
     const turns = [u('Q1'), a('')]; // empty orphan from a failed run
     expect(pruneOrphanedAssistantTurn(turns, 'error')).toEqual([u('Q1')]);
@@ -176,5 +176,31 @@ describe('pruneOrphanedAssistantTurn', () => {
 
   it('leaves an empty conversation unchanged', () => {
     expect(pruneOrphanedAssistantTurn([], 'error')).toEqual([]);
+  });
+});
+
+describe('dropTrailingAssistantTurn', () => {
+  it('drops a trailing assistant turn regardless of status (Regenerate use case)', () => {
+    const turns = [u('Q1'), a('full answer')];
+    expect(dropTrailingAssistantTurn(turns)).toEqual([u('Q1')]);
+  });
+
+  it('drops a trailing empty assistant turn (Stop before any token arrived)', () => {
+    const turns = [u('Q1'), a('')];
+    expect(dropTrailingAssistantTurn(turns)).toEqual([u('Q1')]);
+  });
+
+  it('leaves turns unchanged when the trailing turn is a user turn', () => {
+    const turns = [u('Q1')];
+    expect(dropTrailingAssistantTurn(turns)).toEqual(turns);
+  });
+
+  it('leaves an empty conversation unchanged', () => {
+    expect(dropTrailingAssistantTurn([])).toEqual([]);
+  });
+
+  it('preserves multi-turn history before the dropped trailing turn', () => {
+    const turns = [u('Q1'), a('A1'), u('Q2'), a('A2')];
+    expect(dropTrailingAssistantTurn(turns)).toEqual([u('Q1'), a('A1'), u('Q2')]);
   });
 });
