@@ -102,7 +102,11 @@
   }
 
   function handleKeydown(e: KeyboardEvent) {
-    if (e.key === 'Enter') {
+    // Shift+Enter inserts a newline (default textarea behavior, left alone). Enter alone
+    // sends — but not while an IME composition is being confirmed (Korean/Japanese/Chinese
+    // input commonly fires a keydown Enter to confirm the composed text, not to submit).
+    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+      e.preventDefault();
       if (busy) return;
       clearRetry();
       void sendAndPoll();
@@ -117,6 +121,21 @@
   }
 
   const busy = $derived(chatStore.status === 'searching' || chatStore.status === 'generating');
+
+  // ── Input auto-grow ────────────────────────────────────────────────────────
+  // The composer textarea grows with its content up to MAX_INPUT_PX, then scrolls internally.
+  // Re-measuring on every draft change (not just user keystrokes) also shrinks it back to one
+  // row when the draft is cleared programmatically after a send.
+  let inputEl = $state<HTMLTextAreaElement | null>(null);
+  const MAX_INPUT_PX = 120;
+
+  $effect(() => {
+    void chatStore.draft;
+    const el = inputEl;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${Math.min(el.scrollHeight, MAX_INPUT_PX)}px`;
+  });
 
   // ── Scroll follow ──────────────────────────────────────────────────────────
   // Keep the transcript pinned to the newest tokens while streaming, but only when the reader
@@ -253,13 +272,15 @@
     {/if}
 
     <div class="chat-composer">
-      <input
+      <textarea
         class="chat-input"
+        bind:this={inputEl}
         bind:value={chatStore.draft}
         onkeydown={handleKeydown}
+        rows="1"
         placeholder="Ask about your notes…"
         aria-label="Question"
-      />
+      ></textarea>
       <!-- Ask ⇄ Stop: while an answer streams, the same button becomes a Stop control
            (chatStore.stop keeps the partial answer). Toggling in place keeps one focus target. -->
       <button
@@ -491,7 +512,7 @@
   }
   .chat-retry:hover { background: var(--bg-secondary-alt); }
   .chat-retry:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-  .chat-composer { display: flex; gap: var(--sp-1); flex-shrink: 0; }
+  .chat-composer { display: flex; align-items: flex-end; gap: var(--sp-1); flex-shrink: 0; }
   .chat-input {
     flex: 1;
     min-width: 0;
@@ -502,6 +523,9 @@
     background: var(--bg-primary);
     border: 1px solid var(--border-strong);
     border-radius: var(--radius-s);
+    resize: none;
+    overflow-y: auto;
+    max-height: 120px;
   }
   .chat-input:focus { outline: none; border-color: var(--accent); }
   .chat-send {
