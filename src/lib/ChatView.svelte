@@ -68,6 +68,15 @@
     scheduleRetryIfPreparing();
   }
 
+  function regenerateAnswer() {
+    clearRetry();
+    saveError = null;
+    void (async () => {
+      await chatStore.regenerate(vault);
+      scheduleRetryIfPreparing();
+    })();
+  }
+
   let saveError = $state<string | null>(null);
 
   function summarize() {
@@ -186,6 +195,10 @@
               <button class="chat-save" type="button" aria-label="Save summary to a new note"
                 disabled={busy} onclick={() => saveToNote(turn.text)}>Save to note</button>
             {/if}
+          {/if}
+          {#if turn.role === 'assistant' && i === chatStore.turns.length - 1 && chatStore.status === 'done'}
+            <button class="chat-regenerate" type="button" aria-label="Regenerate response"
+              onclick={regenerateAnswer}>Regenerate</button>
           {/if}
           {#if turn.citations.length}
             <ul class="chat-citations">
@@ -351,6 +364,18 @@
     cursor: pointer;
   }
   .chat-save:hover { background: var(--bg-secondary-alt); }
+  .chat-regenerate {
+    align-self: flex-start;
+    margin-top: var(--sp-1);
+    padding: var(--sp-1) var(--sp-2);
+    font-size: var(--font-size-smaller);
+    color: var(--text-muted);
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-s);
+    cursor: pointer;
+  }
+  .chat-regenerate:hover { background: var(--bg-secondary-alt); }
   /* Positioned wrapper so the scroll-to-latest button can float over the transcript's bottom
      edge without scrolling away with the content (the button is a sibling of, not inside, the
      overflow container). */

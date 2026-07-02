@@ -7,6 +7,7 @@ import type { DownloadSnapshot } from './modelDownload.helpers';
 import {
   buildChatMessages,
   DEFAULT_FILE_MAX_CHARS,
+  dropTrailingAssistantTurn,
   extractCitations,
   fileToContext,
   hasUsableContext,
@@ -238,6 +239,16 @@ class ChatStore {
     } catch {
       // non-fatal: re-poll below will reflect the host state.
     }
+    await this.run(vault);
+  }
+
+  /** User-triggered "try again" on the last assistant turn (Regenerate button). Unlike
+   *  retryGeneration() (error-state recovery via prepareGeneration + orphan pruning), this
+   *  always drops the trailing assistant turn unconditionally and re-runs — it applies to
+   *  'done' answers (complete or Stop-preserved), not generation failures. */
+  async regenerate(vault: string) {
+    this.turns = dropTrailingAssistantTurn(this.turns);
+    this.errorMessage = '';
     await this.run(vault);
   }
 
