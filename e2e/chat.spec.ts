@@ -258,7 +258,7 @@ test.describe("host-present: chat streams answers, keeps multi-turn history", ()
       const stopBtn = page.getByRole("button", { name: /Stop generating/i });
       await expect(stopBtn).toBeVisible({ timeout: 5 * 60_000 });
 
-      // Capture some streamed text, then stop mid-stream.
+      // Wait until some text has streamed in, then stop mid-stream.
       await expect
         .poll(
           async () =>
@@ -266,9 +266,6 @@ test.describe("host-present: chat streams answers, keeps multi-turn history", ()
           { timeout: 4 * 60_000 },
         )
         .toBeGreaterThan(5);
-      const partialLen = (
-        await panel.locator(".chat-turn.assistant .chat-bubble").innerText()
-      ).trim().length;
       await stopBtn.click();
 
       // Reverts to Ask (no longer busy), partial answer is preserved, and nothing errors.
@@ -280,7 +277,14 @@ test.describe("host-present: chat streams answers, keeps multi-turn history", ()
         await panel.locator(".chat-turn.assistant .chat-bubble").innerText()
       ).trim().length;
       expect(afterLen).toBeGreaterThan(0);
-      expect(afterLen).toBeGreaterThanOrEqual(partialLen);
+      // After Stop the answer is frozen — no more tokens arrive. Assert the rendered text is stable
+      // (representation-agnostic: raw partial length vs rendered length are not comparable now that
+      // completed answers render markdown).
+      const settled = (await panel.locator(".chat-turn.assistant .chat-bubble").innerText()).trim();
+      await page.waitForTimeout(1000);
+      const settledAgain = (await panel.locator(".chat-turn.assistant .chat-bubble").innerText()).trim();
+      expect(settledAgain).toBe(settled);
+      expect(settledAgain.length).toBeGreaterThan(0);
     } finally {
       await clearAiConsent(page);
       removeTempVault(vault);
