@@ -7,6 +7,8 @@
   import { formatModelDownload } from './modelDownload.helpers';
   import { friendlyError } from './friendlyError.helpers';
   import Icon from './Icon.svelte';
+  import ChatMarkdown from './ChatMarkdown.svelte';
+  import { parseChatMarkdown } from './chatMarkdown.helpers';
 
   let {
     vault,
@@ -161,13 +163,22 @@
     <div class="chat-scroll-wrap">
     <div class="chat-turns" bind:this={turnsEl} onscroll={updateAtBottom}>
       {#each chatStore.turns as turn, i (i)}
+        <!-- The last assistant turn is "streaming" while busy: keep it raw text inside a polite
+             live region so tokens are announced naturally and partial markdown does not flicker.
+             Completed assistant turns render as markdown and carry no live region (already
+             announced, so swapping to rendered nodes does not re-announce). -->
+        {@const streaming = turn.role === 'assistant' && i === chatStore.turns.length - 1 && busy}
         <div class="chat-turn {turn.role}">
           <span class="chat-speaker">{turn.role === 'user' ? 'You' : 'Assistant'}:</span>
           <!-- Live region scoped to the assistant bubble only: a polite region on the whole
                transcript re-announces every prior turn on each streamed token. Static turns are
                already in the DOM (not re-announced); only the streaming bubble's appended tokens
                speak. User turns carry no live region. -->
-          <div class="chat-bubble" aria-live={turn.role === 'assistant' ? 'polite' : undefined}>{turn.text}</div>
+          {#if turn.role === 'assistant' && !streaming && turn.text}
+            <div class="chat-bubble"><ChatMarkdown blocks={parseChatMarkdown(turn.text)} /></div>
+          {:else}
+            <div class="chat-bubble" aria-live={streaming ? 'polite' : undefined}>{turn.text}</div>
+          {/if}
           {#if turn.role === 'assistant' && turn.text}
             <button class="chat-copy" type="button" aria-label="Copy message"
               onclick={() => navigator.clipboard.writeText(turn.text).catch(() => {})}>Copy</button>
