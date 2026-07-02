@@ -402,6 +402,56 @@ test.describe("host-present: chat streams answers, keeps multi-turn history", ()
     }
   });
 
+  test("Shift+Enter inserts a newline in the composer; Enter alone sends", async () => {
+    test.setTimeout(6 * 60_000);
+    const vault = createTempVault(ASK_VAULT_FILES);
+    try {
+      await loadVault(page, vault);
+      await expect(page.getByRole("treeitem", { name: /photosynthesis/i })).toBeVisible({
+        timeout: 10_000,
+      });
+      await setGenerationConsent(page, true);
+      await page.getByRole("treeitem", { name: /photosynthesis/i }).click();
+      await expect(page.locator(".cm-content")).toBeVisible({ timeout: 5_000 });
+
+      await enterChatMode(page);
+      const panel = page.locator('section[aria-label="Chat about your notes"]');
+      const input = panel.getByRole("textbox", { name: /question/i });
+      await expect(input).toBeVisible({ timeout: 5_000 });
+
+      const singleRowHeight = await input.evaluate((el) => el.getBoundingClientRect().height);
+
+      await input.click();
+      await input.type("What is glucose?");
+      await input.press("Shift+Enter");
+      await input.type("Please be brief.");
+
+      // Still composing — nothing sent yet, newline preserved in the draft, and the box grew.
+      await expect(panel.locator(".chat-turn.user")).toHaveCount(0);
+      expect(await input.inputValue()).toBe("What is glucose?\nPlease be brief.");
+      const grownHeight = await input.evaluate((el) => el.getBoundingClientRect().height);
+      expect(grownHeight).toBeGreaterThan(singleRowHeight);
+
+      await input.press("Enter");
+
+      // Enter (no Shift) sends: a user turn appears with both lines, assistant streams.
+      await expect(panel.locator(".chat-turn.user")).toHaveCount(1);
+      await expect
+        .poll(
+          async () =>
+            (await panel.locator(".chat-turn.assistant .chat-bubble").innerText()).trim().length,
+          { timeout: 4 * 60_000 },
+        )
+        .toBeGreaterThan(5);
+      await expect(page.getByRole("button", { name: /Send question/i })).toBeVisible({
+        timeout: 4 * 60_000,
+      });
+    } finally {
+      await clearAiConsent(page);
+      removeTempVault(vault);
+    }
+  });
+
   test("streaming answer stays pinned to the bottom; scroll-up reveals the jump button", async () => {
     test.setTimeout(6 * 60_000);
     const vault = createTempVault(ASK_VAULT_FILES);
