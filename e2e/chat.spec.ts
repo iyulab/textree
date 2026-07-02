@@ -291,6 +291,117 @@ test.describe("host-present: chat streams answers, keeps multi-turn history", ()
     }
   });
 
+  test("Regenerate discards the last answer and streams a fresh one in its place", async () => {
+    test.setTimeout(6 * 60_000);
+    const vault = createTempVault(ASK_VAULT_FILES);
+    try {
+      await loadVault(page, vault);
+      await expect(page.getByRole("treeitem", { name: /photosynthesis/i })).toBeVisible({
+        timeout: 10_000,
+      });
+      await setGenerationConsent(page, true);
+      await page.getByRole("treeitem", { name: /photosynthesis/i }).click();
+      await expect(page.locator(".cm-content")).toBeVisible({ timeout: 5_000 });
+
+      await enterChatMode(page);
+      const panel = page.locator('section[aria-label="Chat about your notes"]');
+      const input = panel.getByRole("textbox", { name: /question/i });
+      await expect(input).toBeVisible({ timeout: 5_000 });
+
+      await input.fill("What is glucose?");
+      await page.getByRole("button", { name: /Send question/i }).click();
+      await expect
+        .poll(
+          async () =>
+            (await panel.locator(".chat-turn.assistant .chat-bubble").innerText()).trim().length,
+          { timeout: 4 * 60_000 },
+        )
+        .toBeGreaterThan(10);
+      await expect(page.getByRole("button", { name: /Send question/i })).toBeVisible({
+        timeout: 4 * 60_000,
+      });
+
+      const regenBtn = page.getByRole("button", { name: /Regenerate response/i });
+      await expect(regenBtn).toBeVisible({ timeout: 5_000 });
+      const turnCountBefore = await panel.locator(".chat-turn").count();
+
+      await regenBtn.click();
+
+      // A fresh generation starts: the send control toggles to Stop and Regenerate hides
+      // while busy (status leaves 'done').
+      await expect(page.getByRole("button", { name: /Stop generating/i })).toBeVisible({
+        timeout: 5_000,
+      });
+      await expect(regenBtn).toBeHidden();
+
+      await expect(page.getByRole("button", { name: /Send question/i })).toBeVisible({
+        timeout: 4 * 60_000,
+      });
+      // The assistant turn was replaced in place, not appended — turn count unchanged.
+      expect(await panel.locator(".chat-turn").count()).toBe(turnCountBefore);
+      const finalLen = (
+        await panel.locator(".chat-turn.assistant .chat-bubble").innerText()
+      ).trim().length;
+      expect(finalLen).toBeGreaterThan(10);
+      await expect(page.locator('[role="alert"]')).toHaveCount(0);
+    } finally {
+      await clearAiConsent(page);
+      removeTempVault(vault);
+    }
+  });
+
+  test("Regenerate after Stop starts a fresh full answer", async () => {
+    test.setTimeout(6 * 60_000);
+    const vault = createTempVault(ASK_VAULT_FILES);
+    try {
+      await loadVault(page, vault);
+      await expect(page.getByRole("treeitem", { name: /photosynthesis/i })).toBeVisible({
+        timeout: 10_000,
+      });
+      await setGenerationConsent(page, true);
+      await page.getByRole("treeitem", { name: /photosynthesis/i }).click();
+      await expect(page.locator(".cm-content")).toBeVisible({ timeout: 5_000 });
+
+      await enterChatMode(page);
+      const panel = page.locator('section[aria-label="Chat about your notes"]');
+      const input = panel.getByRole("textbox", { name: /question/i });
+      await expect(input).toBeVisible({ timeout: 5_000 });
+
+      await input.fill("Explain photosynthesis in detail, step by step, at length.");
+      await page.getByRole("button", { name: /Send question/i }).click();
+
+      const stopBtn = page.getByRole("button", { name: /Stop generating/i });
+      await expect(stopBtn).toBeVisible({ timeout: 5 * 60_000 });
+      await expect
+        .poll(
+          async () =>
+            (await panel.locator(".chat-turn.assistant .chat-bubble").innerText()).trim().length,
+          { timeout: 4 * 60_000 },
+        )
+        .toBeGreaterThan(5);
+      await stopBtn.click();
+
+      const regenBtn = page.getByRole("button", { name: /Regenerate response/i });
+      await expect(regenBtn).toBeVisible({ timeout: 5_000 });
+      await regenBtn.click();
+
+      await expect(page.getByRole("button", { name: /Stop generating/i })).toBeVisible({
+        timeout: 5_000,
+      });
+      await expect(page.getByRole("button", { name: /Send question/i })).toBeVisible({
+        timeout: 4 * 60_000,
+      });
+      const finalLen = (
+        await panel.locator(".chat-turn.assistant .chat-bubble").innerText()
+      ).trim().length;
+      expect(finalLen).toBeGreaterThan(10);
+      await expect(page.locator('[role="alert"]')).toHaveCount(0);
+    } finally {
+      await clearAiConsent(page);
+      removeTempVault(vault);
+    }
+  });
+
   test("streaming answer stays pinned to the bottom; scroll-up reveals the jump button", async () => {
     test.setTimeout(6 * 60_000);
     const vault = createTempVault(ASK_VAULT_FILES);
