@@ -33,7 +33,7 @@ export type MdBlock =
 /** Marker/structural nodes skipped when reconstructing inline content (their glyphs are not shown). */
 const INLINE_MARK = new Set([
   'HeaderMark', 'EmphasisMark', 'CodeMark', 'LinkMark', 'QuoteMark',
-  'ListMark', 'StrikethroughMark', 'URL', 'LinkTitle',
+  'ListMark', 'StrikethroughMark', 'LinkTitle',
 ]);
 
 /**

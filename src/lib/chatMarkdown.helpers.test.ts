@@ -110,4 +110,25 @@ describe('parseChatMarkdown', () => {
   it('returns an empty array for empty input', () => {
     expect(parseChatMarkdown('')).toEqual([]);
   });
+
+  it('preserves a bare URL as literal text (GFM autolink)', () => {
+    expect(parseChatMarkdown('see https://x.com ok')).toEqual([
+      { type: 'paragraph', children: [{ type: 'text', value: 'see https://x.com ok' }] },
+    ]);
+  });
+
+  it('preserves a bare email as literal text', () => {
+    expect(parseChatMarkdown('email a@b.com')).toEqual([
+      { type: 'paragraph', children: [{ type: 'text', value: 'email a@b.com' }] },
+    ]);
+  });
+
+  it('still renders an inline [label](url) link with label only, href preserved', () => {
+    expect(parseChatMarkdown('[docs](https://x.com) yo')).toEqual([
+      { type: 'paragraph', children: [
+        { type: 'link', href: 'https://x.com', children: [{ type: 'text', value: 'docs' }] },
+        { type: 'text', value: ' yo' },
+      ] },
+    ]);
+  });
 });
