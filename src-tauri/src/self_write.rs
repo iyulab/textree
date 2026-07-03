@@ -51,8 +51,7 @@ impl SelfWrites {
     /// recorded self-write, consumes (removes) the entry and returns `true`.
     ///
     /// Since it is consumed once, an external change right after a self-write is not masked.
-    // The consumer (watcher) is added in M3. Until then, unused in non-test builds.
-    #[allow(dead_code)]
+    /// The consumer is `watcher::to_fs_change`, which calls this on every create/modify event.
     pub fn take_if_matches(&self, path: &Path, current: &str) -> bool {
         let mut map = self.inner.lock().unwrap();
         if map.get(path) == Some(&content_hash(current)) {
