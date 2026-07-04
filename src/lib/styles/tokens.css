@@ -109,6 +109,15 @@
 
   --shadow-s: 0 1px 2px rgba(0, 0, 0, 0.08);
   --shadow-m: 0 2px 8px rgba(0, 0, 0, 0.12);
+
+  /* Syntax highlighting (fenced code) — github-light-inspired, tuned for the app. */
+  --syntax-keyword: #cf222e;
+  --syntax-string: #0a3069;
+  --syntax-comment: #6e7781;
+  --syntax-number: #0550ae;
+  --syntax-name: #8250df;
+  --syntax-type: #953800;
+  --syntax-punctuation: #57606a;
 }
 
 [data-theme="dark"] {
@@ -143,6 +152,15 @@
 
   --shadow-s: 0 1px 2px rgba(0, 0, 0, 0.3);
   --shadow-m: 0 2px 10px rgba(0, 0, 0, 0.45);
+
+  /* Syntax highlighting (fenced code) — github-dark-inspired. */
+  --syntax-keyword: #ff7b72;
+  --syntax-string: #a5d6ff;
+  --syntax-comment: #8b949e;
+  --syntax-number: #79c0ff;
+  --syntax-name: #d2a8ff;
+  --syntax-type: #ffa657;
+  --syntax-punctuation: #8b949e;
 }
 
 /* A plain CSS file (global import), so selectors are global as written — a :global() wrapper is
