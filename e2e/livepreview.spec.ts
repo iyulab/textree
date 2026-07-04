@@ -134,3 +134,24 @@ test("language-less fence is not syntax-highlighted (fallback)", async () => {
     removeTempVault(vault);
   }
 });
+
+// Regression: a ```md fence must NOT get live-preview decorations (markers stay raw, no bold styling).
+// Guards the IterMode.IgnoreMounts fix — nested markdown grammar mounts must not leak into the editor.
+const MD_FENCE = "본문\n```md\n**bold** and # heading\n```\n";
+
+test("markdown fence keeps raw markers (no live-preview leak)", async () => {
+  const vault = createTempVault({ "mdfence.md": MD_FENCE });
+  try {
+    await loadVault(page, vault);
+    await page.getByRole("treeitem", { name: /mdfence/ }).click();
+    const codeLine = page.locator(".cm-content .cm-line", { hasText: "bold" });
+    await expect(codeLine).toBeVisible();
+    // Inside the fence the markers stay literal (not hidden as they would be in prose)...
+    await expect(codeLine).toContainText("**bold**");
+    await expect(codeLine).toContainText("# heading");
+    // ...and no live-preview bold decoration leaks in.
+    expect(await codeLine.locator(".cm-lp-strong").count()).toBe(0);
+  } finally {
+    removeTempVault(vault);
+  }
+});

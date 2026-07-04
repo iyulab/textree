@@ -14,6 +14,7 @@
  */
 
 import { syntaxTree } from "@codemirror/language";
+import { IterMode } from "@lezer/common";
 import { Facet, StateField, type EditorState, type Range } from "@codemirror/state";
 import {
   Decoration,
@@ -319,6 +320,12 @@ function buildDecorations(view: EditorView): DecorationSet {
     syntaxTree(state).iterate({
       from,
       to,
+      // Ignore mounted sub-grammars: with `codeLanguages` wired, a ```md fence mounts a nested
+      // markdown grammar whose inner Emphasis/HeaderMark/… would otherwise be styled/hidden as prose
+      // inside the code block. The fence's own base nodes (CodeMark/CodeInfo) are unmounted and still
+      // enumerate, so fence-marker behavior is unchanged. Code coloring comes from syntaxHighlighting,
+      // which reads mounts on its own pass.
+      mode: IterMode.IgnoreMounts,
       enter: (node) => {
         // Skip nodes inside the folded frontmatter block — the block-replace decoration owns that range.
         if (fmFolded && node.from < bodyStart) return;
