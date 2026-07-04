@@ -120,6 +120,8 @@ test("language-less fence is not syntax-highlighted (fallback)", async () => {
   try {
     await loadVault(page, vault);
     await page.getByRole("treeitem", { name: /plain/ }).click();
+    const codeLine = page.locator(".cm-content .cm-line", { hasText: "const x = 42" });
+    await expect(codeLine).toBeVisible();
     const colorCount = await page.evaluate(() => {
       const line = [...document.querySelectorAll(".cm-content .cm-line")].find((l) =>
         l.textContent?.includes("const x = 42"),
