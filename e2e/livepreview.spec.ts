@@ -80,3 +80,55 @@ test("line with cursor exposes markers (source)", async () => {
     removeTempVault(vault);
   }
 });
+
+// A ```js fence lazy-loads its grammar; highlighted tokens carry >1 distinct color.
+const CODE = "본문\n```js\nconst x = 42; // hi\n```\n";
+
+test("fenced code block gets language syntax highlighting", async () => {
+  const vault = createTempVault({ "code.md": CODE });
+  try {
+    await loadVault(page, vault);
+    await page.getByRole("treeitem", { name: /code/ }).click();
+    // The js grammar imports asynchronously on first use; poll until the code line
+    // shows more than one token color (proof of highlighting), robust to CM class churn.
+    await expect
+      .poll(
+        async () =>
+          page.evaluate(() => {
+            const line = [...document.querySelectorAll(".cm-content .cm-line")].find((l) =>
+              l.textContent?.includes("const x = 42"),
+            );
+            if (!line) return 0;
+            const colors = new Set(
+              [...line.querySelectorAll("span")].map((s) => getComputedStyle(s).color),
+            );
+            return colors.size;
+          }),
+        { timeout: 5000 },
+      )
+      .toBeGreaterThan(1);
+  } finally {
+    removeTempVault(vault);
+  }
+});
+
+// A fence with no language has no nested grammar -> no per-token colors (fallback).
+const PLAIN_FENCE = "본문\n```\nconst x = 42;\n```\n";
+
+test("language-less fence is not syntax-highlighted (fallback)", async () => {
+  const vault = createTempVault({ "plain.md": PLAIN_FENCE });
+  try {
+    await loadVault(page, vault);
+    await page.getByRole("treeitem", { name: /plain/ }).click();
+    const colorCount = await page.evaluate(() => {
+      const line = [...document.querySelectorAll(".cm-content .cm-line")].find((l) =>
+        l.textContent?.includes("const x = 42"),
+      );
+      if (!line) return 0;
+      return new Set([...line.querySelectorAll("span")].map((s) => getComputedStyle(s).color)).size;
+    });
+    expect(colorCount).toBeLessThanOrEqual(1);
+  } finally {
+    removeTempVault(vault);
+  }
+});
