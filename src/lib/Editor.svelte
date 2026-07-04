@@ -5,6 +5,7 @@
   import { markdown } from "@codemirror/lang-markdown";
   import { GFM } from "@lezer/markdown";
   import { livePreview, readingMode, wikiResolver } from "./livePreview";
+  import { codeHighlighting, codeLanguages } from "./codeHighlight";
   import { parseFrontmatter } from "./frontmatter.helpers";
   import { detectLineEnding, normalizeLineEndings } from "./eol.helpers";
   import { buildWikiResolver, findHeadingOffset } from "./wikilink.helpers";
@@ -209,8 +210,9 @@
         keymap.of([...defaultKeymap, ...historyKeymap]),
         // Enable GFM extensions (strikethrough, tables, task lists, autolink) so live preview
         // recognizes ~~strikethrough~~, - [ ] checkboxes, etc.
-        markdown({ extensions: GFM }),
+        markdown({ extensions: GFM, codeLanguages }),
         livePreview,
+        codeHighlighting,
         textreeTheme,
         EditorView.lineWrapping,
         modeConf.of(modeExtensions(ed, rd)),
