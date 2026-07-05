@@ -51,12 +51,36 @@ test("cursor on the inline line reveals raw $..$ source", async () => {
   try {
     await loadVault(page, vault);
     await page.getByRole("treeitem", { name: /math/ }).click();
-    await expect(page.locator(".cm-lp-math-inline .katex")).toBeVisible();
-    // Click the rendered inline math -> its line becomes active -> raw `$E=mc^2$` returns.
-    await page.locator(".cm-lp-math-inline").click();
+    const widget = page.locator(".cm-lp-math-inline");
+    await expect(widget.locator(".katex")).toBeVisible();
+    // A real click on the rendered math -> the widget's mousedown handler places the cursor at its
+    // position -> the line becomes active -> raw `$E=mc^2$` returns (click-to-edit affordance). We
+    // issue a real mouse-down/up/click at the widget's visual center via page.mouse (the widget
+    // overlaps the `.cm-line`, so the high-level locator click is refused as "intercepted").
+    const box = await widget.boundingBox();
+    if (!box) throw new Error("inline math widget has no bounding box");
+    await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
     const line = page.locator(".cm-content .cm-line", { hasText: "inline" });
     await expect(line).toContainText("$E=mc^2$");
     expect(await line.locator(".cm-lp-math-inline").count()).toBe(0);
+  } finally {
+    removeTempVault(vault);
+  }
+});
+
+test("clicking a display block reveals its raw $$..$$ source", async () => {
+  const vault = createTempVault({ "math.md": NOTE });
+  try {
+    await loadVault(page, vault);
+    await page.getByRole("treeitem", { name: /math/ }).click();
+    const block = page.locator(".cm-lp-math-block");
+    await expect(block.locator(".katex-display")).toBeVisible();
+    // A real click on the rendered block places the cursor inside it, revealing the raw LaTeX lines.
+    const box = await block.boundingBox();
+    if (!box) throw new Error("display math block has no bounding box");
+    await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+    await expect(page.locator(".cm-content .cm-line", { hasText: "int_0" })).toBeVisible();
+    expect(await page.locator(".cm-lp-math-block").count()).toBe(0);
   } finally {
     removeTempVault(vault);
   }

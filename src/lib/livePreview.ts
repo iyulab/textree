@@ -178,14 +178,22 @@ class MathInlineWidget extends WidgetType {
   eq(other: MathInlineWidget) {
     return other.body === this.body;
   }
-  toDOM(): HTMLElement {
+  toDOM(view: EditorView): HTMLElement {
     const el = document.createElement("span");
     el.className = "cm-lp-math-inline";
     el.innerHTML = renderMath(this.body, false);
+    // Click the rendered math to edit it: place the cursor at the widget's position so the line
+    // becomes active and the raw `$..$` source is revealed (same affordance as the frontmatter pill).
+    el.addEventListener("mousedown", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      view.dispatch({ selection: { anchor: view.posAtDOM(el) } });
+      view.focus();
+    });
     return el;
   }
   ignoreEvent() {
-    return false;
+    return true;
   }
 }
 
@@ -201,14 +209,21 @@ class MathBlockWidget extends WidgetType {
   eq(other: MathBlockWidget) {
     return other.body === this.body;
   }
-  toDOM(): HTMLElement {
+  toDOM(view: EditorView): HTMLElement {
     const el = document.createElement("div");
     el.className = "cm-lp-math-block";
     el.innerHTML = renderMath(this.body, true);
+    // Click the rendered block to edit it: place the cursor inside the block so it reveals raw source.
+    el.addEventListener("mousedown", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      view.dispatch({ selection: { anchor: view.posAtDOM(el) } });
+      view.focus();
+    });
     return el;
   }
   ignoreEvent() {
-    return false;
+    return true;
   }
 }
 
