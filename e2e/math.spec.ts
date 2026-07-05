@@ -139,3 +139,23 @@ test("wikilink containing $..$ renders as a wikilink, not math (no overlap/crash
     removeTempVault(vault);
   }
 });
+
+// Regression: `$$..$$` inside a fenced code block is code, not math — it must stay raw (matches the
+// published site, where remark-math never processes math inside code). Guards the display-block
+// code-range exclusion.
+const FENCED_MATH = "before\n```\n$$\nx\n$$\n```\nafter\n";
+
+test("display $$..$$ inside a code fence stays raw (not rendered as math)", async () => {
+  const vault = createTempVault({ "fence.md": FENCED_MATH });
+  try {
+    await loadVault(page, vault);
+    await page.getByRole("treeitem", { name: /fence/ }).click();
+    await expect(page.locator(".cm-content")).toContainText("after");
+    // No display-math widget was produced for the `$$` lines inside the fence...
+    expect(await page.locator(".cm-lp-math-block").count()).toBe(0);
+    // ...and the raw `$$` delimiters remain visible in the code.
+    await expect(page.locator(".cm-content .cm-line", { hasText: "$$" }).first()).toBeVisible();
+  } finally {
+    removeTempVault(vault);
+  }
+});

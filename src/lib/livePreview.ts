@@ -298,9 +298,20 @@ function computeMathBlockDeco(state: EditorState): DecorationSet {
   const bodyStart = frontmatterBodyStart(state);
   const blocks = displayMathBlocks(state.doc.toString());
   if (!blocks.length) return Decoration.none;
+  // Code fences/blocks/spans are not math: `$$` inside them must stay raw (mirrors the inline path's
+  // codeRanges gate and the published site, where remark-math never processes math inside code). The
+  // tree is read whole-document (note-sized); a not-yet-parsed tail just leaves a block briefly raw.
+  const codeRanges: [number, number][] = [];
+  syntaxTree(state).iterate({
+    enter: (node) => {
+      if (node.name === "InlineCode" || node.name === "FencedCode" || node.name === "CodeBlock")
+        codeRanges.push([node.from, node.to]);
+    },
+  });
   const ranges: Range<Decoration>[] = [];
   for (const b of blocks) {
     if (b.from < bodyStart) continue; // inside the leading frontmatter block (owned by frontmatterField)
+    if (codeRanges.some(([cf, ct]) => b.from >= cf && b.from < ct)) continue; // inside code — not math
     const startLine = state.doc.lineAt(b.from);
     const endLine = state.doc.lineAt(b.to);
     // Standalone display block: nothing but whitespace before the opening / after the closing $$.
