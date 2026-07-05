@@ -1,0 +1,151 @@
+{
+  "version": 1,
+  "note": "Shared golden spec for math tokenization parity between the published renderer and conservative line-based editor scanners. Byte-identical copies live in each consumer repo; bump `version` and update every copy together when semantics change. `published` and `editor` list the ordered math renderings for the input (empty = the source stays literal text; kinds: display | inline | error). Cases where the columns differ are known, deliberate divergences — changing either column is a semantic change that must be conscious. `editorGate` marks cases the editor rejects via a non-scanner gate (e.g. code spans), so scanner-only harnesses skip the editor assertion.",
+  "cases": [
+    {
+      "name": "inline-basic",
+      "markdown": "Inline $E=mc^2$ here",
+      "published": ["inline"],
+      "editor": ["inline"]
+    },
+    {
+      "name": "standalone-display",
+      "markdown": "$$x+y$$",
+      "published": ["display"],
+      "editor": ["display"]
+    },
+    {
+      "name": "standalone-display-between-paragraphs",
+      "markdown": "before\n\n$$x+y$$\n\nafter",
+      "published": ["display"],
+      "editor": ["display"]
+    },
+    {
+      "name": "fenced-display",
+      "markdown": "$$\nx+y\n$$",
+      "published": ["display"],
+      "editor": ["display"]
+    },
+    {
+      "name": "padded-display",
+      "markdown": "$$ x+y $$",
+      "published": ["display"],
+      "editor": ["display"]
+    },
+    {
+      "name": "two-display-lines-one-paragraph",
+      "markdown": "$$x$$\n$$y$$",
+      "published": ["display", "display"],
+      "editor": ["display", "display"]
+    },
+    {
+      "name": "list-item-own-paragraph-display",
+      "markdown": "- item\n\n  $$x$$",
+      "published": ["display"],
+      "editor": ["display"]
+    },
+    {
+      "name": "empty-display",
+      "markdown": "$$$$",
+      "published": ["display"],
+      "editor": ["display"]
+    },
+    {
+      "name": "currency",
+      "markdown": "costs $5 and $10 total",
+      "published": [],
+      "editor": []
+    },
+    {
+      "name": "space-after-opening",
+      "markdown": "a $ x$ b",
+      "published": [],
+      "editor": []
+    },
+    {
+      "name": "space-before-closing",
+      "markdown": "a $x $ b",
+      "published": [],
+      "editor": []
+    },
+    {
+      "name": "digit-after-closing",
+      "markdown": "a $x$5 b",
+      "published": [],
+      "editor": []
+    },
+    {
+      "name": "space-then-digit-after-closing",
+      "markdown": "pay $x$ 5",
+      "published": ["inline"],
+      "editor": ["inline"]
+    },
+    {
+      "name": "escaped-dollar",
+      "markdown": "a \\$x$ b",
+      "published": [],
+      "editor": []
+    },
+    {
+      "name": "even-backslash-run",
+      "markdown": "a \\\\$x$ b",
+      "published": ["inline"],
+      "editor": ["inline"]
+    },
+    {
+      "name": "code-span",
+      "markdown": "a `$x$` b",
+      "published": [],
+      "editor": [],
+      "editorGate": "code"
+    },
+    {
+      "name": "unterminated-inline",
+      "markdown": "a $x b",
+      "published": [],
+      "editor": []
+    },
+    {
+      "name": "mid-paragraph-double-dollar",
+      "markdown": "text $$x+y$$ more",
+      "published": ["inline"],
+      "editor": [],
+      "note": "known divergence: the renderer keeps remark-math's inline reading; the editor leaves a $$..$$ raw unless it owns its lines"
+    },
+    {
+      "name": "own-line-inside-paragraph",
+      "markdown": "text\n$$x+y$$\nmore",
+      "published": ["inline"],
+      "editor": ["display"],
+      "note": "known divergence: promotion only rewrites whole paragraphs; the editor's line scanner renders any standalone $$..$$ line"
+    },
+    {
+      "name": "blockquote-display",
+      "markdown": "> $$x+y$$",
+      "published": ["inline"],
+      "editor": [],
+      "note": "known divergence: the blockquote marker keeps the line from being standalone for the editor; the renderer keeps the inline reading"
+    },
+    {
+      "name": "unterminated-display",
+      "markdown": "$$x",
+      "published": ["display"],
+      "editor": [],
+      "note": "known divergence: remark-math's flow form treats `$$x` as an unterminated fence and emits an empty display block; the editor keeps unterminated $$ raw"
+    },
+    {
+      "name": "unfenced-multiline-display",
+      "markdown": "$$a\nb$$",
+      "published": ["error"],
+      "editor": ["display"],
+      "note": "known divergence: remark-math's flow form eats `$$a` as a fence opening and garbles the rest; prefer the fenced $$\\n..\\n$$ shape"
+    },
+    {
+      "name": "multiline-inline",
+      "markdown": "a $x\ny$ b",
+      "published": ["inline"],
+      "editor": [],
+      "note": "known divergence: remark-math allows single-$ spans across a soft break; the editor's inline scanner is single-line"
+    }
+  ]
+}
