@@ -221,5 +221,6 @@ export function parseTable(
     offset += line.length + 1;
   }
 
-  return { header, align, rows, key: `${text} ${resolutionLog.join("")}` };
+  // NUL-separated so adjacent resolution entries cannot concatenate into a colliding key.
+  return { header, align, rows, key: `${text} ${resolutionLog.join("\u0000")}` };
 }
