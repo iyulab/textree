@@ -320,25 +320,6 @@ function buildDecorations(view: EditorView): DecorationSet {
   const inDisplayBlock = (pos: number): boolean =>
     displayBlocks.some((b) => pos >= b.from && pos < b.to);
 
-  // Inline math spans -> rendered on inactive lines. Excluded on the cursor line, inside code,
-  // inside folded frontmatter, or inside a display block (same policy as wikilinks).
-  const mathSpans: { from: number; to: number; body: string }[] = [];
-  for (const { from, to } of view.visibleRanges) {
-    const text = state.doc.sliceString(from, to);
-    const isExcluded = (sFrom: number): boolean => {
-      const absFrom = from + sFrom;
-      if (fmFolded && absFrom < bodyStart) return true;
-      if (active.has(state.doc.lineAt(absFrom).number)) return true;
-      for (const [cf, ct] of codeRanges) if (absFrom >= cf && absFrom < ct) return true;
-      return inDisplayBlock(absFrom);
-    };
-    for (const s of inlineMathSpans(text, isExcluded)) {
-      mathSpans.push({ from: from + s.from, to: from + s.to, body: s.body });
-    }
-  }
-  const insideMath = (pos: number): boolean =>
-    mathSpans.some((m) => pos >= m.from && pos < m.to);
-
   // Decide which wikilinks render as widgets, resolved against the live tree. On the cursor's line,
   // inside code, or within folded frontmatter the raw source is kept instead. Computed before the
   // main pass so markdown *inside* a rendered link is left undecorated — its marker-hide replaces
@@ -364,6 +345,30 @@ function buildDecorations(view: EditorView): DecorationSet {
   }
   // True when a position sits inside a rendered wikilink — its inner markdown is not decorated.
   const insideWiki = (pos: number): boolean => wikiSpans.some((w) => pos >= w.from && pos < w.to);
+
+  // Inline math spans -> rendered on inactive lines. Excluded on the cursor line, inside code,
+  // inside folded frontmatter, or inside a display block (same policy as wikilinks).
+  const mathSpans: { from: number; to: number; body: string }[] = [];
+  for (const { from, to } of view.visibleRanges) {
+    const text = state.doc.sliceString(from, to);
+    const isExcluded = (sFrom: number): boolean => {
+      const absFrom = from + sFrom;
+      if (fmFolded && absFrom < bodyStart) return true;
+      if (active.has(state.doc.lineAt(absFrom).number)) return true;
+      for (const [cf, ct] of codeRanges) if (absFrom >= cf && absFrom < ct) return true;
+      return inDisplayBlock(absFrom);
+    };
+    for (const s of inlineMathSpans(text, isExcluded)) {
+      const mf = from + s.from;
+      const mt = from + s.to;
+      // Wiki takes precedence: a `$` inside a [[...]] is part of the link, not math. Skipping
+      // overlapping math spans keeps the two replace-widget sets non-overlapping (RangeSet integrity).
+      if (wikiSpans.some((w) => mf < w.to && w.from < mt)) continue;
+      mathSpans.push({ from: mf, to: mt, body: s.body });
+    }
+  }
+  const insideMath = (pos: number): boolean =>
+    mathSpans.some((m) => pos >= m.from && pos < m.to);
 
   for (const { from, to } of view.visibleRanges) {
     syntaxTree(state).iterate({
