@@ -605,6 +605,18 @@ function buildDecorations(view: EditorView): DecorationSet {
   const inDisplayBlock = (pos: number): boolean =>
     displayBlocks.some((b) => pos >= b.from && pos < b.to);
 
+  // Rendered-table ranges — read from tableBlockField's decoration set (the single source of the
+  // skip decisions) rather than recomputing. The table widget owns those ranges: the wiki/math
+  // scans and the main markdown pass must not decorate inside them (overlapping replace
+  // decorations break the RangeSet). While the cursor is inside a table (raw reveal) the field
+  // emits no decoration there, so line-level rendering keeps working in the raw source.
+  const tableExclude: [number, number][] = [];
+  state.field(tableBlockField).between(0, state.doc.length, (from, to) => {
+    tableExclude.push([from, to]);
+  });
+  const inRenderedTable = (pos: number): boolean =>
+    tableExclude.some(([f, t]) => pos >= f && pos < t);
+
   // Decide which wikilinks render as widgets, resolved against the live tree. On the cursor's line,
   // inside code, or within folded frontmatter the raw source is kept instead. Computed before the
   // main pass so markdown *inside* a rendered link is left undecorated — its marker-hide replaces
@@ -619,6 +631,7 @@ function buildDecorations(view: EditorView): DecorationSet {
       if (active.has(state.doc.lineAt(absFrom).number)) return true;
       for (const [cf, ct] of codeRanges) if (absFrom >= cf && absFrom < ct) return true;
       if (inDisplayBlock(absFrom)) return true;
+      if (inRenderedTable(absFrom)) return true;
       return false;
     };
     for (const span of wikiRenderSpans(text, resolve, isExcluded)) {
@@ -642,7 +655,7 @@ function buildDecorations(view: EditorView): DecorationSet {
       if (fmFolded && absFrom < bodyStart) return true;
       if (active.has(state.doc.lineAt(absFrom).number)) return true;
       for (const [cf, ct] of codeRanges) if (absFrom >= cf && absFrom < ct) return true;
-      return inDisplayBlock(absFrom);
+      return inDisplayBlock(absFrom) || inRenderedTable(absFrom);
     };
     for (const s of inlineMathSpans(text, isExcluded)) {
       const mf = from + s.from;
@@ -673,6 +686,8 @@ function buildDecorations(view: EditorView): DecorationSet {
         if (insideWiki(node.from)) return;
         // Skip nodes inside rendered math — the math widget owns that range (inline or display block).
         if (insideMath(node.from) || inDisplayBlock(node.from)) return;
+        // Skip nodes inside a rendered table — the table widget owns that range.
+        if (inRenderedTable(node.from)) return;
         const name = node.name;
 
         // Heading: size decoration over the whole line (size is kept even on the cursor line — same as Obsidian).
