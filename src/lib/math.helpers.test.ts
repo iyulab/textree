@@ -48,6 +48,26 @@ describe("inlineMathSpans", () => {
     expect(inlineMathSpans("cost \\$5 only", none)).toEqual([]);
   });
 
+  // Backslash-run parity (probed against canopy's remark-math pipeline 2026-07-05):
+  // a run of N backslashes escapes the delimiter iff N is odd (`\\` is an escaped backslash).
+  it("treats $ after an escaped backslash (\\\\) as a delimiter", () => {
+    // Source text: a \\$x$ b — published output renders math `x` after a literal backslash.
+    expect(inlineMathSpans("a \\\\$x$ b", none)).toEqual([{ from: 4, to: 7, body: "x" }]);
+  });
+
+  it("keeps $ escaped after three backslashes (odd run)", () => {
+    expect(inlineMathSpans("a \\\\\\$x$ b", none)).toEqual([]);
+  });
+
+  it("treats $ after four backslashes (even run) as a delimiter", () => {
+    expect(inlineMathSpans("a \\\\\\\\$x$ b", none)).toEqual([{ from: 6, to: 9, body: "x" }]);
+  });
+
+  it("closes on $ after an escaped backslash (\\\\) in the body", () => {
+    // $a\\$ — the closing $ follows a LaTeX line-break `\\`, not an escaped dollar.
+    expect(inlineMathSpans("$a\\\\$ b", none)).toEqual([{ from: 0, to: 5, body: "a\\\\" }]);
+  });
+
   it("does not span across a newline", () => {
     expect(inlineMathSpans("$a\nb$", none)).toEqual([]);
   });
@@ -83,5 +103,13 @@ describe("displayMathBlocks", () => {
 
   it("ignores an escaped \\$$", () => {
     expect(displayMathBlocks("\\$$a$$")).toEqual([]);
+  });
+
+  it("treats $$ after an escaped backslash (\\\\) as an opening delimiter", () => {
+    expect(displayMathBlocks("\\\\$$a$$").map((s) => s.body)).toEqual(["a"]);
+  });
+
+  it("closes on $$ after an escaped backslash (\\\\) in the body", () => {
+    expect(displayMathBlocks("$$a\\\\$$").map((s) => s.body)).toEqual(["a\\\\"]);
   });
 });
