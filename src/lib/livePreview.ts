@@ -28,6 +28,7 @@ import { parseFrontmatter } from "./frontmatter.helpers";
 import { wikiRenderSpans } from "./wikilink.helpers";
 import { inlineMathSpans, displayMathBlocks } from "./math.helpers";
 import { renderMath } from "./mathRender";
+import { parseTable, type CellSegment, type ParsedCell, type ParsedTable } from "./table.helpers";
 
 /**
  * Reading mode flag. When set, the editor renders as a clean reading view: all markdown markers
@@ -128,6 +129,28 @@ class FrontmatterWidget extends WidgetType {
 }
 
 /**
+ * Build the DOM for one wikilink occurrence — shared by the inline WikiLinkWidget and the table
+ * widget's cells so both carry the same classes and data attributes the editor's delegated click
+ * handler (Editor.svelte handleWikiClick) reads for navigation.
+ */
+function wikiLinkEl(span: {
+  label: string;
+  target: string;
+  heading: string | undefined;
+  resolved: string | undefined;
+}): HTMLElement {
+  const el = document.createElement("span");
+  el.className =
+    span.resolved === undefined ? "cm-lp-wikilink cm-lp-wikilink-unresolved" : "cm-lp-wikilink";
+  el.textContent = span.label;
+  el.dataset.wikilinkTarget = span.target;
+  if (span.heading) el.dataset.wikilinkHeading = span.heading;
+  if (span.resolved !== undefined) el.dataset.wikilinkPath = span.resolved;
+  el.title = span.resolved ? span.resolved : `Unresolved note: ${span.target}`;
+  return el;
+}
+
+/**
  * Wikilink widget — replaces `[[target|alias]]` source with its label on inactive lines, styled as
  * a link. Resolved links carry the destination path in `data-wikilink-path` (read by the editor's
  * click handler); unresolved links render muted with no path. The on-disk source is never modified.
@@ -152,15 +175,7 @@ class WikiLinkWidget extends WidgetType {
     );
   }
   toDOM(): HTMLElement {
-    const el = document.createElement("span");
-    el.className =
-      this.resolved === undefined ? "cm-lp-wikilink cm-lp-wikilink-unresolved" : "cm-lp-wikilink";
-    el.textContent = this.label;
-    el.dataset.wikilinkTarget = this.target;
-    if (this.heading) el.dataset.wikilinkHeading = this.heading;
-    if (this.resolved !== undefined) el.dataset.wikilinkPath = this.resolved;
-    el.title = this.resolved ? this.resolved : `Unresolved note: ${this.target}`;
-    return el;
+    return wikiLinkEl(this);
   }
   ignoreEvent() {
     return false;
@@ -232,6 +247,88 @@ class MathBlockWidget extends WidgetType {
   ignoreEvent() {
     return true;
   }
+}
+
+/**
+ * Rendered GFM pipe table — replaces the table block on inactive lines (block-replace via
+ * tableBlockField, same CM constraint as math blocks). Cells render the same inline set the
+ * line pass renders (no-regression contract, see table.helpers.ts). Clicking a cell places the
+ * cursor at that cell's source position (revealing the raw table); clicks on resolved wikilinks
+ * are left to the editor's delegated handler (navigation) via ignoreEvent.
+ */
+class TableWidget extends WidgetType {
+  constructor(
+    readonly table: ParsedTable,
+    readonly tableFrom: number,
+  ) {
+    super();
+  }
+  eq(other: TableWidget) {
+    return other.table.key === this.table.key && other.tableFrom === this.tableFrom;
+  }
+  toDOM(view: EditorView): HTMLElement {
+    const wrap = document.createElement("div");
+    wrap.className = "cm-lp-table";
+    const table = document.createElement("table");
+    const thead = document.createElement("thead");
+    thead.appendChild(this.rowEl(this.table.header, "th"));
+    table.appendChild(thead);
+    const tbody = document.createElement("tbody");
+    for (const row of this.table.rows) tbody.appendChild(this.rowEl(row, "td"));
+    table.appendChild(tbody);
+    wrap.appendChild(table);
+    wrap.addEventListener("mousedown", (e) => {
+      const target = e.target as HTMLElement | null;
+      // Resolved wikilinks bubble to the editor's delegated handler (see ignoreEvent) — navigation.
+      if (target?.closest?.(".cm-lp-wikilink[data-wikilink-path]")) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const cell = target?.closest?.("td,th") as HTMLElement | null;
+      const from = cell?.dataset.cellFrom !== undefined ? Number(cell.dataset.cellFrom) : this.tableFrom;
+      view.dispatch({
+        selection: { anchor: Math.min(from, view.state.doc.length) },
+        scrollIntoView: true,
+      });
+      view.focus();
+    });
+    return wrap;
+  }
+  private rowEl(cells: ParsedCell[], tag: "th" | "td"): HTMLTableRowElement {
+    const tr = document.createElement("tr");
+    cells.forEach((cell, i) => {
+      const el = document.createElement(tag);
+      el.dataset.cellFrom = String(this.tableFrom + cell.srcOffset);
+      const align = this.table.align[i];
+      if (align) el.style.textAlign = align;
+      for (const seg of cell.segments) el.appendChild(segmentEl(seg));
+      tr.appendChild(el);
+    });
+    return tr;
+  }
+  // True except on resolved wikilinks: the widget's own mousedown owns cell click-to-edit (the
+  // proven math-widget pattern), but wikilink events must reach the editor's domEventHandlers —
+  // CM drops widget-internal events entirely (eventBelongsToEditor) when ignoreEvent is true.
+  ignoreEvent(e: Event): boolean {
+    const t = e.target as HTMLElement | null;
+    return !t?.closest?.(".cm-lp-wikilink[data-wikilink-path]");
+  }
+}
+
+/** DOM for one cell segment. User text goes through textContent (no HTML injection surface);
+ * math injects KaTeX-generated HTML only (same trust boundary as the math widgets). */
+function segmentEl(seg: CellSegment): Node {
+  if (seg.kind === "wiki") return wikiLinkEl(seg);
+  if (seg.kind === "math") {
+    const el = document.createElement("span");
+    el.className = "cm-lp-math-inline";
+    el.innerHTML = renderMath(seg.body, false);
+    return el;
+  }
+  if (seg.classes.length === 0) return document.createTextNode(seg.text);
+  const span = document.createElement("span");
+  span.className = seg.classes.join(" ");
+  span.textContent = seg.text;
+  return span;
 }
 
 /**
@@ -350,6 +447,82 @@ const mathBlockField = StateField.define<DecorationSet>({
       tr.startState.facet(readingMode) !== tr.state.facet(readingMode)
     ) {
       return computeMathBlockDeco(tr.state);
+    }
+    return value.map(tr.changes);
+  },
+  provide: (f) => EditorView.decorations.from(f),
+});
+
+/**
+ * Line-snapped ranges of tables that render as widgets. A table is skipped (stays raw) when it
+ * sits inside the leading frontmatter block (owned by frontmatterField), intersects a `$$..$$`
+ * span (math wins — two state fields must never emit overlapping block decorations), or has the
+ * cursor/selection on its lines (reveal, unless reading mode). Tables inside blockquotes are out
+ * of scope for v1 (kept raw); tables inside code fences never parse as Table nodes, and mounted
+ * sub-grammars (```md fences) are excluded via IgnoreMounts. The tree is read whole-document —
+ * same tree-freshness limitation computeMathBlockDeco already documents.
+ */
+function renderedTableRanges(state: EditorState): { from: number; to: number }[] {
+  const tables: { from: number; to: number }[] = [];
+  syntaxTree(state).iterate({
+    mode: IterMode.IgnoreMounts,
+    enter: (node) => {
+      if (node.name === "Blockquote") return false; // v1: quoted tables stay raw
+      if (node.name === "Table") {
+        tables.push({ from: node.from, to: node.to });
+        return false;
+      }
+    },
+  });
+  if (!tables.length) return tables;
+  const reading = state.facet(readingMode);
+  const bodyStart = frontmatterBodyStart(state);
+  const mathBlocks = displayMathBlocks(state.doc.toString());
+  const out: { from: number; to: number }[] = [];
+  for (const t of tables) {
+    if (t.from < bodyStart) continue;
+    if (mathBlocks.some((b) => t.from < b.to && b.from < t.to)) continue;
+    const startLine = state.doc.lineAt(t.from);
+    const endLine = state.doc.lineAt(t.to);
+    const cursorInside =
+      !reading &&
+      state.selection.ranges.some((r) => r.from <= endLine.to && r.to >= startLine.from);
+    if (cursorInside) continue;
+    out.push({ from: startLine.from, to: endLine.to });
+  }
+  return out;
+}
+
+/** Block-replace decorations for rendered tables (see renderedTableRanges for the skip rules). */
+function computeTableDeco(state: EditorState): DecorationSet {
+  const resolve = state.facet(wikiResolver);
+  const ranges: Range<Decoration>[] = [];
+  for (const r of renderedTableRanges(state)) {
+    const parsed = parseTable(state.doc.sliceString(r.from, r.to), resolve);
+    if (parsed === null) continue; // parser disagreement -> raw is the safe rendering
+    const endLine = state.doc.lineAt(r.to);
+    // Mirror the math block field: extend to the next line's start (swallow the trailing line
+    // break) unless the table ends the document — block boundaries must land on line boundaries.
+    const to =
+      endLine.number < state.doc.lines ? state.doc.line(endLine.number + 1).from : endLine.to;
+    ranges.push(
+      Decoration.replace({ block: true, widget: new TableWidget(parsed, r.from) }).range(r.from, to),
+    );
+  }
+  return Decoration.set(ranges, true);
+}
+
+const tableBlockField = StateField.define<DecorationSet>({
+  create: computeTableDeco,
+  update(value, tr) {
+    if (
+      tr.docChanged ||
+      tr.selection ||
+      tr.startState.facet(readingMode) !== tr.state.facet(readingMode) ||
+      // Wikilinks inside cells re-resolve when the vault tree changes.
+      tr.startState.facet(wikiResolver) !== tr.state.facet(wikiResolver)
+    ) {
+      return computeTableDeco(tr.state);
     }
     return value.map(tr.changes);
   },
@@ -654,6 +827,18 @@ const lpTheme = EditorView.theme({
     padding: "var(--sp-3) 0",
     overflowX: "auto",
   },
+  // Tables: same tokens as the published site (canopy styles.ts) so editor and site agree.
+  ".cm-lp-table": { padding: "var(--sp-2) 0", overflowX: "auto" },
+  ".cm-lp-table table": { borderCollapse: "collapse" },
+  ".cm-lp-table th, .cm-lp-table td": {
+    border: "1px solid var(--border)",
+    padding: "var(--sp-2) var(--sp-3)",
+    textAlign: "left",
+  },
+  ".cm-lp-table th": {
+    fontWeight: "var(--font-weight-semibold)",
+    background: "var(--bg-secondary-alt)",
+  },
   ".cm-lp-hr": {
     display: "inline-block",
     width: "100%",
@@ -675,4 +860,4 @@ const lpTheme = EditorView.theme({
 });
 
 /** Live preview extension bundle to add to the editor. */
-export const livePreview = [frontmatterField, mathBlockField, livePreviewPlugin, lpTheme];
+export const livePreview = [frontmatterField, mathBlockField, tableBlockField, livePreviewPlugin, lpTheme];
