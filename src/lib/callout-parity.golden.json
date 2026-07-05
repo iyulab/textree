@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "note": "Shared golden spec for callout recognition parity between the published renderer and line-based editor scanners. Byte-identical copies live in each consumer repo; bump `version` and update every copy together when semantics change. `published` and `editor` list the ordered callouts recognized in the input as {type, title} (empty = every blockquote stays a plain quote). `editorGate` marks cases the editor rejects via a non-scanner gate (e.g. code fences), so scanner-only harnesses skip the editor assertion.",
   "cases": [
     { "name": "core-note", "markdown": "> [!note]\n> body", "published": [{ "type": "note", "title": "Note" }], "editor": [{ "type": "note", "title": "Note" }] },
@@ -18,6 +18,13 @@
     { "name": "code-fence-literal", "markdown": "```\n> [!note]\n```", "published": [], "editor": [], "editorGate": "lezer-code-fence", "note": "Inside a fence the line is code; the editor excludes it via the syntax tree, which pure scanners cannot see." },
     { "name": "header-on-second-line", "markdown": "> intro\n> [!note] later", "published": [], "editor": [], "note": "The marker only counts on the quote's first line." },
     { "name": "non-alpha-type", "markdown": "> [!foo-bar]\n> body", "published": [], "editor": [], "note": "Types are ASCII letters only; anything else stays a plain quote." },
-    { "name": "header-only", "markdown": "> [!warning]", "published": [{ "type": "warning", "title": "Warning" }], "editor": [{ "type": "warning", "title": "Warning" }] }
+    { "name": "header-only", "markdown": "> [!warning]", "published": [{ "type": "warning", "title": "Warning" }], "editor": [{ "type": "warning", "title": "Warning" }] },
+    { "name": "markup-after-marker", "markdown": "> [!tip]**bold** rest\n> body", "published": [{ "type": "tip", "title": "Tip" }], "editor": [], "note": "Recognition divergence (documented v1 limit): the published parser sees the first text node end at the marker, so `[!tip]**bold**` is a callout with a fallback title; the editor requires whitespace after the marker and keeps the quote plain." },
+    { "name": "markup-mid-title", "markdown": "> [!tip] Pro **bold** move\n> body", "published": [{ "type": "tip", "title": "Pro" }], "editor": [{ "type": "tip", "title": "Pro **bold** move" }], "note": "Title divergence (documented v1 limit): published titles truncate at the first inline construct (the rest flows into the body); the editor titles the whole raw line." },
+    { "name": "markup-leading-title", "markdown": "> [!tip] **bold** first\n> body", "published": [{ "type": "tip", "title": "Tip" }], "editor": [{ "type": "tip", "title": "**bold** first" }], "note": "Title divergence (documented v1 limit): markup right after the marker leaves the published title empty (fallback), while the editor titles the raw line." },
+    { "name": "math-in-title", "markdown": "> [!note] price $x$ here\n> body", "published": [{ "type": "note", "title": "price" }], "editor": [{ "type": "note", "title": "price $x$ here" }], "note": "Title divergence (documented v1 limit): inline math splits the published title like any inline construct." },
+    { "name": "code-span-in-title", "markdown": "> [!note] run `cmd` now\n> body", "published": [{ "type": "note", "title": "run" }], "editor": [{ "type": "note", "title": "run `cmd` now" }], "note": "Title divergence (documented v1 limit): an inline code span splits the published title like any inline construct." },
+    { "name": "wikilink-in-title", "markdown": "> [!note] see [[other]]\n> body", "published": [{ "type": "note", "title": "see [[other]]" }], "editor": [{ "type": "note", "title": "see [[other]]" }], "note": "Parity holds: wikilink syntax is still plain text when the callout transform runs, so both sides title the same string." },
+    { "name": "entity-lt-in-title", "markdown": "> [!note] a < b\n> body", "published": [{ "type": "note", "title": "a < b" }], "editor": [{ "type": "note", "title": "a < b" }], "note": "Parity holds: a lone `<` stays text on both sides (the published HTML escapes it, so classifiers must decode entities)." }
   ]
 }
