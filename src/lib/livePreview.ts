@@ -300,7 +300,9 @@ function computeMathBlockDeco(state: EditorState): DecorationSet {
   if (!blocks.length) return Decoration.none;
   // Code fences/blocks/spans are not math: `$$` inside them must stay raw (mirrors the inline path's
   // codeRanges gate and the published site, where remark-math never processes math inside code). The
-  // tree is read whole-document (note-sized); a not-yet-parsed tail just leaves a block briefly raw.
+  // tree is read whole-document; for note-sized docs CM parses synchronously so it is complete. A
+  // fence past an unparsed tail would momentarily miss this gate and render until the next edit/
+  // selection recompute — the same tree-freshness limitation the ViewPlugin's decorations already have.
   const codeRanges: [number, number][] = [];
   syntaxTree(state).iterate({
     enter: (node) => {
