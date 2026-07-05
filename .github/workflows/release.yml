@@ -36,7 +36,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: iyulab/canopy
-          ref: 26bb78813a6bbfe420d2405f88f88e5015f9f263 # pin; bump deliberately
+          ref: 2c92420a7fde7108517dbfb5c9de6a7252e9fd38 # pin; bump deliberately
           path: canopy-src
 
       # Builds canopy and copies the output into src-tauri/resources/canopy/
