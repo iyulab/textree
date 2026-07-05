@@ -275,10 +275,12 @@ const frontmatterField = StateField.define<DecorationSet>({
  */
 function computeMathBlockDeco(state: EditorState): DecorationSet {
   const reading = state.facet(readingMode);
+  const bodyStart = frontmatterBodyStart(state);
   const blocks = displayMathBlocks(state.doc.toString());
   if (!blocks.length) return Decoration.none;
   const ranges: Range<Decoration>[] = [];
   for (const b of blocks) {
+    if (b.from < bodyStart) continue; // inside the leading frontmatter block (owned by frontmatterField)
     const startLine = state.doc.lineAt(b.from);
     const endLine = state.doc.lineAt(b.to);
     // Standalone display block: nothing but whitespace before the opening / after the closing $$.
@@ -290,10 +292,14 @@ function computeMathBlockDeco(state: EditorState): DecorationSet {
       !reading &&
       state.selection.ranges.some((r) => r.from <= endLine.to && r.to >= startLine.from);
     if (cursorInside) continue;
+    // Mirror frontmatterBodyStart: extend to the next line's start (swallow the trailing line break)
+    // unless this block ends the document. Block-replace boundaries must land on line boundaries.
+    const to =
+      endLine.number < state.doc.lines ? state.doc.line(endLine.number + 1).from : endLine.to;
     ranges.push(
       Decoration.replace({ block: true, widget: new MathBlockWidget(b.body) }).range(
         startLine.from,
-        endLine.to,
+        to,
       ),
     );
   }
