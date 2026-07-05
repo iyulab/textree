@@ -86,14 +86,34 @@ fn to_fs_change(kind: ChangeKind, path: &Path, self_writes: &SelfWrites) -> Opti
     })
 }
 
+/// One debounce flush, reduced to what the app must do about it.
+#[derive(Debug, PartialEq, Eq)]
+enum FlushOutcome {
+    /// Normal flush: per-path changes to surface (may be empty after suppression).
+    Changes(Vec<FsChange>),
+    /// The OS dropped events (kernel queue overflow — inotify `Q_OVERFLOW`, FSEvents
+    /// `MUST_SCAN_SUBDIRS`): per-path state is unknowable, so everything must be refreshed
+    /// (tree, index, open note). The debouncer prepends this signal to the flush as an
+    /// `EventKind::Other` event flagged `Rescan`.
+    Rescan,
+}
+
 /// Turns one debounce flush (raw OS events) into the changes to surface: maps/filters kinds and dot
 /// paths, then collapses to one change per path via `process_batch`. Shared by the live watcher and
 /// the integration test so both exercise the same path.
+///
+/// A flush carrying a rescan flag short-circuits to `Rescan` — the batch alongside it is
+/// incomplete by definition, and a full refresh supersedes anything it says. Self-write
+/// registrations are deliberately left alone: suppression only ever fires on byte-identical
+/// content, so a stale entry can only suppress a change that would have been a no-op anyway.
 fn changes_from_events(
     events: Vec<DebouncedEvent>,
     root: &Path,
     self_writes: &SelfWrites,
-) -> Vec<FsChange> {
+) -> FlushOutcome {
+    if events.iter().any(|ev| ev.need_rescan()) {
+        return FlushOutcome::Rescan;
+    }
     let mut raw: Vec<(ChangeKind, PathBuf)> = Vec::new();
     for ev in events {
         let Some(kind) = map_kind(&ev.kind) else {
@@ -106,7 +126,7 @@ fn changes_from_events(
             raw.push((kind.clone(), path.clone()));
         }
     }
-    process_batch(&raw, self_writes)
+    FlushOutcome::Changes(process_batch(&raw, self_writes))
 }
 
 /// Collapses a debounce batch into at most one change per path.
@@ -171,6 +191,16 @@ pub fn apply_changes_to_index(handle: &IndexHandle, root: &Path, changes: &[FsCh
     }
 }
 
+/// Rebuilds the whole index from disk (delete-all + re-index). Used after a rescan, when
+/// incremental per-path updates can no longer be trusted. No-op when no index is installed.
+pub fn rebuild_index(handle: &IndexHandle, root: &Path) {
+    let mut guard = handle.0.lock().unwrap_or_else(|e| e.into_inner());
+    let Some(state) = guard.as_mut() else { return };
+    if let Err(e) = state.rebuild(root) {
+        log::warn!("watcher: index rebuild after rescan failed: {e}");
+    }
+}
+
 /// Starts a debouncer that recursively watches the vault root.
 pub fn start(
     app: AppHandle,
@@ -183,16 +213,39 @@ pub fn start(
         Duration::from_millis(300),
         None,
         move |result: DebounceEventResult| {
-            let Ok(events) = result else {
-                return; // ignore watcher errors — recovers naturally on the next event
+            let events = match result {
+                Ok(events) => events,
+                Err(errors) => {
+                    // Watch errors are logged, not acted on: dropped-event recovery does NOT
+                    // arrive here (it comes as a Rescan flag on the Ok arm), and refreshing on
+                    // every transient error (e.g. access denied) would churn. Known limitation
+                    // (Windows): a ReadDirectoryChangesW buffer overflow reaches neither arm —
+                    // notify logs, unwatches and goes silent (upstream gap); the manual-refresh
+                    // UX is the fallback until that is fixed upstream.
+                    for e in &errors {
+                        log::warn!("watcher error: {e}");
+                    }
+                    return;
+                }
             };
-            // Collapse the flush to one change per path by final state (see process_batch — fixes
-            // the self-write echo where one atomic write emits several events on the same path).
-            let batch = changes_from_events(events, &root_owned, &self_writes);
-            for change in &batch {
-                let _ = app.emit("fs_changed", change.clone());
+            match changes_from_events(events, &root_owned, &self_writes) {
+                // Collapse the flush to one change per path by final state (see process_batch —
+                // fixes the self-write echo where one atomic write emits several events on the
+                // same path).
+                FlushOutcome::Changes(batch) => {
+                    for change in &batch {
+                        let _ = app.emit("fs_changed", change.clone());
+                    }
+                    apply_changes_to_index(&index, &root_owned, &batch);
+                }
+                // The OS dropped events: per-path state is unknowable. Rebuild the index from
+                // disk and tell the frontend to refresh everything it derives from the vault.
+                FlushOutcome::Rescan => {
+                    log::warn!("watcher: OS reported dropped events (rescan) — full refresh");
+                    rebuild_index(&index, &root_owned);
+                    let _ = app.emit("fs_rescan", ());
+                }
             }
-            apply_changes_to_index(&index, &root_owned, &batch);
         },
     )
     .map_err(|e| e.to_string())?;
@@ -207,8 +260,81 @@ pub fn start(
 mod tests {
     use super::*;
     use notify_debouncer_full::notify::event::{AccessKind, CreateKind, ModifyKind, RemoveKind};
+    use notify_debouncer_full::notify::Event;
     use std::path::PathBuf;
     use tempfile::TempDir;
+
+    #[test]
+    fn rescan_flag_turns_flush_into_rescan_outcome() {
+        use notify_debouncer_full::notify::event::Flag;
+        use std::time::Instant;
+        let tmp = TempDir::new().unwrap();
+        let f = tmp.path().join("a.md");
+        std::fs::write(&f, "content").unwrap();
+        let sw = SelfWrites::default();
+
+        // The debouncer prepends the rescan marker to the same flush as surviving events; the
+        // whole batch is untrustworthy (events were dropped), so the outcome must be Rescan.
+        let rescan = DebouncedEvent::new(
+            Event::new(EventKind::Other).set_flag(Flag::Rescan),
+            Instant::now(),
+        );
+        let survivor = DebouncedEvent::new(
+            Event::new(EventKind::Create(CreateKind::Any)).add_path(f),
+            Instant::now(),
+        );
+        let out = changes_from_events(vec![rescan, survivor], tmp.path(), &sw);
+        assert_eq!(out, FlushOutcome::Rescan);
+    }
+
+    #[test]
+    fn flush_without_rescan_yields_changes() {
+        use std::time::Instant;
+        let tmp = TempDir::new().unwrap();
+        let f = tmp.path().join("a.md");
+        std::fs::write(&f, "external content").unwrap();
+        let sw = SelfWrites::default();
+
+        let ev = DebouncedEvent::new(
+            Event::new(EventKind::Create(CreateKind::Any)).add_path(f),
+            Instant::now(),
+        );
+        let out = changes_from_events(vec![ev], tmp.path(), &sw);
+        let FlushOutcome::Changes(batch) = out else {
+            panic!("normal flush must yield Changes, got {out:?}");
+        };
+        assert_eq!(batch.len(), 1);
+        assert_eq!(batch[0].kind, ChangeKind::Modified);
+    }
+
+    #[test]
+    fn rebuild_index_recovers_changes_the_watcher_missed() {
+        let vault = TempDir::new().unwrap();
+        let idx = TempDir::new().unwrap();
+        std::fs::write(vault.path().join("a.md"), "예전 노트").unwrap();
+
+        let handle: Arc<IndexHandle> = Arc::new(IndexHandle::default());
+        *handle.0.lock().unwrap() = Some(IndexState::open_or_create(idx.path()).unwrap());
+        apply_changes_to_index(
+            &handle,
+            vault.path(),
+            &[FsChange {
+                kind: ChangeKind::Created,
+                path: vault.path().join("a.md").display().to_string(),
+            }],
+        );
+
+        // Simulate dropped events: a.md vanished and b.md appeared with no per-path event.
+        std::fs::remove_file(vault.path().join("a.md")).unwrap();
+        std::fs::write(vault.path().join("b.md"), "신규 노트").unwrap();
+
+        rebuild_index(&handle, vault.path());
+
+        let guard = handle.0.lock().unwrap();
+        let st = guard.as_ref().unwrap();
+        assert_eq!(st.search("예전", 10).unwrap().len(), 0, "stale doc must be gone");
+        assert_eq!(st.search("신규", 10).unwrap().len(), 1, "missed file must be indexed");
+    }
 
     #[test]
     fn map_kind_classifies_create_modify_remove_and_ignores_access() {
@@ -361,8 +487,9 @@ mod tests {
             move |res: DebounceEventResult| {
                 if let Ok(events) = res {
                     // Exact same path the live watcher takes.
-                    let batch = changes_from_events(events, &root_cb, &sw_cb);
-                    sink.lock().unwrap().extend(batch);
+                    if let FlushOutcome::Changes(batch) = changes_from_events(events, &root_cb, &sw_cb) {
+                        sink.lock().unwrap().extend(batch);
+                    }
                 }
             },
         )

@@ -1171,6 +1171,7 @@
     const unlistenSyncP = startSync({
       root: () => root,
       activePath: () => activePath,
+      activeDoc: () => liveDoc,
       isDirty: () => dirty,
       setTree: (t) => {
         tree = t;

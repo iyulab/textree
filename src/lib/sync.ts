@@ -6,6 +6,7 @@
 
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { listTree, readNote, type TreeNode } from "./ipc";
+import { decideRescanAction } from "./sync.helpers";
 
 export type FsChangeKind = "created" | "modified" | "removed";
 
@@ -19,6 +20,8 @@ export interface SyncHandlers {
   root: () => string | null;
   /** Body path of the currently open note (null if none). */
   activePath: () => string | null;
+  /** Current text of the open note as the user sees it (live editor doc). */
+  activeDoc: () => string;
   /** Whether the editor has unsaved edits. */
   isDirty: () => boolean;
   /** Replace with the refreshed tree. */
@@ -76,13 +79,55 @@ async function handleChange(handlers: SyncHandlers, payload: FsChange): Promise<
 }
 
 /**
- * Start the `fs_changed` subscription. Detach via the returned unlisten.
- * Serializes handlers into a promise chain to prevent ordering inversions where, under concurrent
- * execution, stale `listTree`/`readNote` results overwrite the latest results.
+ * Handle a watcher rescan — the OS dropped events (queue overflow), so per-path state is
+ * unknowable. Refresh the tree unconditionally, then reconcile the open note against disk.
+ * The reconcile is content-compared (see decideRescanAction): an unaffected note is left
+ * completely alone, so a rescan never disturbs typing focus or shows a false banner.
+ */
+async function handleRescan(handlers: SyncHandlers): Promise<void> {
+  const root = handlers.root();
+  if (!root) return;
+
+  try {
+    handlers.setTree(await listTree(root));
+  } catch {
+    // A tree refresh failure is non-fatal — recovered on the next event.
+  }
+
+  const active = handlers.activePath();
+  if (!active) return;
+
+  let disk: string;
+  try {
+    disk = await readNote(root, active);
+  } catch {
+    handlers.activeRemoved(); // read failure = effectively gone (same policy as handleChange)
+    return;
+  }
+
+  const action = decideRescanAction(disk, handlers.activeDoc(), handlers.isDirty());
+  if (action === "conflict") handlers.conflict(disk);
+  else if (action === "reload") handlers.reloadActive(disk);
+}
+
+/**
+ * Start the `fs_changed` + `fs_rescan` subscriptions. Detach via the returned unlisten.
+ * Serializes handlers into a single promise chain to prevent ordering inversions where, under
+ * concurrent execution, stale `listTree`/`readNote` results overwrite the latest results.
  */
 export async function startSync(handlers: SyncHandlers): Promise<UnlistenFn> {
   let chain: Promise<void> = Promise.resolve();
-  return listen<FsChange>("fs_changed", ({ payload }) => {
-    chain = chain.then(() => handleChange(handlers, payload)).catch(() => {});
+  const enqueue = (task: () => Promise<void>) => {
+    chain = chain.then(task).catch(() => {});
+  };
+  const unlistenChanged = await listen<FsChange>("fs_changed", ({ payload }) => {
+    enqueue(() => handleChange(handlers, payload));
   });
+  const unlistenRescan = await listen<null>("fs_rescan", () => {
+    enqueue(() => handleRescan(handlers));
+  });
+  return () => {
+    unlistenChanged();
+    unlistenRescan();
+  };
 }
