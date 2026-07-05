@@ -2,8 +2,8 @@ import { test, expect, type Browser, type Page } from "@playwright/test";
 import { connectToApp, loadVault, createTempVault, removeTempVault } from "./helpers";
 
 /**
- * Editor KaTeX math rendering. Inline `$..$` and display `$$..$$` render as KaTeX; the cursor
- * reveals the raw source; reading mode renders both. Also asserts the woff2 fonts actually load
+ * Editor KaTeX math rendering. Inline `$..$` and display `$$..$$` render as KaTeX; clicking a
+ * rendered formula reveals its raw source for editing. Also asserts the woff2 fonts actually load
  * (the classic KaTeX integration trap: CSS present but fonts 404 -> silent fallback font).
  */
 

@@ -192,6 +192,9 @@ class MathInlineWidget extends WidgetType {
     });
     return el;
   }
+  // Intentionally true (unlike CheckboxWidget/FrontmatterWidget which return false): the mousedown
+  // handler above fully owns cursor placement. Letting CM also process widget events (return false)
+  // makes its own selection logic fight the handler, so a real click no longer reveals the source.
   ignoreEvent() {
     return true;
   }
@@ -222,6 +225,8 @@ class MathBlockWidget extends WidgetType {
     });
     return el;
   }
+  // Intentionally true — see MathInlineWidget.ignoreEvent: the handler owns cursor placement, and
+  // returning false would let CM's own selection logic undo the click-to-reveal.
   ignoreEvent() {
     return true;
   }
