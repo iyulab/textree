@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "note": "Shared golden spec for callout recognition parity between the published renderer and line-based editor scanners. Byte-identical copies live in each consumer repo; bump `version` and update every copy together when semantics change. `published` and `editor` list the ordered callouts recognized in the input as {type, title} (empty = every blockquote stays a plain quote). `editorGate` marks cases the editor rejects via a non-scanner gate (e.g. code fences), so scanner-only harnesses skip the editor assertion.",
+  "cases": [
+    { "name": "core-note", "markdown": "> [!note]\n> body", "published": [{ "type": "note", "title": "Note" }], "editor": [{ "type": "note", "title": "Note" }] },
+    { "name": "core-tip", "markdown": "> [!tip]\n> body", "published": [{ "type": "tip", "title": "Tip" }], "editor": [{ "type": "tip", "title": "Tip" }] },
+    { "name": "core-warning", "markdown": "> [!warning]\n> body", "published": [{ "type": "warning", "title": "Warning" }], "editor": [{ "type": "warning", "title": "Warning" }] },
+    { "name": "core-danger", "markdown": "> [!danger]\n> body", "published": [{ "type": "danger", "title": "Danger" }], "editor": [{ "type": "danger", "title": "Danger" }] },
+    { "name": "core-quote", "markdown": "> [!quote]\n> body", "published": [{ "type": "quote", "title": "Quote" }], "editor": [{ "type": "quote", "title": "Quote" }] },
+    { "name": "alias-info", "markdown": "> [!info]\n> body", "published": [{ "type": "note", "title": "Info" }], "editor": [{ "type": "note", "title": "Info" }] },
+    { "name": "unknown-type", "markdown": "> [!custom]\n> body", "published": [{ "type": "note", "title": "Custom" }], "editor": [{ "type": "note", "title": "Custom" }] },
+    { "name": "uppercase-type", "markdown": "> [!NOTE]\n> body", "published": [{ "type": "note", "title": "NOTE" }], "editor": [{ "type": "note", "title": "NOTE" }] },
+    { "name": "explicit-title", "markdown": "> [!tip] Pro move\n> body", "published": [{ "type": "tip", "title": "Pro move" }], "editor": [{ "type": "tip", "title": "Pro move" }] },
+    { "name": "fold-minus", "markdown": "> [!note]- Folded\n> body", "published": [{ "type": "note", "title": "Folded" }], "editor": [{ "type": "note", "title": "Folded" }] },
+    { "name": "fold-plus", "markdown": "> [!note]+ Open\n> body", "published": [{ "type": "note", "title": "Open" }], "editor": [{ "type": "note", "title": "Open" }] },
+    { "name": "multiline-body", "markdown": "> [!note]\n> line one\n> line two", "published": [{ "type": "note", "title": "Note" }], "editor": [{ "type": "note", "title": "Note" }] },
+    { "name": "nested-inner-stays-plain", "markdown": "> [!note]\n> outer\n> > [!tip] Inner", "published": [{ "type": "note", "title": "Note" }], "editor": [{ "type": "note", "title": "Note" }], "note": "v1 transforms top-level blockquotes only; the nested quote stays plain on both sides." },
+    { "name": "code-fence-literal", "markdown": "```\n> [!note]\n```", "published": [], "editor": [], "editorGate": "lezer-code-fence", "note": "Inside a fence the line is code; the editor excludes it via the syntax tree, which pure scanners cannot see." },
+    { "name": "header-on-second-line", "markdown": "> intro\n> [!note] later", "published": [], "editor": [], "note": "The marker only counts on the quote's first line." },
+    { "name": "non-alpha-type", "markdown": "> [!foo-bar]\n> body", "published": [], "editor": [], "note": "Types are ASCII letters only; anything else stays a plain quote." },
+    { "name": "header-only", "markdown": "> [!warning]", "published": [{ "type": "warning", "title": "Warning" }], "editor": [{ "type": "warning", "title": "Warning" }] }
+  ]
+}
