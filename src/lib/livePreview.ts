@@ -29,6 +29,7 @@ import { wikiRenderSpans } from "./wikilink.helpers";
 import { inlineMathSpans, displayMathBlocks } from "./math.helpers";
 import { renderMath } from "./mathRender";
 import { parseTable, type CellSegment, type ParsedCell, type ParsedTable } from "./table.helpers";
+import { parseCalloutHeader, CALLOUT_CORES, CALLOUT_ICON_PATHS, type CalloutCore } from "./callout.helpers";
 
 /**
  * Reading mode flag. When set, the editor renders as a clean reading view: all markdown markers
@@ -94,6 +95,42 @@ class HrWidget extends WidgetType {
     const hr = document.createElement("span");
     hr.className = "cm-lp-hr";
     return hr;
+  }
+}
+
+/**
+ * Callout marker widget — replaces the `[!type]` marker (plus any fold
+ * suffix) with the type icon on inactive lines; when the author wrote no
+ * title, the fallback title text is part of the widget (an explicit title
+ * stays in the source so it remains directly editable). The cursor entering
+ * the line reveals the raw marker (standard marker-hide affordance).
+ */
+class CalloutIconWidget extends WidgetType {
+  constructor(
+    readonly core: CalloutCore,
+    readonly fallbackTitle: string | null,
+  ) {
+    super();
+  }
+  eq(other: CalloutIconWidget) {
+    return other.core === this.core && other.fallbackTitle === this.fallbackTitle;
+  }
+  toDOM(): HTMLElement {
+    const wrap = document.createElement("span");
+    const icon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    icon.setAttribute("viewBox", "0 0 24 24");
+    icon.setAttribute("fill", "none");
+    icon.setAttribute("stroke", "currentColor");
+    icon.setAttribute("stroke-width", "2");
+    icon.setAttribute("stroke-linecap", "round");
+    icon.setAttribute("stroke-linejoin", "round");
+    icon.classList.add("cm-lp-callout-icon");
+    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    path.setAttribute("d", CALLOUT_ICON_PATHS[this.core]);
+    icon.appendChild(path);
+    wrap.appendChild(icon);
+    if (this.fallbackTitle !== null) wrap.append(this.fallbackTitle);
+    return wrap;
   }
 }
 
@@ -558,6 +595,14 @@ const strikeMark = Decoration.mark({ class: "cm-lp-strike" });
 const codeMark = Decoration.mark({ class: "cm-lp-code" });
 const linkMark = Decoration.mark({ class: "cm-lp-link" });
 const quoteLine = Decoration.line({ class: "cm-lp-quote" });
+// Callout line decorations, one per core type (left bar + tinted background),
+// plus the bold/colored first ("head") line. Built once like headingLine.
+const calloutLine = Object.fromEntries(
+  CALLOUT_CORES.map((c) => [c, Decoration.line({ class: `cm-lp-callout cm-lp-callout-${c}` })]),
+) as Record<CalloutCore, Decoration>;
+const calloutHeadLine = Object.fromEntries(
+  CALLOUT_CORES.map((c) => [c, Decoration.line({ class: `cm-lp-callout-head cm-lp-callout-head-${c}` })]),
+) as Record<CalloutCore, Decoration>;
 const hideMark = Decoration.replace({});
 
 // Marker nodes to hide (lezer-markdown). URL is excluded from the general hide set
@@ -616,6 +661,12 @@ function buildDecorations(view: EditorView): DecorationSet {
   });
   const inRenderedTable = (pos: number): boolean =>
     tableExclude.some(([f, t]) => pos >= f && pos < t);
+
+  // Marker ranges of callout headers rendered as icon widgets this pass — the
+  // main markdown pass must not decorate inside them (see the Blockquote branch).
+  const calloutMarkers: [number, number][] = [];
+  const inCalloutMarker = (pos: number): boolean =>
+    calloutMarkers.some(([f, t]) => pos >= f && pos < t);
 
   // Decide which wikilinks render as widgets, resolved against the live tree. On the cursor's line,
   // inside code, or within folded frontmatter the raw source is kept instead. Computed before the
@@ -690,6 +741,9 @@ function buildDecorations(view: EditorView): DecorationSet {
         if (inRenderedTable(node.from)) return;
         const name = node.name;
 
+        // Skip nodes inside a callout marker — the icon widget owns that range.
+        if (name !== "Blockquote" && inCalloutMarker(node.from)) return;
+
         // Heading: size decoration over the whole line (size is kept even on the cursor line — same as Obsidian).
         const h = /^ATXHeading([1-6])$/.exec(name);
         if (h) {
@@ -698,12 +752,43 @@ function buildDecorations(view: EditorView): DecorationSet {
           return;
         }
 
-        // Blockquote: left-bar style on each line.
+        // Blockquote: callout when the first line of a *top-level* quote is a
+        // `[!type]` header (parity contract in callout-parity.golden.json);
+        // otherwise the plain left-bar quote style. Nested quotes always take
+        // the plain style (v1 transforms top-level only, same as the published
+        // renderer) — inside a callout they read as a quoted block.
         if (name === "Blockquote") {
-          const startLn = state.doc.lineAt(node.from).number;
+          const startLine = state.doc.lineAt(node.from);
           const endLn = state.doc.lineAt(node.to).number;
-          for (let l = startLn; l <= endLn; l++) {
-            ranges.push(quoteLine.range(state.doc.line(l).from));
+          const topLevel = node.node.parent?.name === "Document";
+          const quoteMark = /^ {0,3}> ?/.exec(startLine.text);
+          const header =
+            topLevel && quoteMark !== null
+              ? parseCalloutHeader(startLine.text.slice(quoteMark[0].length))
+              : null;
+          if (header === null) {
+            for (let l = startLine.number; l <= endLn; l++) {
+              ranges.push(quoteLine.range(state.doc.line(l).from));
+            }
+            return;
+          }
+          for (let l = startLine.number; l <= endLn; l++) {
+            ranges.push(calloutLine[header.core].range(state.doc.line(l).from));
+          }
+          ranges.push(calloutHeadLine[header.core].range(startLine.from));
+          // Replace the `[!type]` marker with the icon widget on inactive lines.
+          // The marker range is recorded so the main pass skips any nodes the
+          // parser produced inside it (e.g. `[!note]` scanning as link syntax) —
+          // overlapping replace decorations would break the RangeSet.
+          if (!active.has(startLine.number)) {
+            const markerFrom = startLine.from + (quoteMark as RegExpExecArray)[0].length;
+            const markerTo = markerFrom + header.markerLength;
+            calloutMarkers.push([markerFrom, markerTo]);
+            ranges.push(
+              Decoration.replace({
+                widget: new CalloutIconWidget(header.core, header.explicitTitle ? null : header.title),
+              }).range(markerFrom, markerTo),
+            );
           }
           return;
         }
@@ -833,6 +918,28 @@ const lpTheme = EditorView.theme({
     borderLeft: "3px solid var(--border-strong)",
     paddingLeft: "var(--sp-3)",
     color: "var(--text-muted)",
+  },
+  // Callouts: tinted line background + type-colored left bar; the head line
+  // carries the icon + title in the type color. Colors are the shared
+  // --callout-* tokens (same names/values as the published site).
+  ".cm-lp-callout": { paddingLeft: "var(--sp-3)" },
+  ".cm-lp-callout-note": { borderLeft: "3px solid var(--callout-note)", background: "var(--callout-note-bg)" },
+  ".cm-lp-callout-tip": { borderLeft: "3px solid var(--callout-tip)", background: "var(--callout-tip-bg)" },
+  ".cm-lp-callout-warning": { borderLeft: "3px solid var(--callout-warning)", background: "var(--callout-warning-bg)" },
+  ".cm-lp-callout-danger": { borderLeft: "3px solid var(--callout-danger)", background: "var(--callout-danger-bg)" },
+  ".cm-lp-callout-quote": { borderLeft: "3px solid var(--callout-quote)", background: "var(--callout-quote-bg)" },
+  ".cm-lp-callout-head": { fontWeight: "var(--font-weight-semibold)" },
+  ".cm-lp-callout-head-note": { color: "var(--callout-note)" },
+  ".cm-lp-callout-head-tip": { color: "var(--callout-tip)" },
+  ".cm-lp-callout-head-warning": { color: "var(--callout-warning)" },
+  ".cm-lp-callout-head-danger": { color: "var(--callout-danger)" },
+  ".cm-lp-callout-head-quote": { color: "var(--callout-quote)" },
+  ".cm-lp-callout-icon": {
+    display: "inline-block",
+    width: "1.1em",
+    height: "1.1em",
+    marginRight: "0.4em",
+    verticalAlign: "text-bottom",
   },
   ".cm-lp-checkbox": { cursor: "pointer", marginRight: "0.4em", verticalAlign: "middle" },
   ".cm-lp-math-inline": { cursor: "default" },
