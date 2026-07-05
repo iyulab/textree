@@ -140,6 +140,33 @@ test("wikilink containing $..$ renders as a wikilink, not math (no overlap/crash
   }
 });
 
+// Reading mode renders math everywhere: no line is ever active, so even the formula on the cursor's
+// line (raw while editing) renders, and the view is read-only. Guards the reading-mode math path,
+// which the editing-mode tests above never exercise.
+const READING_MATH = "inline $E=mc^2$ on the cursor line\n\n$$\nx^2\n$$\n";
+
+test("reading mode renders math even on the cursor's line", async () => {
+  const vault = createTempVault({ "rmath.md": READING_MATH });
+  try {
+    await loadVault(page, vault);
+    await page.getByRole("treeitem", { name: /rmath/ }).click();
+    // Edit mode: line 1 is the default active line -> its inline formula stays raw source.
+    await expect(page.locator(".cm-content .cm-line", { hasText: "inline" })).toContainText(
+      "$E=mc^2$",
+    );
+    expect(await page.locator(".cm-lp-math-inline").count()).toBe(0);
+    await page.getByRole("button", { name: "Switch to reading view" }).click();
+    // Reading mode: no active line -> the same formula now renders, and the view is read-only.
+    await expect(page.locator(".cm-lp-math-inline .katex")).toBeVisible();
+    await expect(page.locator(".cm-lp-math-block .katex-display")).toBeVisible();
+    await expect(page.locator(".cm-content")).toHaveAttribute("contenteditable", "false");
+    await page.getByRole("button", { name: "Switch to editing" }).click();
+    await expect(page.locator(".cm-content")).toHaveAttribute("contenteditable", "true");
+  } finally {
+    removeTempVault(vault);
+  }
+});
+
 // Regression: `$$..$$` inside a fenced code block is code, not math — it must stay raw (matches the
 // published site, where remark-math never processes math inside code). Guards the display-block
 // code-range exclusion.
