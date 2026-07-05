@@ -6,6 +6,7 @@
   import { GFM } from "@lezer/markdown";
   import { livePreview, readingMode, wikiResolver } from "./livePreview";
   import { codeHighlighting, codeLanguages } from "./codeHighlight";
+  import "katex/dist/katex.min.css";
   import { parseFrontmatter } from "./frontmatter.helpers";
   import { detectLineEnding, normalizeLineEndings } from "./eol.helpers";
   import { buildWikiResolver, findHeadingOffset } from "./wikilink.helpers";
