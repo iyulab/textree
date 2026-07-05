@@ -13,7 +13,7 @@
  */
 
 /** True when the char at `i` is escaped: preceded by an odd-length run of backslashes. */
-function escapedAt(text: string, i: number): boolean {
+export function escapedAt(text: string, i: number): boolean {
   let n = 0;
   while (i - 1 - n >= 0 && text[i - 1 - n] === "\\") n++;
   return n % 2 === 1;
