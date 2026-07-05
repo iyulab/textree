@@ -18,6 +18,11 @@ describe("inlineMathSpans", () => {
     expect(inlineMathSpans("I paid $5 and $10 today", none)).toEqual([]);
   });
 
+  it("rejects a closing $ immediately followed by a digit (digit guard, no whitespace)", () => {
+    // prev char is 'x' (passes the whitespace guard), so ONLY the digit-after-close guard can reject this.
+    expect(inlineMathSpans("$x$5 text", none)).toEqual([]);
+  });
+
   it("rejects whitespace right after opening $", () => {
     expect(inlineMathSpans("$ x$", none)).toEqual([]);
   });
