@@ -26,6 +26,8 @@ import {
 } from "@codemirror/view";
 import { parseFrontmatter } from "./frontmatter.helpers";
 import { wikiRenderSpans } from "./wikilink.helpers";
+import { inlineMathSpans, displayMathBlocks } from "./math.helpers";
+import { renderMath } from "./mathRender";
 
 /**
  * Reading mode flag. When set, the editor renders as a clean reading view: all markdown markers
@@ -166,6 +168,28 @@ class WikiLinkWidget extends WidgetType {
 }
 
 /**
+ * Inline math widget — replaces `$..$` source with rendered KaTeX on inactive lines. The on-disk
+ * source is never modified; clicking (moving the cursor onto the line) reveals the raw `$..$`.
+ */
+class MathInlineWidget extends WidgetType {
+  constructor(readonly body: string) {
+    super();
+  }
+  eq(other: MathInlineWidget) {
+    return other.body === this.body;
+  }
+  toDOM(): HTMLElement {
+    const el = document.createElement("span");
+    el.className = "cm-lp-math-inline";
+    el.innerHTML = renderMath(this.body, false);
+    return el;
+  }
+  ignoreEvent() {
+    return false;
+  }
+}
+
+/**
  * Offset where the body begins when the document opens with a well-formed frontmatter block, else 0.
  * Mirrors the recognition contract of `parseFrontmatter` (first line `---`, closing `---` line) but
  * scans via the line API instead of materializing the whole document on every decoration rebuild.
@@ -290,6 +314,31 @@ function buildDecorations(view: EditorView): DecorationSet {
     });
   }
 
+  // Display math block ranges (whole document). Inline math and the main markdown pass both skip
+  // inside these — the block field (mathBlockField) owns rendering; here we only need the boundaries.
+  const displayBlocks = displayMathBlocks(state.doc.toString());
+  const inDisplayBlock = (pos: number): boolean =>
+    displayBlocks.some((b) => pos >= b.from && pos < b.to);
+
+  // Inline math spans -> rendered on inactive lines. Excluded on the cursor line, inside code,
+  // inside folded frontmatter, or inside a display block (same policy as wikilinks).
+  const mathSpans: { from: number; to: number; body: string }[] = [];
+  for (const { from, to } of view.visibleRanges) {
+    const text = state.doc.sliceString(from, to);
+    const isExcluded = (sFrom: number): boolean => {
+      const absFrom = from + sFrom;
+      if (fmFolded && absFrom < bodyStart) return true;
+      if (active.has(state.doc.lineAt(absFrom).number)) return true;
+      for (const [cf, ct] of codeRanges) if (absFrom >= cf && absFrom < ct) return true;
+      return inDisplayBlock(absFrom);
+    };
+    for (const s of inlineMathSpans(text, isExcluded)) {
+      mathSpans.push({ from: from + s.from, to: from + s.to, body: s.body });
+    }
+  }
+  const insideMath = (pos: number): boolean =>
+    mathSpans.some((m) => pos >= m.from && pos < m.to);
+
   // Decide which wikilinks render as widgets, resolved against the live tree. On the cursor's line,
   // inside code, or within folded frontmatter the raw source is kept instead. Computed before the
   // main pass so markdown *inside* a rendered link is left undecorated — its marker-hide replaces
@@ -331,6 +380,8 @@ function buildDecorations(view: EditorView): DecorationSet {
         if (fmFolded && node.from < bodyStart) return;
         // Skip nodes inside a rendered wikilink — the link's widget owns that range.
         if (insideWiki(node.from)) return;
+        // Skip nodes inside rendered math — the math widget owns that range (inline or display block).
+        if (insideMath(node.from) || inDisplayBlock(node.from)) return;
         const name = node.name;
 
         // Heading: size decoration over the whole line (size is kept even on the cursor line — same as Obsidian).
@@ -408,6 +459,12 @@ function buildDecorations(view: EditorView): DecorationSet {
     ranges.push(Decoration.replace({ widget: w.widget }).range(w.from, w.to));
   }
 
+  // Append inline math widgets (computed up front). `$..$` is not markdown syntax, so it comes from
+  // a textual scan and replaces the source with rendered KaTeX.
+  for (const m of mathSpans) {
+    ranges.push(Decoration.replace({ widget: new MathInlineWidget(m.body) }).range(m.from, m.to));
+  }
+
   // Delegate sorting (sort=true) — sorts safely even when line/mark/replace are mixed.
   return Decoration.set(ranges, true);
 }
@@ -472,6 +529,7 @@ const lpTheme = EditorView.theme({
     color: "var(--text-muted)",
   },
   ".cm-lp-checkbox": { cursor: "pointer", marginRight: "0.4em", verticalAlign: "middle" },
+  ".cm-lp-math-inline": { cursor: "default" },
   ".cm-lp-hr": {
     display: "inline-block",
     width: "100%",
