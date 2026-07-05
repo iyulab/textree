@@ -168,6 +168,21 @@ class WikiLinkWidget extends WidgetType {
 }
 
 /**
+ * Click-to-edit affordance shared by both math widgets: place the cursor at the widget's position
+ * so the line/block becomes active and the raw `$..$`/`$$..$$` source is revealed (same affordance
+ * as the frontmatter pill). Paired with `ignoreEvent() { return true; }` on the widgets — the
+ * handler fully owns cursor placement, so CM's own mousedown handling must not also run.
+ */
+function attachMathClickToEdit(view: EditorView, el: HTMLElement): void {
+  el.addEventListener("mousedown", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    view.dispatch({ selection: { anchor: view.posAtDOM(el) } });
+    view.focus();
+  });
+}
+
+/**
  * Inline math widget — replaces `$..$` source with rendered KaTeX on inactive lines. The on-disk
  * source is never modified; clicking (moving the cursor onto the line) reveals the raw `$..$`.
  */
@@ -182,14 +197,7 @@ class MathInlineWidget extends WidgetType {
     const el = document.createElement("span");
     el.className = "cm-lp-math-inline";
     el.innerHTML = renderMath(this.body, false);
-    // Click the rendered math to edit it: place the cursor at the widget's position so the line
-    // becomes active and the raw `$..$` source is revealed (same affordance as the frontmatter pill).
-    el.addEventListener("mousedown", (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      view.dispatch({ selection: { anchor: view.posAtDOM(el) } });
-      view.focus();
-    });
+    attachMathClickToEdit(view, el);
     return el;
   }
   // Intentionally true (unlike CheckboxWidget/FrontmatterWidget which return false): the mousedown
@@ -216,13 +224,7 @@ class MathBlockWidget extends WidgetType {
     const el = document.createElement("div");
     el.className = "cm-lp-math-block";
     el.innerHTML = renderMath(this.body, true);
-    // Click the rendered block to edit it: place the cursor inside the block so it reveals raw source.
-    el.addEventListener("mousedown", (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      view.dispatch({ selection: { anchor: view.posAtDOM(el) } });
-      view.focus();
-    });
+    attachMathClickToEdit(view, el);
     return el;
   }
   // Intentionally true — see MathInlineWidget.ignoreEvent: the handler owns cursor placement, and
