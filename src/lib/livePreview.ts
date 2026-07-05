@@ -190,6 +190,29 @@ class MathInlineWidget extends WidgetType {
 }
 
 /**
+ * Display math widget — replaces a `$$..$$` block with rendered KaTeX (centered). Multi-line, so it
+ * is a block-replace decoration provided by a StateField (CM forbids block decorations from plugins,
+ * same constraint as the frontmatter fold). The source is revealed when the cursor enters the block.
+ */
+class MathBlockWidget extends WidgetType {
+  constructor(readonly body: string) {
+    super();
+  }
+  eq(other: MathBlockWidget) {
+    return other.body === this.body;
+  }
+  toDOM(): HTMLElement {
+    const el = document.createElement("div");
+    el.className = "cm-lp-math-block";
+    el.innerHTML = renderMath(this.body, true);
+    return el;
+  }
+  ignoreEvent() {
+    return false;
+  }
+}
+
+/**
  * Offset where the body begins when the document opens with a well-formed frontmatter block, else 0.
  * Mirrors the recognition contract of `parseFrontmatter` (first line `---`, closing `---` line) but
  * scans via the line API instead of materializing the whole document on every decoration rebuild.
@@ -238,6 +261,54 @@ const frontmatterField = StateField.define<DecorationSet>({
       tr.startState.facet(readingMode) !== tr.state.facet(readingMode)
     ) {
       return computeFrontmatterDeco(tr.state);
+    }
+    return value.map(tr.changes);
+  },
+  provide: (f) => EditorView.decorations.from(f),
+});
+
+/**
+ * Block-replace decorations for display math. A `$$..$$` block is rendered only when it owns its
+ * lines (opening `$$` after leading whitespace, closing `$$` at line end) — otherwise the source is
+ * left raw so surrounding text is never swallowed. In reading mode every block renders; while
+ * editing, a block whose lines the cursor/selection touches shows its raw source.
+ */
+function computeMathBlockDeco(state: EditorState): DecorationSet {
+  const reading = state.facet(readingMode);
+  const blocks = displayMathBlocks(state.doc.toString());
+  if (!blocks.length) return Decoration.none;
+  const ranges: Range<Decoration>[] = [];
+  for (const b of blocks) {
+    const startLine = state.doc.lineAt(b.from);
+    const endLine = state.doc.lineAt(b.to);
+    // Standalone display block: nothing but whitespace before the opening / after the closing $$.
+    const opensLine = state.doc.sliceString(startLine.from, b.from).trim() === "";
+    const closesLine = state.doc.sliceString(b.to, endLine.to).trim() === "";
+    if (!opensLine || !closesLine) continue;
+    // Reveal raw when the cursor sits on any line of the block (unless reading mode).
+    const cursorInside =
+      !reading &&
+      state.selection.ranges.some((r) => r.from <= endLine.to && r.to >= startLine.from);
+    if (cursorInside) continue;
+    ranges.push(
+      Decoration.replace({ block: true, widget: new MathBlockWidget(b.body) }).range(
+        startLine.from,
+        endLine.to,
+      ),
+    );
+  }
+  return Decoration.set(ranges, true);
+}
+
+const mathBlockField = StateField.define<DecorationSet>({
+  create: computeMathBlockDeco,
+  update(value, tr) {
+    if (
+      tr.docChanged ||
+      tr.selection ||
+      tr.startState.facet(readingMode) !== tr.state.facet(readingMode)
+    ) {
+      return computeMathBlockDeco(tr.state);
     }
     return value.map(tr.changes);
   },
@@ -333,6 +404,7 @@ function buildDecorations(view: EditorView): DecorationSet {
       if (fmFolded && absFrom < bodyStart) return true;
       if (active.has(state.doc.lineAt(absFrom).number)) return true;
       for (const [cf, ct] of codeRanges) if (absFrom >= cf && absFrom < ct) return true;
+      if (inDisplayBlock(absFrom)) return true;
       return false;
     };
     for (const span of wikiRenderSpans(text, resolve, isExcluded)) {
@@ -535,6 +607,12 @@ const lpTheme = EditorView.theme({
   },
   ".cm-lp-checkbox": { cursor: "pointer", marginRight: "0.4em", verticalAlign: "middle" },
   ".cm-lp-math-inline": { cursor: "default" },
+  ".cm-lp-math-block": {
+    display: "block",
+    textAlign: "center",
+    padding: "var(--sp-3) 0",
+    overflowX: "auto",
+  },
   ".cm-lp-hr": {
     display: "inline-block",
     width: "100%",
@@ -556,4 +634,4 @@ const lpTheme = EditorView.theme({
 });
 
 /** Live preview extension bundle to add to the editor. */
-export const livePreview = [frontmatterField, livePreviewPlugin, lpTheme];
+export const livePreview = [frontmatterField, mathBlockField, livePreviewPlugin, lpTheme];
