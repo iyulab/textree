@@ -61,6 +61,9 @@ test("column alignment from the delimiter row applies", async () => {
     // Second column is `---:` -> right-aligned.
     const cell = page.locator(".cm-lp-table tbody td", { hasText: "42" });
     await expect(cell).toHaveCSS("text-align", "right");
+    // First column has no alignment marker -> left-aligned (theme default), not right.
+    const plainCell = page.locator(".cm-lp-table tbody td", { hasText: "plain" }).first();
+    await expect(plainCell).toHaveCSS("text-align", "left");
   } finally {
     removeTempVault(vault);
   }
@@ -100,6 +103,8 @@ test("moving the cursor out re-renders the table", async () => {
     const box = await cell.boundingBox();
     if (!box) throw new Error("table cell has no bounding box");
     await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+    // Barrier: wait for the raw reveal to land before the negative count snapshot below.
+    await expect(page.locator(".cm-content .cm-line", { hasText: "**bold**" })).toBeVisible();
     expect(await page.locator(".cm-lp-table").count()).toBe(0);
     // Click the plain line below the table -> cursor leaves -> the table renders again.
     await page.locator(".cm-content .cm-line", { hasText: "after" }).click();
@@ -163,8 +168,9 @@ test("a table inside a blockquote stays raw (v1 scope)", async () => {
   try {
     await loadVault(page, vault);
     await page.getByRole("treeitem", { name: /quoted/ }).click();
-    expect(await page.locator(".cm-lp-table").count()).toBe(0);
+    // Barrier: wait for the note load to land before the negative count snapshot below.
     await expect(page.locator(".cm-content")).toContainText("| a | b |");
+    expect(await page.locator(".cm-lp-table").count()).toBe(0);
   } finally {
     removeTempVault(vault);
   }
@@ -176,6 +182,8 @@ test("reading mode renders the table even on the cursor's line", async () => {
   try {
     await loadVault(page, vault);
     await page.getByRole("treeitem", { name: /rt/ }).click();
+    // Barrier: wait for the note load to land before the negative count snapshot below.
+    await expect(page.locator(".cm-content")).toContainText("| a | b |");
     // Edit mode: cursor starts on line 1 (inside the table) -> raw.
     expect(await page.locator(".cm-lp-table").count()).toBe(0);
     await page.getByRole("button", { name: "Switch to reading view" }).click();
