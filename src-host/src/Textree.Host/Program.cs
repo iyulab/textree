@@ -46,6 +46,11 @@ if (byoPreset is not null)
 {
     var byoBaseUrl = envDict.GetValueOrDefault("TEXTREE_BYO_BASE_URL") ?? "";
     var byoApiKey = envDict.GetValueOrDefault("TEXTREE_BYO_API_KEY");
+    // Settings ▸Advanced now requires a non-empty model before Save is enabled, so this env var
+    // should always be set in practice. "default" here is a plain defensive fallback for any
+    // caller that bypasses the UI (stale localStorage from before that gate existed, manual
+    // testing, etc.) — it is NOT a real model name and does NOT resolve to the server's actual
+    // default; a request using it will still 404/fail against a real OpenAI-compatible server.
     var byoModel = envDict.GetValueOrDefault("TEXTREE_BYO_MODEL") ?? "default";
     builder.Services.AddSingleton<ITextGenerator>(
         new RemoteChatTextGenerator(byoPreset, byoBaseUrl, byoApiKey, byoModel));

@@ -94,6 +94,13 @@ export function isValidByoUrl(url: string): boolean {
   }
 }
 
+/** Gates the Save button: a blank model has no real "provider default" to fall back on — the
+ * host would send the literal placeholder string "default" as the model name, which fails on
+ * the very first chat request against a real server. Required, not just recommended. */
+export function isValidByoModel(model: string): boolean {
+  return model.trim().length > 0;
+}
+
 /** Badge text for "currently running on: ...". Empty string mirrors HostHandle's default
  * (Rust's #[derive(Default)] gives Mutex<String> "" rather than "local" — both map here). */
 export function byoProviderBadge(activeProvider: string): string {

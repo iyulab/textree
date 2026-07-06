@@ -5,6 +5,7 @@ import {
   planEmbeddingToggle,
   presetDefaults,
   isValidByoUrl,
+  isValidByoModel,
   byoProviderBadge,
 } from "./settings.helpers";
 
@@ -101,6 +102,17 @@ describe("isValidByoUrl", () => {
     expect(isValidByoUrl("")).toBe(false);
     expect(isValidByoUrl("not a url")).toBe(false);
     expect(isValidByoUrl("ftp://localhost")).toBe(false);
+  });
+});
+
+describe("isValidByoModel", () => {
+  it("rejects empty or whitespace-only input", () => {
+    expect(isValidByoModel("")).toBe(false);
+    expect(isValidByoModel("   ")).toBe(false);
+  });
+  it("accepts a non-empty model name", () => {
+    expect(isValidByoModel("llama3.1")).toBe(true);
+    expect(isValidByoModel("  llama3.1  ")).toBe(true);
   });
 });
 

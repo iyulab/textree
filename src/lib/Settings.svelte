@@ -9,7 +9,7 @@
   } from "$lib/ipc";
   import {
     computeAiSectionState, themeButtons, planEmbeddingToggle,
-    presetDefaults, isValidByoUrl, byoProviderBadge,
+    presetDefaults, isValidByoUrl, isValidByoModel, byoProviderBadge,
   } from "$lib/settings.helpers";
   import { getByoConfig, setByoConfig, clearByoConfig, type ByoConfig, type ByoPreset } from "$lib/byoConfig";
 
@@ -262,8 +262,8 @@
             <input type="text" bind:value={byoBaseUrl} placeholder="http://localhost:11434" />
           </label>
           <label>
-            Model (optional)
-            <input type="text" bind:value={byoModel} placeholder="Use the provider's default" />
+            Model (required)
+            <input type="text" bind:value={byoModel} placeholder="e.g. llama3.1 (no provider default exists)" />
           </label>
           <label>
             API Key (optional)
@@ -276,6 +276,10 @@
           {#if byoHasStoredKey}
             <button type="button" class="action" onclick={onClearApiKey}>Clear API key</button>
           {/if}
+          <!-- Not gated on isValidByoModel: this button's job is reachability of the base URL
+               (does the server answer at all), not correctness of the model name — a user
+               should be able to verify the server is up before typing a model. Save is where
+               the model becomes required, since that's what actually reaches /chat. -->
           <button
             type="button"
             class="action"
@@ -292,7 +296,7 @@
           <button
             type="button"
             class="action"
-            disabled={byoSaving || !isValidByoUrl(byoBaseUrl)}
+            disabled={byoSaving || !isValidByoUrl(byoBaseUrl) || !isValidByoModel(byoModel)}
             onclick={onSaveByo}
           >
             {byoSaving ? "Applying…" : "Save"}
