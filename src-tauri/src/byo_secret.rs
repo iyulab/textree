@@ -82,10 +82,15 @@ mod tests {
     use super::*;
 
     // These tests touch the real Windows Credential Manager (no fake injected — keyring's API
-    // has no seam for one). They clean up after themselves; run serially within this module
-    // since they share one fixed (SERVICE, ACCOUNT) entry.
+    // has no seam for one). They share one fixed (SERVICE, ACCOUNT) entry, and `cargo test` runs
+    // tests on parallel threads by default — without serialization, one test's `clear_api_key()`
+    // can delete the other's key mid-flight. TEST_LOCK forces the two to run one at a time.
+    static TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn set_then_get_then_clear_roundtrips() {
+        let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _ = clear_api_key(); // clean slate in case a prior aborted run left an entry
         set_api_key("test-key-123").expect("set should succeed");
         assert!(has_api_key());
         assert_eq!(get_api_key().as_deref(), Some("test-key-123"));
@@ -95,6 +100,7 @@ mod tests {
 
     #[test]
     fn clear_is_noop_safe_when_nothing_stored() {
+        let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let _ = clear_api_key(); // ensure clean slate regardless of prior test order
         clear_api_key().expect("clear on empty entry should not error");
         assert!(!has_api_key());
