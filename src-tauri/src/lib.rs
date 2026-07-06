@@ -62,7 +62,7 @@ pub fn run() {
                 use tauri::Manager;
                 let handle = app.state::<std::sync::Arc<HostHandle>>().inner().clone();
                 if let Ok(log_dir) = app.path().app_log_dir() {
-                    host::spawn_host(handle, exe, log_dir);
+                    host::spawn_host(handle, exe, log_dir, Vec::new(), "local".to_string());
                 }
             }
             Ok(())
@@ -108,7 +108,8 @@ pub fn run() {
             host::test_byo_connection,
             byo_secret::set_byo_api_key,
             byo_secret::clear_byo_api_key,
-            byo_secret::has_byo_api_key
+            byo_secret::has_byo_api_key,
+            host::restart_ai_host
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

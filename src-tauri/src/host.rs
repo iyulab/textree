@@ -97,6 +97,10 @@ pub struct HostHandle {
     embedder_download: Mutex<Option<DownloadSnapshot>>,
     /// Last-known generator download progress snapshot from /health (None = not downloading).
     generator_download: Mutex<Option<DownloadSnapshot>>,
+    /// Which text-generation backend the current (or most recent) spawn used: "local" for the
+    /// bundled model, or the BYO preset string ("ollama"/"gpustack"/"custom"). Surfaced via
+    /// host_status so Settings can show "Running on: ...".
+    active_provider: Mutex<String>,
 }
 
 impl HostHandle {
@@ -176,6 +180,9 @@ impl HostHandle {
     fn set_generator_download(&self, v: Option<DownloadSnapshot>) {
         *self.generator_download.lock().unwrap_or_else(|e| e.into_inner()) = v;
     }
+    pub fn active_provider(&self) -> String {
+        self.active_provider.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -190,9 +197,41 @@ const POLL_INTERVAL: Duration = Duration::from_secs(1);
 /// (Kestrel logs ~2 lines per /health request). ≤10s gate latency is dwarfed by model load.
 const READY_POLL_INTERVAL: Duration = Duration::from_secs(10);
 
+/// Builds the extra env vars for a BYO-configured host spawn. `preset=None` (bundled local model,
+/// the default) yields an empty vec — spawn_host's caller passes that straight through unchanged
+/// from today's behavior. `api_key` is looked up by the caller from the OS keychain (byo_secret::
+/// get_api_key) — this function only assembles what it's given, kept pure for unit testing.
+fn resolve_byo_env(
+    preset: Option<String>,
+    base_url: Option<String>,
+    model: Option<String>,
+    api_key: Option<String>,
+) -> Vec<(String, String)> {
+    let Some(preset) = preset.filter(|p| !p.trim().is_empty()) else {
+        return Vec::new();
+    };
+    let mut env = vec![("TEXTREE_BYO_PRESET".to_string(), preset)];
+    if let Some(base_url) = base_url.filter(|b| !b.is_empty()) {
+        env.push(("TEXTREE_BYO_BASE_URL".to_string(), base_url));
+    }
+    if let Some(model) = model.filter(|m| !m.is_empty()) {
+        env.push(("TEXTREE_BYO_MODEL".to_string(), model));
+    }
+    if let Some(api_key) = api_key.filter(|k| !k.is_empty()) {
+        env.push(("TEXTREE_BYO_API_KEY".to_string(), api_key));
+    }
+    env
+}
+
 /// Spawn the host on a fresh loopback port and begin health polling on a
 /// background thread. Never panics; on any failure the handle stays Unavailable.
-pub fn spawn_host(handle: Arc<HostHandle>, exe: String, log_dir: std::path::PathBuf) {
+pub fn spawn_host(
+    handle: Arc<HostHandle>,
+    exe: String,
+    log_dir: std::path::PathBuf,
+    extra_env: Vec<(String, String)>,
+    active_provider: String,
+) {
     // Idempotent: never double-spawn. A concurrent caller (mount auto-spawn + ? enable, or a
     // dev eager-spawn racing a manual trigger) must not orphan a child or clobber the port.
     // try_begin_spawn atomically claims the spawn (transition → Starting under one lock); only the
@@ -220,6 +259,9 @@ pub fn spawn_host(handle: Arc<HostHandle>, exe: String, log_dir: std::path::Path
     if let Some(conn) = crate::telemetry::host_connection() {
         cmd.env(crate::telemetry::config::ENV_VAR, conn);
     }
+    for (k, v) in &extra_env {
+        cmd.env(k, v);
+    }
     cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
     // Run the sidecar without flashing a console window (Windows). Without this,
     // a GUI app gives the console-subsystem .NET host its own console window.
@@ -242,6 +284,7 @@ pub fn spawn_host(handle: Arc<HostHandle>, exe: String, log_dir: std::path::Path
     drain_utf8(child.stderr.take(), log_dir.join("host-err.log"));
     *handle.port.lock().unwrap_or_else(|e| e.into_inner()) = Some(port);
     *handle.child.lock().unwrap_or_else(|e| e.into_inner()) = Some(child);
+    *handle.active_provider.lock().unwrap_or_else(|e| e.into_inner()) = active_provider;
     // Status was already claimed as Starting by try_begin_spawn at the top.
 
     let my_gen = handle.generation.fetch_add(1, Ordering::SeqCst) + 1;
@@ -455,6 +498,7 @@ pub struct HostStatusPayload {
     pub embedder_error: Option<String>,
     pub embedder_download: Option<DownloadSnapshot>,
     pub generator_download: Option<DownloadSnapshot>,
+    pub active_provider: String,
 }
 
 #[tauri::command]
@@ -466,6 +510,7 @@ pub fn host_status(host: State<'_, Arc<HostHandle>>) -> HostStatusPayload {
         embedder_error: host.embedder_error(),
         embedder_download: host.embedder_download(),
         generator_download: host.generator_download(),
+        active_provider: host.active_provider(),
     }
 }
 
@@ -520,7 +565,13 @@ pub async fn prepare_generation(host: State<'_, Arc<HostHandle>>) -> Result<(), 
 /// (or at mount when the device-local consent flag is set). No-op if already up; graceful (Ok with
 /// no spawn) when no host exe is bundled/available — AI simply stays off.
 #[tauri::command]
-pub fn prepare_ai_model(app: AppHandle, host: State<'_, Arc<HostHandle>>) -> Result<(), String> {
+pub fn prepare_ai_model(
+    app: AppHandle,
+    host: State<'_, Arc<HostHandle>>,
+    preset: Option<String>,
+    base_url: Option<String>,
+    model: Option<String>,
+) -> Result<(), String> {
     if matches!(host.status(), HostStatus::Starting | HostStatus::Ready) {
         return Ok(());
     }
@@ -528,7 +579,35 @@ pub fn prepare_ai_model(app: AppHandle, host: State<'_, Arc<HostHandle>>) -> Res
         return Ok(()); // no host available → graceful degradation
     };
     let log_dir = app.path().app_log_dir().map_err(|e| e.to_string())?;
-    spawn_host(host.inner().clone(), exe, log_dir);
+    let api_key = if preset.is_some() { crate::byo_secret::get_api_key() } else { None };
+    let active_provider = preset.clone().unwrap_or_else(|| "local".to_string());
+    let extra_env = resolve_byo_env(preset, base_url, model, api_key);
+    spawn_host(host.inner().clone(), exe, log_dir, extra_env, active_provider);
+    Ok(())
+}
+
+/// Force-reconfigure: unlike `prepare_ai_model` (idempotent no-op if already up), this always
+/// stops the current host and spawns a fresh one — needed when Settings ▸Advanced changes the
+/// BYO config for a host that's already running (prepare_ai_model's "already up -> no-op" guard
+/// would otherwise strand the old config in place). `preset=None` switches back to the bundled
+/// local model ("번들 로컬 모델로 전환").
+#[tauri::command]
+pub fn restart_ai_host(
+    app: AppHandle,
+    host: State<'_, Arc<HostHandle>>,
+    preset: Option<String>,
+    base_url: Option<String>,
+    model: Option<String>,
+) -> Result<(), String> {
+    shutdown_host(&host);
+    let Some(exe) = resolve_host(&app) else {
+        return Ok(());
+    };
+    let log_dir = app.path().app_log_dir().map_err(|e| e.to_string())?;
+    let api_key = if preset.is_some() { crate::byo_secret::get_api_key() } else { None };
+    let active_provider = preset.clone().unwrap_or_else(|| "local".to_string());
+    let extra_env = resolve_byo_env(preset, base_url, model, api_key);
+    spawn_host(host.inner().clone(), exe, log_dir, extra_env, active_provider);
     Ok(())
 }
 
@@ -852,7 +931,7 @@ mod tests {
         handle.set_status(HostStatus::Ready); // pretend the host is already running
         let tmp = std::env::temp_dir().join("textree-host-guard");
         // A bogus exe would fail to spawn and flip status to Unavailable WITHOUT the guard.
-        spawn_host(handle.clone(), "this-exe-does-not-exist".into(), tmp);
+        spawn_host(handle.clone(), "this-exe-does-not-exist".into(), tmp, Vec::new(), "local".to_string());
         assert!(
             matches!(handle.status(), HostStatus::Ready),
             "guard must prevent re-spawn when already Starting/Ready"
@@ -1034,6 +1113,37 @@ mod tests {
     }
 
     #[test]
+    fn resolve_byo_env_empty_when_no_preset() {
+        let env = resolve_byo_env(None, None, None, None);
+        assert!(env.is_empty());
+    }
+
+    #[test]
+    fn resolve_byo_env_includes_preset_baseurl_model_when_preset_present() {
+        let env = resolve_byo_env(
+            Some("ollama".to_string()),
+            Some("http://localhost:11434".to_string()),
+            Some("llama3".to_string()),
+            None,
+        );
+        assert_eq!(env.iter().find(|(k, _)| k == "TEXTREE_BYO_PRESET").map(|(_, v)| v.as_str()), Some("ollama"));
+        assert_eq!(env.iter().find(|(k, _)| k == "TEXTREE_BYO_BASE_URL").map(|(_, v)| v.as_str()), Some("http://localhost:11434"));
+        assert_eq!(env.iter().find(|(k, _)| k == "TEXTREE_BYO_MODEL").map(|(_, v)| v.as_str()), Some("llama3"));
+        assert!(env.iter().all(|(k, _)| k != "TEXTREE_BYO_API_KEY")); // no key passed in this call
+    }
+
+    #[test]
+    fn resolve_byo_env_includes_api_key_when_present() {
+        let env = resolve_byo_env(
+            Some("gpustack".to_string()),
+            Some("http://localhost:8080".to_string()),
+            None,
+            Some("secret".to_string()),
+        );
+        assert_eq!(env.iter().find(|(k, _)| k == "TEXTREE_BYO_API_KEY").map(|(_, v)| v.as_str()), Some("secret"));
+    }
+
+    #[test]
     fn shutdown_host_is_safe_when_no_host_running() {
         // The host-absent path the Settings "turn off" relies on: no base_url, no child.
         // shutdown must not panic and must leave status Unavailable (no network call made).
@@ -1048,7 +1158,7 @@ mod tests {
         let exe = std::env::var("TEXTREE_HOST_EXE").expect("set TEXTREE_HOST_EXE");
         let handle = Arc::new(HostHandle::default());
         let tmp = std::env::temp_dir().join("textree-host-test");
-        spawn_host(handle.clone(), exe, tmp);
+        spawn_host(handle.clone(), exe, tmp, Vec::new(), "local".to_string());
         // poll up to 90s for readiness (model may download)
         for _ in 0..90 {
             if matches!(handle.status(), HostStatus::Ready) {
