@@ -43,6 +43,10 @@
   let byoHasStoredKey = $state(false);
   let byoTestResult = $state<{ ok: boolean; message?: string } | null>(null);
   let byoSaving = $state(false);
+  // Sibling to byoTestResult: surfaces Save/Switch-to-local failures inline (near the
+  // triggering button) rather than letting a rejected restartAiHost/setByoApiKey promise
+  // become an unhandled rejection visible only in devtools.
+  let byoActionError = $state<string | null>(null);
 
   $effect(() => {
     void hasByoApiKey().then((v) => { byoHasStoredKey = v; });
@@ -62,33 +66,44 @@
 
   async function onSaveByo(): Promise<void> {
     byoSaving = true;
+    byoActionError = null;
+    const config: ByoConfig = { preset: byoPreset, baseUrl: byoBaseUrl, model: byoModel };
     try {
       if (byoApiKeyInput) {
         await setByoApiKey(byoApiKeyInput);
         byoHasStoredKey = true;
         byoApiKeyInput = "";
       }
-      const config: ByoConfig = { preset: byoPreset, baseUrl: byoBaseUrl, model: byoModel };
+      await restartAiHost(config);
+      // Only persist to localStorage once the host confirms the restart succeeded —
+      // otherwise a failed restart would leave localStorage claiming BYO is active
+      // while the host is still on (or stuck on) the old provider.
       setByoConfig(config);
       byoStored = getByoConfig();
-      await restartAiHost(config);
-      await refreshHost();
-    } finally {
-      byoSaving = false;
+    } catch (err) {
+      byoActionError = err instanceof Error ? err.message : String(err);
     }
+    // Unconditional, mirroring toggleEmbedding: the badge is the honesty signal
+    // regardless of whether the restart above succeeded or failed.
+    await refreshHost();
+    byoSaving = false;
   }
 
   async function onSwitchToLocal(): Promise<void> {
     byoSaving = true;
+    byoActionError = null;
+    byoEnabled = false;
     try {
+      await restartAiHost();
+      // Only clear the stored BYO config once the switch back actually succeeds —
+      // same reasoning as onSaveByo, in reverse.
       clearByoConfig();
       byoStored = getByoConfig();
-      byoEnabled = false;
-      await restartAiHost();
-      await refreshHost();
-    } finally {
-      byoSaving = false;
+    } catch (err) {
+      byoActionError = err instanceof Error ? err.message : String(err);
     }
+    await refreshHost();
+    byoSaving = false;
   }
 
   async function onClearApiKey(): Promise<void> {
@@ -286,6 +301,9 @@
           <button type="button" class="action" disabled={byoSaving} onclick={onSwitchToLocal}>
             {byoSaving ? "Applying…" : "Switch back to bundled local model"}
           </button>
+        {/if}
+        {#if byoActionError}
+          <p class="badge" role="status">✗ Failed: {byoActionError}</p>
         {/if}
         <p class="badge" role="status">Current: {byoProviderBadge(activeProvider)}</p>
       </details>
