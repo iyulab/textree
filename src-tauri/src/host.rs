@@ -514,6 +514,19 @@ pub fn host_status(host: State<'_, Arc<HostHandle>>) -> HostStatusPayload {
     }
 }
 
+/// Resolve which API key `test_byo_connection` should send: prefer the caller-supplied key
+/// (fresh input the user just typed, not yet saved to the keychain) and only fall back to
+/// `lookup` (the stored key) when none was given. This is the same fallback `prepare_ai_model`/
+/// `restart_ai_host` apply via `byo_secret::get_api_key()`, adapted for a command that (unlike
+/// those two) takes an explicit `api_key` param — without this, reopening Settings after a
+/// previous Save leaves the input blank and Test Connection would send no `Authorization`
+/// header at all, producing a false 401 against a server that requires auth even though Save
+/// would work fine. `lookup` is injected so the fallback branch is unit-testable without a
+/// real network call.
+fn resolve_test_key(api_key: Option<String>, lookup: impl FnOnce() -> Option<String>) -> Option<String> {
+    api_key.filter(|k| !k.is_empty()).or_else(lookup)
+}
+
 /// Preset-aware reachability probe for the Settings ▸Advanced "Test connection" button. Does
 /// NOT touch the running host — a plain outbound GET, so the user gets fast feedback before
 /// committing to a host restart. `/v1/models` is the OpenAI-compatible listing convention
@@ -523,7 +536,8 @@ pub fn test_byo_connection(preset: String, base_url: String, api_key: Option<Str
     let path = if preset.eq_ignore_ascii_case("gpustack") { "/v1-openai/models" } else { "/v1/models" };
     let url = format!("{}{}", base_url.trim_end_matches('/'), path);
     let mut req = ureq::get(&url).timeout(Duration::from_secs(5));
-    if let Some(key) = api_key.filter(|k| !k.is_empty()) {
+    let key = resolve_test_key(api_key, crate::byo_secret::get_api_key);
+    if let Some(key) = key {
         req = req.set("Authorization", &format!("Bearer {key}"));
     }
     req.call().map(|_| ()).map_err(|e| e.to_string())
@@ -1141,6 +1155,40 @@ mod tests {
             Some("secret".to_string()),
         );
         assert_eq!(env.iter().find(|(k, _)| k == "TEXTREE_BYO_API_KEY").map(|(_, v)| v.as_str()), Some("secret"));
+    }
+
+    #[test]
+    fn resolve_test_key_prefers_explicit_key_over_lookup() {
+        let key = resolve_test_key(Some("explicit".to_string()), || Some("stored".to_string()));
+        assert_eq!(key.as_deref(), Some("explicit"));
+    }
+
+    #[test]
+    fn resolve_test_key_treats_empty_string_as_absent_and_falls_back() {
+        let key = resolve_test_key(Some(String::new()), || Some("stored".to_string()));
+        assert_eq!(key.as_deref(), Some("stored"));
+    }
+
+    #[test]
+    fn resolve_test_key_none_with_no_stored_key_yields_none() {
+        let key = resolve_test_key(None, || None);
+        assert!(key.is_none());
+    }
+
+    #[test]
+    fn resolve_test_key_falls_back_to_the_real_stored_keychain_entry() {
+        // Exercises the actual fallback path test_byo_connection relies on: a key saved via
+        // Settings (byo_secret::set_api_key) must be picked up when the Test Connection input
+        // is blank (None), the same way it would be for a freshly reopened Settings panel.
+        // Shares byo_secret's TEST_LOCK so this doesn't race its own keychain tests.
+        let _guard = crate::byo_secret::tests::TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _ = crate::byo_secret::clear_api_key(); // clean slate in case a prior run aborted
+        crate::byo_secret::set_api_key("stored-secret-xyz").expect("set should succeed");
+
+        let key = resolve_test_key(None, crate::byo_secret::get_api_key);
+        assert_eq!(key.as_deref(), Some("stored-secret-xyz"));
+
+        crate::byo_secret::clear_api_key().expect("cleanup should succeed");
     }
 
     #[test]

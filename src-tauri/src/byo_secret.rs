@@ -78,14 +78,17 @@ pub fn has_byo_api_key() -> bool {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     // These tests touch the real Windows Credential Manager (no fake injected — keyring's API
     // has no seam for one). They share one fixed (SERVICE, ACCOUNT) entry, and `cargo test` runs
     // tests on parallel threads by default — without serialization, one test's `clear_api_key()`
     // can delete the other's key mid-flight. TEST_LOCK forces the two to run one at a time.
-    static TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    // pub(crate): host.rs's test_byo_connection fallback test also touches this same credential
+    // store entry and must serialize against these tests too, or the two modules' tests can
+    // race each other (the mutex only protects tests that actually acquire it).
+    pub(crate) static TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     #[test]
     fn set_then_get_then_clear_roundtrips() {
