@@ -22,10 +22,12 @@ builder.Services.AddSingleton(status);
 builder.Services.AddSingleton(embedder);
 // Telemetry: disabled (no-op) unless TEXTREE_TELEMETRY_CONNECTION is set. Hand-built pipe
 // (allowlist processor + context scrub processor) lives entirely inside TelemetryEmitter.Create.
-var telemetryOptions = TelemetryOptions.Read(
-    Environment.GetEnvironmentVariables()
-        .Cast<System.Collections.DictionaryEntry>()
-        .ToDictionary(e => (string)e.Key, e => (string?)(e.Value?.ToString())));
+// This dictionary is also reused below to decide the ITextGenerator backend (TEXTREE_BYO_PRESET),
+// so Environment.GetEnvironmentVariables() is only ever materialized once.
+var envDict = Environment.GetEnvironmentVariables()
+    .Cast<System.Collections.DictionaryEntry>()
+    .ToDictionary(e => (string)e.Key, e => (string?)(e.Value?.ToString()));
+var telemetryOptions = TelemetryOptions.Read(envDict);
 builder.Services.AddSingleton(telemetryOptions);
 builder.Services.AddSingleton<ITelemetryEmitter>(sp =>
     TelemetryEmitter.Create(
@@ -34,9 +36,24 @@ builder.Services.AddSingleton<ITelemetryEmitter>(sp =>
         EnvFacts.Current()));
 builder.Services.AddSingleton<IEmbedderLoader, DefaultEmbedderLoader>();
 builder.Services.AddSingleton<VaultManager>();
-// Local CPU text generator for /chat. Singleton: the model loads once (lazily, on first
-// /chat) and is reused. Tests replace this with a stub via ConfigureTestServices.
-builder.Services.AddSingleton<ITextGenerator, LocalTextGenerator>();
+// Local CPU text generator for /chat, OR a user-configured BYO OpenAI-compatible server
+// (Phase D, 2026-07-06) when TEXTREE_BYO_PRESET is set. Singleton either way: the local path
+// loads its model once and reuses it; the remote path is stateless per-request but a singleton
+// keeps construction cheap and consistent with the local path's lifetime. Tests replace this
+// with a stub via ConfigureTestServices.
+var byoPreset = TextGeneratorSelection.SelectedPreset(envDict);
+if (byoPreset is not null)
+{
+    var byoBaseUrl = envDict.GetValueOrDefault("TEXTREE_BYO_BASE_URL") ?? "";
+    var byoApiKey = envDict.GetValueOrDefault("TEXTREE_BYO_API_KEY");
+    var byoModel = envDict.GetValueOrDefault("TEXTREE_BYO_MODEL") ?? "default";
+    builder.Services.AddSingleton<ITextGenerator>(
+        new RemoteChatTextGenerator(byoPreset, byoBaseUrl, byoApiKey, byoModel));
+}
+else
+{
+    builder.Services.AddSingleton<ITextGenerator, LocalTextGenerator>();
+}
 
 var app = builder.Build();
 
