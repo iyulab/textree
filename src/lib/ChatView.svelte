@@ -2,6 +2,7 @@
   import { onDestroy } from 'svelte';
   import { chatStore } from './chatStore.svelte';
   import { getGenerationConsent, setGenerationConsent, setAiConsent } from './aiConsent';
+  import { getByoConfig } from './byoConfig';
   import { prepareAiModel } from './ipc';
   import type { TreeNode } from './ipc';
   import { formatModelDownload } from './modelDownload.helpers';
@@ -42,7 +43,7 @@
     setGenerationConsent(true);
     setAiConsent(true);
     consented = true;
-    void prepareAiModel();
+    void prepareAiModel(getByoConfig() ?? undefined);
     void sendAndPoll();
   }
 

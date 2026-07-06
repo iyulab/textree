@@ -26,6 +26,7 @@
     type SearchHit,
   } from "$lib/ipc";
   import { getAiConsent } from "$lib/aiConsent";
+  import { getByoConfig } from "$lib/byoConfig";
   import { decideStartup, LAST_VAULT_KEY } from "$lib/startup.helpers";
   import { toPublishTokens } from "$lib/publish.helpers";
   import tokensCssRaw from "$lib/styles/tokens.css?raw";
@@ -1151,9 +1152,10 @@
     })();
 
     // Auto-start the local-AI host if the user previously consented (device-local flag). On first
-    // run / no consent the host stays unspawned until enabled in the ? palette.
+    // run / no consent the host stays unspawned until enabled in the ? palette. If BYO is
+    // configured, spawn with that config instead of the bundled local model.
     if (getAiConsent()) {
-      void prepareAiModel();
+      void prepareAiModel(getByoConfig() ?? undefined);
       aiHost.startPolling(); // durable cold-download indicator, independent of which view is open
     }
 

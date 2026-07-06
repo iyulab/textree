@@ -1,6 +1,7 @@
 import { invoke, Channel } from "@tauri-apps/api/core";
 import type { ChatMessage } from './ask.helpers';
 import type { DownloadSnapshot } from './modelDownload.helpers';
+import type { ByoConfig } from './byoConfig';
 
 export type NodeKind = "leaf" | "container";
 
@@ -256,6 +257,7 @@ export async function hostStatus(): Promise<{
   embedderError: string | null;
   embedderDownload: DownloadSnapshot | null;
   generatorDownload: DownloadSnapshot | null;
+  activeProvider: string;
 }> {
   return invoke("host_status");
 }
@@ -287,8 +289,56 @@ export function cancelAsk(): Promise<void> {
   return invoke<void>('cancel_ask');
 }
 
-export async function prepareAiModel(): Promise<void> {
-  return invoke<void>("prepare_ai_model");
+/** Spawn the local-AI host if not already up. Idempotent no-op if already Starting/Ready. When
+ * `byo` is given, spawns pointed at that OpenAI-compatible endpoint instead of the bundled local
+ * model; omitted (or undefined) spawns the bundled local model as before. */
+export async function prepareAiModel(byo?: ByoConfig): Promise<void> {
+  return invoke<void>("prepare_ai_model", {
+    preset: byo?.preset ?? null,
+    baseUrl: byo?.baseUrl ?? null,
+    model: byo?.model ?? null,
+  });
+}
+
+/** Force-reconfigure the host (Settings ▸Advanced Save / switch back to bundled local model):
+ * unlike `prepareAiModel` (no-op if already up), this always stops the current host and spawns a
+ * fresh one with the given config (or the bundled local model if `byo` is omitted). */
+export async function restartAiHost(byo?: ByoConfig): Promise<void> {
+  return invoke<void>("restart_ai_host", {
+    preset: byo?.preset ?? null,
+    baseUrl: byo?.baseUrl ?? null,
+    model: byo?.model ?? null,
+  });
+}
+
+export type ByoConnectionTestResult = { ok: true } | { ok: false; message: string };
+
+/** Test-connect to a candidate BYO endpoint (Settings ▸Advanced "Test connection") without
+ * spawning/reconfiguring the host. */
+export async function testByoConnection(
+  preset: string,
+  baseUrl: string,
+  apiKey?: string,
+): Promise<ByoConnectionTestResult> {
+  try {
+    await invoke<void>("test_byo_connection", { preset, baseUrl, apiKey: apiKey ?? null });
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, message: String(e) };
+  }
+}
+
+/** Store the BYO API key in the OS Credential Manager. Never persisted in localStorage. */
+export function setByoApiKey(key: string): Promise<void> {
+  return invoke<void>("set_byo_api_key", { key });
+}
+
+export function clearByoApiKey(): Promise<void> {
+  return invoke<void>("clear_byo_api_key");
+}
+
+export function hasByoApiKey(): Promise<boolean> {
+  return invoke<boolean>("has_byo_api_key");
 }
 
 /** Stop the local-AI host now (Settings → turn local AI off). No-op-safe if already down. */
