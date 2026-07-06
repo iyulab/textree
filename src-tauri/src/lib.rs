@@ -1,3 +1,4 @@
+pub(crate) mod byo_secret;
 pub(crate) mod commands;
 pub(crate) mod host;
 pub(crate) mod fs_ops;
@@ -103,7 +104,11 @@ pub fn run() {
             host::stop_host,
             host::ask,
             host::cancel_ask,
-            host::prepare_generation
+            host::prepare_generation,
+            host::test_byo_connection,
+            byo_secret::set_byo_api_key,
+            byo_secret::clear_byo_api_key,
+            byo_secret::has_byo_api_key
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

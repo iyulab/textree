@@ -469,6 +469,21 @@ pub fn host_status(host: State<'_, Arc<HostHandle>>) -> HostStatusPayload {
     }
 }
 
+/// Preset-aware reachability probe for the Settings ▸Advanced "Test connection" button. Does
+/// NOT touch the running host — a plain outbound GET, so the user gets fast feedback before
+/// committing to a host restart. `/v1/models` is the OpenAI-compatible listing convention
+/// (Ollama, LM Studio, vLLM); GPUStack proxies the same convention under its `/v1-openai/` path.
+#[tauri::command]
+pub fn test_byo_connection(preset: String, base_url: String, api_key: Option<String>) -> Result<(), String> {
+    let path = if preset.eq_ignore_ascii_case("gpustack") { "/v1-openai/models" } else { "/v1/models" };
+    let url = format!("{}{}", base_url.trim_end_matches('/'), path);
+    let mut req = ureq::get(&url).timeout(Duration::from_secs(5));
+    if let Some(key) = api_key.filter(|k| !k.is_empty()) {
+        req = req.set("Authorization", &format!("Bearer {key}"));
+    }
+    req.call().map(|_| ()).map_err(|e| e.to_string())
+}
+
 /// Fire-and-forget: bump ask_generation so any in-flight `ask` stream detects the mismatch,
 /// drops its reader, and closes the TCP connection — causing the host to see RequestAborted
 /// and stop generating. Called by the frontend on panel close / note switch.
