@@ -4,9 +4,14 @@
     getAiConsent, setAiConsent, getGenerationConsent, setGenerationConsent,
   } from "$lib/aiConsent";
   import {
-    prepareAiModel, prepareGeneration, stopHost, hostStatus, type HostStatus,
+    prepareAiModel, prepareGeneration, stopHost, hostStatus, restartAiHost,
+    testByoConnection, setByoApiKey, clearByoApiKey, hasByoApiKey, type HostStatus,
   } from "$lib/ipc";
-  import { computeAiSectionState, themeButtons, planEmbeddingToggle } from "$lib/settings.helpers";
+  import {
+    computeAiSectionState, themeButtons, planEmbeddingToggle,
+    presetDefaults, isValidByoUrl, byoProviderBadge,
+  } from "$lib/settings.helpers";
+  import { getByoConfig, setByoConfig, clearByoConfig, type ByoConfig, type ByoPreset } from "$lib/byoConfig";
 
   interface Props {
     root: string | null;
@@ -18,14 +23,84 @@
   let aiConsent = $state(getAiConsent());
   let genConsent = $state(getGenerationConsent());
   let host = $state<HostStatus | null>(null);
+  let activeProvider = $state("");
   let panelEl = $state<HTMLDivElement | undefined>();
 
   const ai = $derived(computeAiSectionState(aiConsent, genConsent, host));
   const themes = $derived(themeButtons(theme.mode));
 
+  // BYO (bring-your-own OpenAI-compatible endpoint) — Settings ▸Advanced.
+  // `byoStored` is re-read from its source of truth (localStorage, via getByoConfig()) after
+  // every mutation rather than derived/patched in place, so the "switch back to bundled local
+  // model" affordance never lingers stale against what's actually persisted.
+  const initialByo = getByoConfig();
+  let byoStored = $state(initialByo);
+  let byoEnabled = $state(initialByo !== null);
+  let byoPreset = $state<ByoPreset>(initialByo?.preset ?? "ollama");
+  let byoBaseUrl = $state(initialByo?.baseUrl ?? presetDefaults("ollama").baseUrl);
+  let byoModel = $state(initialByo?.model ?? "");
+  let byoApiKeyInput = $state("");
+  let byoHasStoredKey = $state(false);
+  let byoTestResult = $state<{ ok: boolean; message?: string } | null>(null);
+  let byoSaving = $state(false);
+
+  $effect(() => {
+    void hasByoApiKey().then((v) => { byoHasStoredKey = v; });
+  });
+
+  function onPresetChange(preset: ByoPreset): void {
+    byoPreset = preset;
+    byoBaseUrl = presetDefaults(preset).baseUrl;
+  }
+
+  async function onTestConnection(): Promise<void> {
+    byoTestResult = null;
+    const key = byoApiKeyInput || undefined;
+    const result = await testByoConnection(byoPreset, byoBaseUrl, key);
+    byoTestResult = result.ok ? { ok: true } : { ok: false, message: result.message };
+  }
+
+  async function onSaveByo(): Promise<void> {
+    byoSaving = true;
+    try {
+      if (byoApiKeyInput) {
+        await setByoApiKey(byoApiKeyInput);
+        byoHasStoredKey = true;
+        byoApiKeyInput = "";
+      }
+      const config: ByoConfig = { preset: byoPreset, baseUrl: byoBaseUrl, model: byoModel };
+      setByoConfig(config);
+      byoStored = getByoConfig();
+      await restartAiHost(config);
+      await refreshHost();
+    } finally {
+      byoSaving = false;
+    }
+  }
+
+  async function onSwitchToLocal(): Promise<void> {
+    byoSaving = true;
+    try {
+      clearByoConfig();
+      byoStored = getByoConfig();
+      byoEnabled = false;
+      await restartAiHost();
+      await refreshHost();
+    } finally {
+      byoSaving = false;
+    }
+  }
+
+  async function onClearApiKey(): Promise<void> {
+    await clearByoApiKey();
+    byoHasStoredKey = false;
+  }
+
   async function refreshHost(): Promise<void> {
     try {
-      host = (await hostStatus()).status;
+      const status = await hostStatus();
+      host = status.status;
+      activeProvider = status.activeProvider;
     } catch {
       host = "unavailable";
     }
@@ -144,7 +219,76 @@
         <span>Q&amp;A &amp; chat</span>
       </label>
       <p class="badge" role="status">{ai.badge}</p>
-      <!-- Phase D seam: BYO endpoint / model picker controls go below this line. -->
+
+      <details class="byo-advanced">
+        <summary>▸ Advanced: custom AI server</summary>
+        <label class="toggle">
+          <input
+            type="checkbox"
+            checked={byoEnabled}
+            onchange={(e) => (byoEnabled = e.currentTarget.checked)}
+          />
+          <span>Use a custom AI server</span>
+        </label>
+        {#if byoEnabled}
+          <div class="seg-group" role="group" aria-label="Preset">
+            {#each (["ollama", "gpustack", "custom"] as const) as p (p)}
+              <button
+                type="button"
+                class="seg"
+                class:active={byoPreset === p}
+                aria-pressed={byoPreset === p}
+                onclick={() => onPresetChange(p)}
+              >{p}</button>
+            {/each}
+          </div>
+          <label>
+            Base URL
+            <input type="text" bind:value={byoBaseUrl} placeholder="http://localhost:11434" />
+          </label>
+          <label>
+            Model (optional)
+            <input type="text" bind:value={byoModel} placeholder="Use the provider's default" />
+          </label>
+          <label>
+            API Key (optional)
+            <input
+              type="password"
+              bind:value={byoApiKeyInput}
+              placeholder={byoHasStoredKey ? "•••• saved" : "Leave blank if none"}
+            />
+          </label>
+          {#if byoHasStoredKey}
+            <button type="button" class="action" onclick={onClearApiKey}>Clear API key</button>
+          {/if}
+          <button
+            type="button"
+            class="action"
+            disabled={!isValidByoUrl(byoBaseUrl)}
+            onclick={onTestConnection}
+          >
+            Test connection
+          </button>
+          {#if byoTestResult}
+            <p class="badge" role="status">
+              {byoTestResult.ok ? "✓ Connected" : `✗ Connection failed: ${byoTestResult.message}`}
+            </p>
+          {/if}
+          <button
+            type="button"
+            class="action"
+            disabled={byoSaving || !isValidByoUrl(byoBaseUrl)}
+            onclick={onSaveByo}
+          >
+            {byoSaving ? "Applying…" : "Save"}
+          </button>
+        {:else if byoStored !== null}
+          <button type="button" class="action" disabled={byoSaving} onclick={onSwitchToLocal}>
+            {byoSaving ? "Applying…" : "Switch back to bundled local model"}
+          </button>
+        {/if}
+        <p class="badge" role="status">Current: {byoProviderBadge(activeProvider)}</p>
+      </details>
     </section>
   </div>
 </div>
@@ -258,5 +402,35 @@
     /* --fs-s not in tokens.css; substituted with --font-size-small (13px) */
     font-size: var(--font-size-small);
     color: var(--text-muted);
+  }
+  .byo-advanced {
+    margin-top: var(--sp-3);
+  }
+  .byo-advanced summary {
+    cursor: pointer;
+    color: var(--text-muted);
+    font-size: var(--font-size-small);
+  }
+  .byo-advanced > :not(summary) {
+    margin-top: var(--sp-2);
+  }
+  .byo-advanced label:not(.toggle) {
+    display: flex;
+    flex-direction: column;
+    gap: var(--sp-1);
+    color: var(--text-normal);
+    font-size: var(--font-size-small);
+  }
+  .byo-advanced input[type="text"],
+  .byo-advanced input[type="password"] {
+    background: var(--bg-secondary-alt);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-s);
+    color: var(--text-normal);
+    padding: var(--sp-1) var(--sp-2);
+    min-height: var(--sp-6);
+  }
+  .byo-advanced .seg-group {
+    margin: var(--sp-2) 0;
   }
 </style>

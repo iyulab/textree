@@ -6,6 +6,7 @@
  */
 import type { ThemeMode } from "./theme.svelte";
 import type { HostStatus } from "./ipc";
+import type { ByoPreset } from "./byoConfig";
 
 export type AiBadge = "ready" | "preparing" | "unavailable";
 
@@ -70,4 +71,32 @@ export interface EmbeddingTogglePlan {
 export function planEmbeddingToggle(next: boolean, currentGenConsent: boolean): EmbeddingTogglePlan {
   if (next) return { nextAiConsent: true, nextGenConsent: currentGenConsent, host: "spawn" };
   return { nextAiConsent: false, nextGenConsent: false, host: "shutdown" };
+}
+
+const PRESET_DEFAULT_BASE_URL: Record<ByoPreset, string> = {
+  ollama: "http://localhost:11434",
+  gpustack: "http://localhost:8080",
+  custom: "",
+};
+
+/** Prefill values for the preset segmented control in Settings ▸Advanced. */
+export function presetDefaults(preset: ByoPreset): { baseUrl: string } {
+  return { baseUrl: PRESET_DEFAULT_BASE_URL[preset] };
+}
+
+/** Minimal client-side sanity check before enabling the "Test connection"/"Save" buttons. */
+export function isValidByoUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === "http:" || parsed.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+/** Badge text for "currently running on: ...". Empty string mirrors HostHandle's default
+ * (Rust's #[derive(Default)] gives Mutex<String> "" rather than "local" — both map here). */
+export function byoProviderBadge(activeProvider: string): string {
+  if (activeProvider === "" || activeProvider === "local") return "Local model";
+  return `Custom server (${activeProvider})`;
 }

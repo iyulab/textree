@@ -3,6 +3,9 @@ import {
   computeAiSectionState,
   themeButtons,
   planEmbeddingToggle,
+  presetDefaults,
+  isValidByoUrl,
+  byoProviderBadge,
 } from "./settings.helpers";
 
 describe("computeAiSectionState", () => {
@@ -74,5 +77,39 @@ describe("planEmbeddingToggle", () => {
       nextGenConsent: false,
       host: "shutdown",
     });
+  });
+});
+
+describe("presetDefaults", () => {
+  it("returns Ollama's default base URL", () => {
+    expect(presetDefaults("ollama")).toEqual({ baseUrl: "http://localhost:11434" });
+  });
+  it("returns GPUStack's default base URL", () => {
+    expect(presetDefaults("gpustack")).toEqual({ baseUrl: "http://localhost:8080" });
+  });
+  it("returns an empty base URL for custom", () => {
+    expect(presetDefaults("custom")).toEqual({ baseUrl: "" });
+  });
+});
+
+describe("isValidByoUrl", () => {
+  it("accepts http/https URLs", () => {
+    expect(isValidByoUrl("http://localhost:11434")).toBe(true);
+    expect(isValidByoUrl("https://gpustack.internal:8080")).toBe(true);
+  });
+  it("rejects empty or malformed input", () => {
+    expect(isValidByoUrl("")).toBe(false);
+    expect(isValidByoUrl("not a url")).toBe(false);
+    expect(isValidByoUrl("ftp://localhost")).toBe(false);
+  });
+});
+
+describe("byoProviderBadge", () => {
+  it("shows the local label for empty/local activeProvider", () => {
+    expect(byoProviderBadge("")).toBe("Local model");
+    expect(byoProviderBadge("local")).toBe("Local model");
+  });
+  it("shows the preset name for a BYO preset", () => {
+    expect(byoProviderBadge("ollama")).toBe("Custom server (ollama)");
   });
 });
