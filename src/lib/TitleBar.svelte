@@ -41,9 +41,12 @@
   function close() { void appWindow.close().catch(() => {}); }
 </script>
 
-<!-- data-tauri-drag-region on the bar background makes empty space a window-move handle
-     (double-click maximizes). The three clusters below stop that by being real buttons. -->
-<div class="titlebar" data-tauri-drag-region>
+<!-- data-tauri-drag-region="deep" makes the bar background AND its non-clickable descendants
+     (the flex spacers and the brand span) window-move handles (double-click maximizes). "deep"
+     is required because the flex children cover the bar; a bare attribute would only drag when
+     the mousedown target is .titlebar itself. Real <button>s below still short-circuit and stay
+     clickable. -->
+<div class="titlebar" data-tauri-drag-region="deep">
   <div class="tb-left">
     <button
       class="tb-icon-btn"

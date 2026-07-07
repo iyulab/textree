@@ -1612,7 +1612,7 @@
   .sidebar-head .icon-btn,
   .toolbar {
     opacity: 0;
-    transition: opacity 0.15s ease;
+    transition: opacity var(--transition-normal);
   }
   .sidebar:hover .sidebar-head .icon-btn,
   .sidebar:hover .toolbar,
