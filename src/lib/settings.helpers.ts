@@ -76,6 +76,10 @@ export function planEmbeddingToggle(next: boolean, currentGenConsent: boolean): 
 const PRESET_DEFAULT_BASE_URL: Record<ByoPreset, string> = {
   ollama: "http://localhost:11434",
   gpustack: "http://localhost:8080",
+  openai: "https://api.openai.com/v1",
+  anthropic: "",
+  gemini: "https://generativelanguage.googleapis.com/v1beta/openai",
+  grok: "https://api.x.ai/v1",
   custom: "",
 };
 
@@ -94,6 +98,13 @@ export function isValidByoUrl(url: string): boolean {
   }
 }
 
+/** Anthropic's SDK supplies its own base URL, so a blank value is valid for that preset only.
+ * Every other preset needs a concrete http(s) endpoint. */
+export function isValidByoUrlForPreset(preset: ByoPreset, url: string): boolean {
+  if (preset === "anthropic" && url.trim() === "") return true;
+  return isValidByoUrl(url);
+}
+
 /** Gates the Save button: a blank model has no real "provider default" to fall back on — the
  * host would send the literal placeholder string "default" as the model name, which fails on
  * the very first chat request against a real server. Required, not just recommended. */
@@ -105,5 +116,9 @@ export function isValidByoModel(model: string): boolean {
  * (Rust's #[derive(Default)] gives Mutex<String> "" rather than "local" — both map here). */
 export function byoProviderBadge(activeProvider: string): string {
   if (activeProvider === "" || activeProvider === "local") return "Local model";
-  return `Custom server (${activeProvider})`;
+  const labels: Record<string, string> = {
+    ollama: "Ollama", gpustack: "GPUStack", openai: "OpenAI",
+    anthropic: "Anthropic", gemini: "Gemini", grok: "Grok",
+  };
+  return `Custom server (${labels[activeProvider] ?? activeProvider})`;
 }

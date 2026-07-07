@@ -5,6 +5,7 @@ import {
   planEmbeddingToggle,
   presetDefaults,
   isValidByoUrl,
+  isValidByoUrlForPreset,
   isValidByoModel,
   byoProviderBadge,
 } from "./settings.helpers";
@@ -93,6 +94,34 @@ describe("presetDefaults", () => {
   });
 });
 
+describe("presetDefaults frontier baseUrls", () => {
+  it("prefills openai", () => {
+    expect(presetDefaults("openai").baseUrl).toBe("https://api.openai.com/v1");
+  });
+  it("prefills grok", () => {
+    expect(presetDefaults("grok").baseUrl).toBe("https://api.x.ai/v1");
+  });
+  it("prefills gemini", () => {
+    expect(presetDefaults("gemini").baseUrl).toBe(
+      "https://generativelanguage.googleapis.com/v1beta/openai");
+  });
+  it("leaves anthropic baseUrl blank (SDK default)", () => {
+    expect(presetDefaults("anthropic").baseUrl).toBe("");
+  });
+});
+
+describe("isValidByoUrlForPreset", () => {
+  it("accepts a blank baseUrl for anthropic", () => {
+    expect(isValidByoUrlForPreset("anthropic", "")).toBe(true);
+  });
+  it("rejects a blank baseUrl for non-anthropic presets", () => {
+    expect(isValidByoUrlForPreset("openai", "")).toBe(false);
+  });
+  it("accepts a valid http(s) baseUrl for any preset", () => {
+    expect(isValidByoUrlForPreset("openai", "https://api.openai.com/v1")).toBe(true);
+  });
+});
+
 describe("isValidByoUrl", () => {
   it("accepts http/https URLs", () => {
     expect(isValidByoUrl("http://localhost:11434")).toBe(true);
@@ -122,6 +151,6 @@ describe("byoProviderBadge", () => {
     expect(byoProviderBadge("local")).toBe("Local model");
   });
   it("shows the preset name for a BYO preset", () => {
-    expect(byoProviderBadge("ollama")).toBe("Custom server (ollama)");
+    expect(byoProviderBadge("ollama")).toBe("Custom server (Ollama)");
   });
 });
