@@ -145,3 +145,30 @@ test("theme segmented control switches the applied theme", async () => {
   await page.keyboard.press("Escape");
   await expect(dialog).toBeHidden();
 });
+
+// ── Test 5: frontier BYO preset selection prefills its base URL ─────────────
+test("selecting the openai preset prefills its base URL", async () => {
+  await openSettingsViaPalette(page);
+  const dialog = page.getByRole("dialog", { name: "Settings" });
+  await dialog.getByText("Advanced: custom AI server").click();
+  await dialog.getByLabel("Use a custom AI server").check();
+  await dialog.getByRole("button", { name: /^openai$/i }).click();
+  await expect(dialog.getByLabel(/Base URL/)).toHaveValue("https://api.openai.com/v1");
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeHidden();
+});
+
+// ── Test 6: anthropic preset leaves the base URL blank yet Save is enabled ──
+test("selecting anthropic makes the base URL optional (blank is savable)", async () => {
+  await openSettingsViaPalette(page);
+  const dialog = page.getByRole("dialog", { name: "Settings" });
+  await dialog.getByText("Advanced: custom AI server").click();
+  await dialog.getByLabel("Use a custom AI server").check();
+  await dialog.getByRole("button", { name: /^anthropic$/i }).click();
+  await expect(dialog.getByLabel(/Base URL/)).toHaveValue("");
+  // Model is required for Save; a blank base URL must still allow Save for anthropic.
+  await dialog.getByLabel("Model (required)").fill("claude-opus-4-5");
+  await expect(dialog.getByRole("button", { name: /^Save$/ })).toBeEnabled();
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeHidden();
+});
