@@ -1,9 +1,14 @@
 using System.Text.Json;
+using IronProw.Core;
 using LMSupply.Embedder;
 using Textree.Host;
 using Textree.Host.Contracts;
 using Textree.Host.Rag;
 using Textree.Host.Telemetry;
+// Program.cs also constructs Textree.Host.Rag.ChatMessage below (the /chat DTO mapping); alias
+// M.E.AI's IChatClient explicitly rather than `using Microsoft.Extensions.AI;`, which would make
+// the unqualified `ChatMessage` reference ambiguous between the two types.
+using IChatClient = Microsoft.Extensions.AI.IChatClient;
 
 // ── DI / builder ──────────────────────────────────────────────────────────────
 // The embedder loads in the background so the host begins accepting requests
@@ -52,8 +57,13 @@ if (byoPreset is not null)
     // testing, etc.) — it is NOT a real model name and does NOT resolve to the server's actual
     // default; a request using it will still 404/fail against a real OpenAI-compatible server.
     var byoModel = envDict.GetValueOrDefault("TEXTREE_BYO_MODEL") ?? "default";
-    builder.Services.AddSingleton<ITextGenerator>(
-        new RemoteChatTextGenerator(byoPreset, byoBaseUrl, byoApiKey, byoModel));
+
+    // iron-prow gateway with exactly one provider (selection inert). The bridge owns provider
+    // construction (substrate); the host only adapts the resulting IChatClient into ITextGenerator.
+    var prow = builder.Services.AddIronProw();
+    ByoProviderRegistration.Register(prow, byoPreset, byoBaseUrl, byoApiKey, byoModel);
+    builder.Services.AddSingleton<ITextGenerator>(sp =>
+        new RemoteChatTextGenerator(sp.GetRequiredService<IChatClient>(), byoModel));
 }
 else
 {

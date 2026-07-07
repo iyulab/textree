@@ -1,120 +1,125 @@
-using System.Net;
-using System.Text;
+using System.Runtime.CompilerServices;
+using Microsoft.Extensions.AI;
 using Textree.Host.Rag;
 using Xunit;
+using MeaiChatMessage = Microsoft.Extensions.AI.ChatMessage;
+using RagChatMessage = Textree.Host.Rag.ChatMessage;
 
 namespace Textree.Host.Tests;
 
+// RemoteChatTextGenerator no longer constructs providers — Program.cs registers exactly one
+// iron-prow provider (ByoProviderRegistration, covered by ByoProviderRegistrationTests) and this
+// class only adapts the resulting DI-singleton IChatClient into ITextGenerator. So these tests
+// exercise streaming behavior in isolation against a hand-rolled fake IChatClient (the test
+// project references no mocking library — see Textree.Host.Tests.csproj). Preset→provider dispatch
+// is out of scope here; it moved to ByoProviderRegistration.
 public sealed class RemoteChatTextGeneratorTests
 {
-    // Minimal OpenAI-compatible Chat Completions stub server. Empirically (verified against the
-    // actual request the ironhive/OpenAI SDK client sends), the client always requests
-    // `"stream":true` — RemoteChatTextGenerator only ever calls the streaming API, there is no
-    // non-streaming code path to negotiate away from. A stub answering with a single plain JSON
-    // completion object (no SSE framing) is silently swallowed by the SDK's SSE parser (zero
-    // chunks, no exception) rather than raising an error, so the stub must speak real
-    // `text/event-stream` framing (`data: {...}\n\n`, terminated by `data: [DONE]\n\n`) to
-    // actually exercise the streaming/response-text path end-to-end.
-    private static (HttpListener listener, string baseUrl) StartStub(string assistantText, int statusCode = 200)
-    {
-        var listener = new HttpListener();
-        var port = GetFreePort();
-        var baseUrl = $"http://127.0.0.1:{port}";
-        listener.Prefixes.Add(baseUrl + "/");
-        listener.Start();
-        _ = Task.Run(async () =>
-        {
-            try
-            {
-                var ctx = await listener.GetContextAsync();
-                ctx.Response.StatusCode = statusCode;
-                ctx.Response.ContentType = "text/event-stream";
-                var chunkJson =
-                    $$"""{"id":"x","object":"chat.completion.chunk","created":0,"model":"m","choices":[{"index":0,"delta":{"role":"assistant","content":"{{assistantText}}"},"finish_reason":null}]}""";
-                await using var writer = new StreamWriter(ctx.Response.OutputStream, Encoding.UTF8) { AutoFlush = true };
-                await writer.WriteAsync($"data: {chunkJson}\n\n");
-                await writer.WriteAsync("data: [DONE]\n\n");
-            }
-            catch (HttpListenerException) { /* listener stopped under us — test is done */ }
-            catch (ObjectDisposedException) { /* same */ }
-        });
-        return (listener, baseUrl);
-    }
-
-    private static int GetFreePort()
-    {
-        var l = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
-        l.Start();
-        var port = ((System.Net.IPEndPoint)l.LocalEndpoint).Port;
-        l.Stop();
-        return port;
-    }
-
-    private const string AssistantText = "hello from byo";
+    private const string Model = "llama3";
 
     [Fact]
-    public async Task GenerateAsync_returns_remote_response_text_for_ollama_preset()
+    public async Task GenerateAsync_streams_concatenated_text_from_injected_client()
     {
-        var (listener, baseUrl) = StartStub(AssistantText);
-        try
+        var fake = new FakeChatClient(updates: ["hello ", "from ", "byo"]);
+        var gen = new RemoteChatTextGenerator(fake, Model);
+
+        var chunks = new List<string>();
+        await foreach (var chunk in gen.GenerateAsync(
+            [new RagChatMessage("user", "hi")], new GenerationOptions(), CancellationToken.None))
         {
-            var gen = new RemoteChatTextGenerator("ollama", baseUrl, apiKey: null, model: "llama3");
-            var chunks = new List<string>();
-            await foreach (var chunk in gen.GenerateAsync(
-                [new ChatMessage("user", "hi")], new GenerationOptions(), CancellationToken.None))
-            {
-                chunks.Add(chunk);
-            }
-            Assert.Contains("hello from byo", string.Concat(chunks));
+            chunks.Add(chunk);
         }
-        finally { listener.Stop(); }
+
+        Assert.Equal("hello from byo", string.Concat(chunks));
     }
 
     [Fact]
-    public async Task GenerateAsync_returns_remote_response_text_for_gpustack_preset()
+    public async Task GenerateAsync_records_last_error_and_rethrows_when_client_throws()
     {
-        var (listener, baseUrl) = StartStub(AssistantText);
-        try
-        {
-            // GpuStackConfig bakes in the `/v1-openai/` path itself — the stub above answers on
-            // any path under baseUrl since HttpListener with a bare-host prefix matches all paths.
-            var gen = new RemoteChatTextGenerator("gpustack", baseUrl, apiKey: null, model: "llama3");
-            var chunks = new List<string>();
-            await foreach (var chunk in gen.GenerateAsync(
-                [new ChatMessage("user", "hi")], new GenerationOptions(), CancellationToken.None))
-            {
-                chunks.Add(chunk);
-            }
-            Assert.Contains("hello from byo", string.Concat(chunks));
-        }
-        finally { listener.Stop(); }
-    }
+        var fake = new FakeChatClient(throwMessage: "connection refused");
+        var gen = new RemoteChatTextGenerator(fake, Model);
 
-    [Fact]
-    public async Task GenerateAsync_records_last_error_when_server_unreachable()
-    {
-        // No listener bound — connection refused within the 2s ConnectTimeout baked into
-        // OpenAICompatibleConfig/GpuStackConfig.
-        var port = GetFreePort();
-        var gen = new RemoteChatTextGenerator("ollama", $"http://127.0.0.1:{port}", apiKey: null, model: "llama3");
-
-        await Assert.ThrowsAnyAsync<Exception>(async () =>
+        var ex = await Assert.ThrowsAnyAsync<Exception>(async () =>
         {
             await foreach (var _ in gen.GenerateAsync(
-                [new ChatMessage("user", "hi")], new GenerationOptions(), CancellationToken.None))
+                [new RagChatMessage("user", "hi")], new GenerationOptions(), CancellationToken.None))
             { }
         });
 
-        Assert.NotNull(gen.LastError);
+        Assert.Equal("connection refused", ex.Message);
+        Assert.Equal("connection refused", gen.LastError);
     }
 
     [Fact]
     public void Ready_is_true_immediately_after_construction()
     {
-        // No load step for a remote provider (unlike LocalTextGenerator's model download) —
-        // reachability is proven per-request, not up front. Ready means "configured", matching
-        // the honest lazy-connect model ironhive's own Config classes use.
-        var gen = new RemoteChatTextGenerator("ollama", "http://127.0.0.1:1", apiKey: null, model: "llama3");
+        // No load step for a remote provider (unlike LocalTextGenerator's model download):
+        // reachability is proven per-request, not up front. Ready means "configured".
+        var gen = new RemoteChatTextGenerator(new FakeChatClient(updates: []), Model);
         Assert.True(gen.Ready);
+    }
+
+    [Fact]
+    public async Task GenerateAsync_never_disposes_the_injected_singleton_client()
+    {
+        // Regression lock for the singleton-disposal bug: the injected IChatClient is a DI
+        // singleton (iron-prow's gateway, shared across every /chat request). The generator wraps
+        // it in a LocalSafetyChatClient (a DelegatingChatClient, whose Dispose forwards to the
+        // inner client), so a `using`/Dispose on that wrapper would dispose the singleton after
+        // the first request and break every subsequent one. Assert Dispose is never called, even
+        // across multiple GenerateAsync calls.
+        var fake = new FakeChatClient(updates: ["a", "b"]);
+        var gen = new RemoteChatTextGenerator(fake, Model);
+
+        for (var i = 0; i < 2; i++)
+        {
+            await foreach (var _ in gen.GenerateAsync(
+                [new RagChatMessage("user", "hi")], new GenerationOptions(), CancellationToken.None))
+            { }
+        }
+
+        Assert.Equal(0, fake.DisposeCallCount);
+    }
+
+    // ── Fake IChatClient: streams canned updates, or throws, and records Dispose calls ───────
+    private sealed class FakeChatClient : IChatClient
+    {
+        private readonly string[] _updates;
+        private readonly string? _throwMessage;
+
+        public FakeChatClient(string[]? updates = null, string? throwMessage = null)
+        {
+            _updates = updates ?? [];
+            _throwMessage = throwMessage;
+        }
+
+        /// <summary>Number of times <see cref="Dispose"/> was called — must stay 0 in use.</summary>
+        public int DisposeCallCount { get; private set; }
+
+        public async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
+            IEnumerable<MeaiChatMessage> messages,
+            ChatOptions? options = null,
+            [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            if (_throwMessage is not null)
+                throw new InvalidOperationException(_throwMessage);
+
+            foreach (var text in _updates)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                yield return new ChatResponseUpdate(ChatRole.Assistant, text);
+                await Task.Yield();
+            }
+        }
+
+        public Task<ChatResponse> GetResponseAsync(
+            IEnumerable<MeaiChatMessage> messages,
+            ChatOptions? options = null,
+            CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException("RemoteChatTextGenerator only uses the streaming API.");
+
+        public object? GetService(Type serviceType, object? serviceKey = null) => null;
+
+        public void Dispose() => DisposeCallCount++;
     }
 }
