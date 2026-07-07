@@ -45,11 +45,12 @@ frontend preset list.
 
 At runtime the host is bound to exactly ONE provider — `TEXTREE_BYO_PRESET` is read
 once at startup (`Program.cs`), and switching providers happens by restarting the host
-(`restart_ai_host` re-spawns with new env). So we register exactly one provider with
-the bridge and use its `IChatClient` directly. We do NOT adopt
-`SelectingChatClient` / `IProviderSelector` / `ProviderKind`-based routing — those are
-for per-request selection among many live providers, which textree never needs. The
-original "gateway inert for a single provider" reasoning still holds.
+(`restart_ai_host` re-spawns with new env). Frontier providers are consumed through the
+standard `services.AddIronProw().AddIronHive*(…)` registration and
+`GetRequiredService<IChatClient>()`. The gateway (`SelectingChatClient`) is therefore on
+the path, but with a single registered provider its registry/selection layer is inert —
+selection is a no-op that always returns the one provider. We do not add a second
+provider or any custom `IProviderSelector`; per-request routing is never exercised.
 
 ## Architecture
 
