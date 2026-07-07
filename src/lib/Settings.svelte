@@ -258,9 +258,9 @@
             {/each}
           </div>
           <label>
-            Base URL{#if byoPreset === "anthropic"} (optional){/if}
+            Base URL{#if byoPreset === "anthropic" || byoPreset === "gemini"} (optional){/if}
             <input type="text" bind:value={byoBaseUrl}
-              placeholder={byoPreset === "anthropic" ? "leave blank for the default endpoint" : "http://localhost:11434"} />
+              placeholder={byoPreset === "anthropic" || byoPreset === "gemini" ? "leave blank for the default endpoint" : "http://localhost:11434"} />
           </label>
           <label>
             Model (required)

@@ -533,9 +533,11 @@ fn resolve_test_key(api_key: Option<String>, lookup: impl FnOnce() -> Option<Str
 /// (Ollama, LM Studio, vLLM); GPUStack proxies the same convention under its `/v1-openai/` path.
 #[tauri::command]
 pub fn test_byo_connection(preset: String, base_url: String, api_key: Option<String>) -> Result<(), String> {
-    // Anthropic's endpoint is fixed and uses x-api-key (not the Bearer /v1/models probe below);
-    // treat a configured anthropic preset as reachable and let the first real request validate.
-    if preset.eq_ignore_ascii_case("anthropic") {
+    // Frontier providers use versioned base URLs (or a fixed endpoint for anthropic) and their own
+    // auth; the Bearer /v1/models probe below assumes a version-less base, so skip it for them and
+    // let the first real request validate.
+    let p = preset.to_ascii_lowercase();
+    if matches!(p.as_str(), "anthropic" | "openai" | "gemini" | "grok") {
         return Ok(());
     }
     let path = if preset.eq_ignore_ascii_case("gpustack") { "/v1-openai/models" } else { "/v1/models" };
@@ -1201,6 +1203,30 @@ mod tests {
         // Anthropic uses x-api-key + a fixed endpoint, not the Bearer /v1/models probe.
         // A blank base URL must not be treated as an unreachable server.
         let r = test_byo_connection("anthropic".to_string(), "".to_string(), Some("sk-ant".to_string()));
+        assert!(r.is_ok());
+    }
+
+    #[test]
+    fn test_byo_connection_frontier_presets_short_circuit_without_network_call() {
+        // openai/gemini/grok prefill versioned base URLs (e.g. ".../v1"); appending "/v1/models"
+        // would double-version the path and 404. These must short-circuit exactly like anthropic
+        // and never reach the network — asserted here by using base URLs that would fail DNS/
+        // connect if the probe actually ran (real hosts, but the short-circuit means it doesn't matter).
+        let r = test_byo_connection(
+            "openai".to_string(),
+            "https://api.openai.com/v1".to_string(),
+            Some("sk-test".to_string()),
+        );
+        assert!(r.is_ok());
+
+        let r = test_byo_connection("gemini".to_string(), "".to_string(), Some("sk-test".to_string()));
+        assert!(r.is_ok());
+
+        let r = test_byo_connection(
+            "grok".to_string(),
+            "https://api.x.ai/v1".to_string(),
+            Some("sk-test".to_string()),
+        );
         assert!(r.is_ok());
     }
 

@@ -78,7 +78,7 @@ const PRESET_DEFAULT_BASE_URL: Record<ByoPreset, string> = {
   gpustack: "http://localhost:8080",
   openai: "https://api.openai.com/v1",
   anthropic: "",
-  gemini: "https://generativelanguage.googleapis.com/v1beta/openai",
+  gemini: "",
   grok: "https://api.x.ai/v1",
   custom: "",
 };
@@ -98,10 +98,10 @@ export function isValidByoUrl(url: string): boolean {
   }
 }
 
-/** Anthropic's SDK supplies its own base URL, so a blank value is valid for that preset only.
- * Every other preset needs a concrete http(s) endpoint. */
+/** Anthropic and Gemini's native SDKs supply their own base URL, so a blank value is valid for
+ * those presets only. Every other preset needs a concrete http(s) endpoint. */
 export function isValidByoUrlForPreset(preset: ByoPreset, url: string): boolean {
-  if (preset === "anthropic" && url.trim() === "") return true;
+  if ((preset === "anthropic" || preset === "gemini") && url.trim() === "") return true;
   return isValidByoUrl(url);
 }
 

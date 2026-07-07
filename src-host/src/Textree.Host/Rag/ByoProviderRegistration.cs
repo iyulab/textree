@@ -15,7 +15,10 @@ public static class ByoProviderRegistration
         IronProwBuilder builder, string preset, string baseUrl, string? apiKey, string model)
     {
         // The OpenAI SDK wraps ApiKey in an ApiKeyCredential that throws on empty; unauthenticated
-        // local servers (Ollama) don't check it, so pass a placeholder when blank.
+        // local servers (Ollama) don't check it, so pass a placeholder when blank. This placeholder
+        // is only meaningful for key-optional LAN providers (ollama/gpustack) — frontier providers
+        // (openai/anthropic/gemini/grok) require a real key, and a blank one here will 401 on the
+        // first real request, surfaced to the user via LastError.
         string key = string.IsNullOrEmpty(apiKey) ? "not-required" : apiKey;
 
         return preset.ToLowerInvariant() switch

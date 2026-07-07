@@ -101,9 +101,8 @@ describe("presetDefaults frontier baseUrls", () => {
   it("prefills grok", () => {
     expect(presetDefaults("grok").baseUrl).toBe("https://api.x.ai/v1");
   });
-  it("prefills gemini", () => {
-    expect(presetDefaults("gemini").baseUrl).toBe(
-      "https://generativelanguage.googleapis.com/v1beta/openai");
+  it("leaves gemini baseUrl blank (native SDK default)", () => {
+    expect(presetDefaults("gemini").baseUrl).toBe("");
   });
   it("leaves anthropic baseUrl blank (SDK default)", () => {
     expect(presetDefaults("anthropic").baseUrl).toBe("");
@@ -114,7 +113,10 @@ describe("isValidByoUrlForPreset", () => {
   it("accepts a blank baseUrl for anthropic", () => {
     expect(isValidByoUrlForPreset("anthropic", "")).toBe(true);
   });
-  it("rejects a blank baseUrl for non-anthropic presets", () => {
+  it("accepts a blank baseUrl for gemini", () => {
+    expect(isValidByoUrlForPreset("gemini", "")).toBe(true);
+  });
+  it("rejects a blank baseUrl for non-anthropic/gemini presets", () => {
     expect(isValidByoUrlForPreset("openai", "")).toBe(false);
   });
   it("accepts a valid http(s) baseUrl for any preset", () => {
