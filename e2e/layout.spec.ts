@@ -4,6 +4,12 @@ import { connectToApp } from "./helpers";
 /**
  * D2 — app shell. Assert in the real webview that sidebar collapse/expand +
  * resize work and that the selection persists in localStorage.
+ *
+ * The sidebar collapse toggle now lives in the custom title bar (TitleBar.svelte),
+ * not in the sidebar itself — the old in-content "Expand sidebar" / sidebar-head
+ * "Collapse sidebar" buttons were removed when the title bar shipped. The toggle
+ * is a single button whose accessible name flips between "Hide sidebar" (sidebar
+ * expanded) and "Show sidebar" (sidebar collapsed).
  */
 
 let browser: Browser;
@@ -19,8 +25,9 @@ test.afterAll(async () => {
 
 /** Normalize the sidebar to the expanded (default) state. */
 async function ensureExpanded(page: Page): Promise<void> {
-  if (await page.locator(".expand-btn").isVisible().catch(() => false)) {
-    await page.locator(".expand-btn").click();
+  const showBtn = page.getByRole("button", { name: "Show sidebar" });
+  if (await showBtn.isVisible().catch(() => false)) {
+    await showBtn.click();
   }
   await expect(page.locator(".sidebar")).toBeVisible();
 }
@@ -28,20 +35,65 @@ async function ensureExpanded(page: Page): Promise<void> {
 test("sidebar collapse/expand + persist", async () => {
   await ensureExpanded(page);
 
-  // Collapse
-  await page.getByRole("button", { name: "Collapse sidebar" }).click();
+  // Collapse via the title bar toggle (aria-label flips to "Show sidebar" once collapsed).
+  await page.getByRole("button", { name: "Hide sidebar" }).click();
   await expect(page.locator(".sidebar")).toHaveCount(0);
-  await expect(page.locator(".expand-btn")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Show sidebar" })).toBeVisible();
   expect(
     await page.evaluate(() => localStorage.getItem("textree-sidebar-collapsed")),
   ).toBe("true");
 
   // Expand
-  await page.locator(".expand-btn").click();
+  await page.getByRole("button", { name: "Show sidebar" }).click();
   await expect(page.locator(".sidebar")).toBeVisible();
   expect(
     await page.evaluate(() => localStorage.getItem("textree-sidebar-collapsed")),
   ).toBe("false");
+});
+
+test("title bar toggle collapses and expands the sidebar", async () => {
+  await ensureExpanded(page);
+
+  await expect(page.locator(".sidebar")).toBeVisible();
+  await page.getByRole("button", { name: /Hide sidebar/i }).click();
+  await expect(page.locator(".sidebar")).toHaveCount(0);
+  await page.getByRole("button", { name: /Show sidebar/i }).click();
+  await expect(page.locator(".sidebar")).toBeVisible();
+});
+
+test("title bar center button opens the command palette", async () => {
+  await ensureExpanded(page);
+
+  // Not a role-name lookup: the button's accessible name comes from its visible text content
+  // (the current note/vault label, e.g. "Textree"), not its `title` attribute — the icon inside
+  // is aria-hidden. `.tb-center` is the stable hook (see TitleBar.svelte).
+  await page.locator(".tb-center").click();
+  await expect(page.locator('[data-testid="palette-overlay"]')).toBeVisible({ timeout: 3_000 });
+
+  // Clean up so later tests in this file don't inherit the palette open. Escape only closes
+  // the palette when its input has focus (Palette.svelte binds onKey to the input, not the
+  // page); clicking the title bar button leaves focus on that button, so re-focus the input
+  // first (same pattern as e2e/semantic.spec.ts's dismissPaletteIfOpen).
+  await page.getByTestId("palette-input").focus();
+  await page.keyboard.press("Escape");
+  await expect(page.locator('[data-testid="palette-overlay"]')).toHaveCount(0);
+});
+
+test("sidebar controls are hidden until the sidebar is hovered", async () => {
+  await ensureExpanded(page);
+
+  const themeBtn = page.getByRole("button", { name: "Toggle theme" });
+  // Move the mouse away from the sidebar first so a leftover hover from a previous
+  // test doesn't leave the controls revealed.
+  await page.mouse.move(0, 0);
+
+  // Hidden at rest (opacity 0 on the theme/settings icon buttons in .sidebar-head).
+  await expect(themeBtn).toHaveCSS("opacity", "0");
+  await page.locator(".sidebar").hover();
+  await expect(themeBtn).toHaveCSS("opacity", "1");
+  await expect(themeBtn).toBeVisible();
+
+  await page.mouse.move(0, 0);
 });
 
 test("sidebar resize + width persist", async () => {
