@@ -50,6 +50,8 @@
   import { parseFrontmatter, getField } from "$lib/frontmatter.helpers";
   import { palette } from "$lib/paletteStore.svelte";
   import Palette from "$lib/Palette.svelte";
+  import TitleBar from "$lib/TitleBar.svelte";
+  import { contextLabel } from "$lib/titlebar.helpers";
   import { buildCommands, activeCommands, type PaletteActions } from "$lib/commands";
   import { matchKeybinding, isFormFieldTag } from "$lib/keybinding.helpers";
   import { mergeOrder, nav } from "$lib/nav.svelte";
@@ -1228,19 +1230,17 @@
   {/if}
 {/if}
 
-<div class="app" style="--sidebar-width: {layout.width}px">
+<div class="shell">
+  <TitleBar
+    label={contextLabel(layout.mode, activeName, root ? vaultName(root) : "")}
+    collapsed={layout.collapsed}
+    onToggleSidebar={() => layout.toggleCollapsed()}
+    onOpenPalette={() => palette.show()}
+  />
+  <div class="app" style="--sidebar-width: {layout.width}px">
   {#if !layout.collapsed}
   <aside class="sidebar">
     <div class="sidebar-head">
-      {#if root}
-        <button
-          class="vault-name"
-          onclick={chooseVault}
-          title={`Switch vault — current: ${root}`}
-        ><Icon name="folder" /><span class="vault-label">{vaultName(root)}</span></button>
-      {:else}
-        <span class="brand">Textree</span>
-      {/if}
       <button
         class="icon-btn"
         onclick={() => theme.toggle()}
@@ -1249,10 +1249,10 @@
       ><Icon name={theme.resolved === "dark" ? "sun" : "moon"} /></button>
       <button
         class="icon-btn"
-        onclick={() => layout.toggleCollapsed()}
-        title="Collapse sidebar"
-        aria-label="Collapse sidebar"
-      ><Icon name="panel-left-close" /></button>
+        onclick={() => (showSettings = true)}
+        title="Settings"
+        aria-label="Settings"
+      ><Icon name="settings" /></button>
     </div>
     {#if root}
       <div class="toolbar" role="toolbar" aria-label="Note actions">
@@ -1551,20 +1551,19 @@
       />
     {/if}
   </main>
-  {#if layout.collapsed}
-    <button
-      class="expand-btn"
-      onclick={() => layout.toggleCollapsed()}
-      title="Expand sidebar"
-      aria-label="Expand sidebar"
-    ><Icon name="panel-left-open" /></button>
-  {/if}
+  </div>
 </div>
 
 <style>
+  .shell {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+  }
   .app {
     display: flex;
-    height: 100vh;
+    flex: 1;
+    min-height: 0;
     font-family: var(--font-ui);
     color: var(--text-normal);
     background: var(--bg-primary);
@@ -1598,6 +1597,19 @@
     align-items: center;
     gap: var(--sp-1);
     margin-bottom: var(--sp-2);
+  }
+  /* Chrome on demand: sidebar controls stay hidden until the sidebar is hovered or a control
+     inside it has focus, so a captured/at-rest sidebar shows just the tree. */
+  .sidebar-head,
+  .toolbar {
+    opacity: 0;
+    transition: opacity 0.15s ease;
+  }
+  .sidebar:hover .sidebar-head,
+  .sidebar:hover .toolbar,
+  .sidebar:focus-within .sidebar-head,
+  .sidebar:focus-within .toolbar {
+    opacity: 1;
   }
   .content {
     flex: 1;
@@ -1803,49 +1815,7 @@
   .conflict-item:hover {
     background: var(--bg-hover);
   }
-  /* Vault name (compact header) — click to switch vault. Full path is the title tooltip. */
-  .vault-name {
-    flex: 1;
-    min-width: 0;
-    display: flex;
-    align-items: center;
-    gap: var(--sp-1);
-    font: inherit;
-    font-size: var(--font-size-small);
-    font-weight: var(--font-weight-semibold);
-    text-align: left;
-    padding: var(--sp-1) var(--sp-2);
-    cursor: pointer;
-    color: var(--text-normal);
-    background: none;
-    border: none;
-    border-radius: var(--radius-s);
-    overflow: hidden;
-    white-space: nowrap;
-    text-overflow: ellipsis;
-    transition: background var(--transition-fast);
-  }
-  .vault-name:hover {
-    background: var(--bg-hover);
-  }
-  .vault-name :global(svg) {
-    flex-shrink: 0;
-    color: var(--text-muted);
-  }
-  .vault-label {
-    min-width: 0;
-    overflow: hidden;
-    white-space: nowrap;
-    text-overflow: ellipsis;
-  }
-  .brand {
-    flex: 1;
-    font-size: var(--font-size-small);
-    font-weight: var(--font-weight-semibold);
-    color: var(--text-muted);
-    padding: var(--sp-1) var(--sp-2);
-  }
-  /* Header icon buttons (theme/collapse). Square, borderless, highlighted only on hover. */
+  /* Header icon buttons (theme/settings). Square, borderless, highlighted only on hover. */
   .icon-btn {
     flex-shrink: 0;
     width: 26px;
@@ -1864,29 +1834,6 @@
       color var(--transition-fast);
   }
   .icon-btn:hover {
-    background: var(--bg-hover);
-    color: var(--text-normal);
-  }
-  /* Floating expand button shown while collapsed (top-left). */
-  .expand-btn {
-    position: fixed;
-    top: var(--sp-2);
-    left: var(--sp-2);
-    z-index: 10;
-    width: 26px;
-    height: 26px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    font-size: var(--font-size-ui);
-    cursor: pointer;
-    color: var(--text-muted);
-    background: var(--bg-secondary);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-s);
-    box-shadow: var(--shadow-s);
-  }
-  .expand-btn:hover {
     background: var(--bg-hover);
     color: var(--text-normal);
   }
@@ -2047,8 +1994,6 @@
   /* Visible keyboard focus for the icon-only chrome controls (quality floor). */
   .toolbar button:focus-visible,
   .icon-btn:focus-visible,
-  .expand-btn:focus-visible,
-  .vault-name:focus-visible,
   .banner-dismiss:focus-visible,
   .read-toggle:focus-visible {
     outline: 2px solid var(--accent);
