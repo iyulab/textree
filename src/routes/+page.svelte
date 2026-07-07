@@ -1241,6 +1241,13 @@
   {#if !layout.collapsed}
   <aside class="sidebar">
     <div class="sidebar-head">
+      {#if root}
+        <button
+          class="vault-name"
+          onclick={chooseVault}
+          title={`Switch vault — current: ${root}`}
+        ><Icon name="folder" /><span class="vault-label">{vaultName(root)}</span></button>
+      {/if}
       <button
         class="icon-btn"
         onclick={() => theme.toggle()}
@@ -1598,18 +1605,58 @@
     gap: var(--sp-1);
     margin-bottom: var(--sp-2);
   }
-  /* Chrome on demand: sidebar controls stay hidden until the sidebar is hovered or a control
-     inside it has focus, so a captured/at-rest sidebar shows just the tree. */
-  .sidebar-head,
+  /* Chrome on demand: the header icon buttons (theme/settings) and the note toolbar stay hidden
+     until the sidebar is hovered or a control inside it has focus, so a captured/at-rest sidebar
+     shows just the vault name + tree. The vault-name button stays visible (it is the visible
+     entry point for switching vaults). */
+  .sidebar-head .icon-btn,
   .toolbar {
     opacity: 0;
     transition: opacity 0.15s ease;
   }
-  .sidebar:hover .sidebar-head,
+  .sidebar:hover .sidebar-head .icon-btn,
   .sidebar:hover .toolbar,
-  .sidebar:focus-within .sidebar-head,
+  .sidebar:focus-within .sidebar-head .icon-btn,
   .sidebar:focus-within .toolbar {
     opacity: 1;
+  }
+  .vault-name {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: var(--sp-1);
+    font: inherit;
+    font-size: var(--font-size-small);
+    font-weight: var(--font-weight-semibold);
+    text-align: left;
+    padding: var(--sp-1) var(--sp-2);
+    cursor: pointer;
+    color: var(--text-normal);
+    background: none;
+    border: none;
+    border-radius: var(--radius-s);
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    transition: background var(--transition-fast);
+  }
+  .vault-name:hover {
+    background: var(--bg-hover);
+  }
+  .vault-name:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
+  }
+  .vault-name :global(svg) {
+    flex-shrink: 0;
+    color: var(--text-muted);
+  }
+  .vault-label {
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
   }
   .content {
     flex: 1;
