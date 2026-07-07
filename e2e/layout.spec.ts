@@ -79,21 +79,17 @@ test("title bar center button opens the command palette", async () => {
   await expect(page.locator('[data-testid="palette-overlay"]')).toHaveCount(0);
 });
 
-test("sidebar controls are hidden until the sidebar is hovered", async () => {
+test("sidebar controls are always visible (no hover needed)", async () => {
   await ensureExpanded(page);
 
   const themeBtn = page.getByRole("button", { name: "Toggle theme" });
-  // Move the mouse away from the sidebar first so a leftover hover from a previous
-  // test doesn't leave the controls revealed.
+  // Move the mouse away from the sidebar so we're testing the at-rest state, not a hover.
   await page.mouse.move(0, 0);
 
-  // Hidden at rest (opacity 0 on the theme/settings icon buttons in .sidebar-head).
-  await expect(themeBtn).toHaveCSS("opacity", "0");
-  await page.locator(".sidebar").hover();
+  // The header controls (theme/settings) and the vault-name button are always shown.
   await expect(themeBtn).toHaveCSS("opacity", "1");
   await expect(themeBtn).toBeVisible();
-
-  await page.mouse.move(0, 0);
+  await expect(page.locator(".vault-name")).toBeVisible();
 });
 
 test("sidebar resize + width persist", async () => {

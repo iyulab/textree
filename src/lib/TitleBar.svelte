@@ -118,7 +118,10 @@
     display: inline-flex;
     align-items: center;
     gap: var(--sp-1);
-    max-width: 40%;
+    /* A search bar reads as a stable target, so give it a generous minimum width instead of
+       shrinking to fit the label. Caps at 50% and never exceeds the viewport on a narrow window. */
+    min-width: min(360px, 50%);
+    max-width: 50%;
     padding: var(--sp-1) var(--sp-3);
     color: var(--text-muted);
     background: var(--bg-primary);

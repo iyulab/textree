@@ -1605,21 +1605,6 @@
     gap: var(--sp-1);
     margin-bottom: var(--sp-2);
   }
-  /* Chrome on demand: the header icon buttons (theme/settings) and the note toolbar stay hidden
-     until the sidebar is hovered or a control inside it has focus, so a captured/at-rest sidebar
-     shows just the vault name + tree. The vault-name button stays visible (it is the visible
-     entry point for switching vaults). */
-  .sidebar-head .icon-btn,
-  .toolbar {
-    opacity: 0;
-    transition: opacity var(--transition-normal);
-  }
-  .sidebar:hover .sidebar-head .icon-btn,
-  .sidebar:hover .toolbar,
-  .sidebar:focus-within .sidebar-head .icon-btn,
-  .sidebar:focus-within .toolbar {
-    opacity: 1;
-  }
   .vault-name {
     flex: 1;
     min-width: 0;
