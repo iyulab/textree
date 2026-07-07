@@ -533,6 +533,11 @@ fn resolve_test_key(api_key: Option<String>, lookup: impl FnOnce() -> Option<Str
 /// (Ollama, LM Studio, vLLM); GPUStack proxies the same convention under its `/v1-openai/` path.
 #[tauri::command]
 pub fn test_byo_connection(preset: String, base_url: String, api_key: Option<String>) -> Result<(), String> {
+    // Anthropic's endpoint is fixed and uses x-api-key (not the Bearer /v1/models probe below);
+    // treat a configured anthropic preset as reachable and let the first real request validate.
+    if preset.eq_ignore_ascii_case("anthropic") {
+        return Ok(());
+    }
     let path = if preset.eq_ignore_ascii_case("gpustack") { "/v1-openai/models" } else { "/v1/models" };
     let url = format!("{}{}", base_url.trim_end_matches('/'), path);
     let mut req = ureq::get(&url).timeout(Duration::from_secs(5));
@@ -1189,6 +1194,14 @@ mod tests {
         assert_eq!(key.as_deref(), Some("stored-secret-xyz"));
 
         crate::byo_secret::clear_api_key().expect("cleanup should succeed");
+    }
+
+    #[test]
+    fn test_byo_connection_anthropic_is_ok_without_base_url() {
+        // Anthropic uses x-api-key + a fixed endpoint, not the Bearer /v1/models probe.
+        // A blank base URL must not be treated as an unreachable server.
+        let r = test_byo_connection("anthropic".to_string(), "".to_string(), Some("sk-ant".to_string()));
+        assert!(r.is_ok());
     }
 
     #[test]
