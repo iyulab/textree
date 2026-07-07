@@ -694,6 +694,13 @@ test.describe("host-absent: chat degrades calmly, Note mode stays functional", (
         absentPage.getByRole("button", { name: /Enable local AI Q&A/i }),
       ).toBeVisible({ timeout: 3_000 });
       await expect(absentPage.locator('[role="alert"]')).toHaveCount(0);
+
+      // Regression: the consent gate must still offer a way back to the note
+      // (previously only the consented scopebar had a back button).
+      const backButton = absentPage.getByRole("button", { name: /back to note/i });
+      await expect(backButton).toBeVisible();
+      await backButton.click();
+      await expect(absentPage.locator(".cm-content")).toBeVisible({ timeout: 5_000 });
     } finally {
       removeTempVault(vault);
     }

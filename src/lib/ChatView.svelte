@@ -172,6 +172,9 @@
 
 <section class="chat-view" aria-label="Chat about your notes">
   {#if !consented}
+    <div class="chat-scopebar">
+      <button class="chat-back" onclick={onBack} title="Back to note" aria-label="Back to note"><Icon name="file-text" /></button>
+    </div>
     <div class="chat-consent">
       <p class="chat-consent-text">
         Ask questions answered from your notes — free, local, private.
