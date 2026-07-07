@@ -9,7 +9,7 @@
   } from "$lib/ipc";
   import {
     computeAiSectionState, themeButtons, planEmbeddingToggle,
-    presetDefaults, isValidByoUrl, isValidByoModel, byoProviderBadge,
+    presetDefaults, isValidByoUrlForPreset, isValidByoModel, byoProviderBadge,
   } from "$lib/settings.helpers";
   import { getByoConfig, setByoConfig, clearByoConfig, type ByoConfig, type ByoPreset } from "$lib/byoConfig";
 
@@ -247,7 +247,7 @@
         </label>
         {#if byoEnabled}
           <div class="seg-group" role="group" aria-label="Preset">
-            {#each (["ollama", "gpustack", "custom"] as const) as p (p)}
+            {#each (["ollama", "gpustack", "openai", "anthropic", "gemini", "grok", "custom"] as const) as p (p)}
               <button
                 type="button"
                 class="seg"
@@ -258,8 +258,9 @@
             {/each}
           </div>
           <label>
-            Base URL
-            <input type="text" bind:value={byoBaseUrl} placeholder="http://localhost:11434" />
+            Base URL{#if byoPreset === "anthropic"} (optional){/if}
+            <input type="text" bind:value={byoBaseUrl}
+              placeholder={byoPreset === "anthropic" ? "leave blank for the default endpoint" : "http://localhost:11434"} />
           </label>
           <label>
             Model (required)
@@ -283,7 +284,7 @@
           <button
             type="button"
             class="action"
-            disabled={!isValidByoUrl(byoBaseUrl)}
+            disabled={!isValidByoUrlForPreset(byoPreset, byoBaseUrl)}
             onclick={onTestConnection}
           >
             Test connection
@@ -296,7 +297,7 @@
           <button
             type="button"
             class="action"
-            disabled={byoSaving || !isValidByoUrl(byoBaseUrl) || !isValidByoModel(byoModel)}
+            disabled={byoSaving || !isValidByoUrlForPreset(byoPreset, byoBaseUrl) || !isValidByoModel(byoModel)}
             onclick={onSaveByo}
           >
             {byoSaving ? "Applying…" : "Save"}
@@ -369,6 +370,7 @@
   }
   .seg-group {
     display: inline-flex;
+    flex-wrap: wrap;
     border: 1px solid var(--border);
     border-radius: var(--radius-s);
     overflow: hidden;
