@@ -2,7 +2,8 @@
 // (preset/baseUrl/model). Same localStorage convention as aiConsent.ts. The API key is never
 // stored here — it lives in the OS Credential Manager via the set/clear/has_byo_api_key IPC
 // commands (ipc.ts), and this module never sees its plaintext value.
-export type ByoPreset = "ollama" | "gpustack" | "custom";
+export type ByoPreset =
+  | "ollama" | "gpustack" | "openai" | "anthropic" | "gemini" | "grok" | "custom";
 
 export interface ByoConfig {
   preset: ByoPreset;
@@ -16,7 +17,11 @@ const BASE_URL_KEY = "byo-base-url";
 const MODEL_KEY = "byo-model";
 
 function isByoPreset(value: string | null): value is ByoPreset {
-  return value === "ollama" || value === "gpustack" || value === "custom";
+  return (
+    value === "ollama" || value === "gpustack" || value === "openai" ||
+    value === "anthropic" || value === "gemini" || value === "grok" ||
+    value === "custom"
+  );
 }
 
 export function getByoConfig(): ByoConfig | null {

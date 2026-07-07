@@ -52,3 +52,18 @@ describe("byoConfig", () => {
     expect(getByoConfig()).toBeNull();
   });
 });
+
+describe("ByoPreset frontier presets", () => {
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  for (const preset of ["openai", "anthropic", "gemini", "grok"] as const) {
+    it(`round-trips the ${preset} preset`, () => {
+      setByoConfig({ preset, baseUrl: "https://example.test/v1", model: "m" });
+      expect(getByoConfig()).toEqual({
+        preset, baseUrl: "https://example.test/v1", model: "m",
+      });
+    });
+  }
+});
