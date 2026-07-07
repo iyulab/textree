@@ -42,6 +42,12 @@
     star: '<polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>',
     "message-square":
       '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
+    minus: '<path d="M5 12h14"/>',
+    square: '<rect width="18" height="18" x="3" y="3" rx="2"/>',
+    restore:
+      '<rect width="14" height="14" x="3" y="7" rx="2"/><path d="M7 7V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2h-2"/>',
+    search:
+      '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>',
   };
 </script>
 
