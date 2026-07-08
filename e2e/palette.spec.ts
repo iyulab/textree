@@ -48,6 +48,40 @@ test("palette file mode: Ctrl+P → file search → Enter → note loads", async
   await expect(page.locator(".cm-content")).toBeVisible();
 });
 
+test("palette Ctrl+P moves focus into the search input even when the editor was focused", async () => {
+  await loadVault(page, sampleVaultPath());
+
+  // Faithful to real use: focus is in the note editor when the user hits Ctrl+P.
+  // Open a note, then focus the CodeMirror editable so it holds focus before the palette opens.
+  await page.keyboard.press("Control+p");
+  await expect(page.getByTestId("palette-input")).toBeVisible();
+  await page.getByTestId("palette-input").fill("프로젝트");
+  await expect(page.getByTestId("palette-item").first()).toBeVisible();
+  await page.keyboard.press("Enter");
+  await expect(page.getByTestId("palette-overlay")).toHaveCount(0);
+  await page.locator(".cm-content").click(); // focus the editor (contenteditable)
+  await expect
+    .poll(() => page.evaluate(() => document.activeElement?.className ?? ""))
+    .toContain("cm-content");
+
+  // Now the real scenario: Ctrl+P from the focused editor must move focus to the palette input.
+  await page.keyboard.press("Control+p");
+  await expect(page.getByTestId("palette-overlay")).toBeVisible();
+  await expect(page.getByTestId("palette-input")).toBeVisible();
+
+  const focusedTestId = await page.evaluate(() =>
+    document.activeElement?.getAttribute("data-testid"),
+  );
+  expect(focusedTestId).toBe("palette-input");
+
+  // Drive keys globally (no locator focus) — reaches the input only if focus actually moved.
+  await page.keyboard.type("프로젝트");
+  await expect(page.getByTestId("palette-item").first()).toBeVisible();
+
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("palette-overlay")).toHaveCount(0);
+});
+
 test("palette command mode: Ctrl+P → type '>theme' → Enter → theme toggles", async () => {
   await loadVault(page, sampleVaultPath());
 

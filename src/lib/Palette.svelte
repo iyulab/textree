@@ -240,6 +240,14 @@
     palette.hide();
   }
 
+  // The HTML `autofocus` attribute is unreliable for elements inserted dynamically (the palette
+  // mounts via {#if palette.open}): in WebView2 it fails to pull focus off an already-focused
+  // element such as the CodeMirror editor, leaving focus lost so the user can't type. Focus the
+  // input explicitly when it mounts — the {#if} recreates it on every open, so this runs each time.
+  function focusOnMount(node: HTMLInputElement) {
+    node.focus();
+  }
+
   function onKey(e: KeyboardEvent): void {
     if (e.key === "ArrowDown") {
       e.preventDefault();
@@ -273,11 +281,10 @@
       onclick={(e) => e.stopPropagation()}
       onkeydown={(e) => e.stopPropagation()}
     >
-      <!-- svelte-ignore a11y_autofocus -->
       <input
         class="input"
         data-testid="palette-input"
-        autofocus
+        use:focusOnMount
         placeholder={palette.mode === "command"
           ? "Run a command…"
           : palette.mode === "content"
