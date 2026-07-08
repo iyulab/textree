@@ -3,8 +3,10 @@
 //! over the source (D13). The publish token is read from the OS keychain (publish_secret), never
 //! passed from the frontend.
 
+use crate::publish::{run_publish, CanopyInvocation, PublishOptions};
 use serde::Serialize;
 use std::io::Write;
+use std::path::Path;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -57,6 +59,69 @@ pub fn map_upload_error(status: u16, body: &str) -> String {
     }
 }
 
+/// Recursively collects every file under `dir` into (relative forward-slash path, bytes) and zips it.
+pub fn zip_vault_output(dir: &Path) -> Result<Vec<u8>, String> {
+    let mut entries: Vec<(String, Vec<u8>)> = Vec::new();
+    collect(dir, dir, &mut entries)?;
+    build_zip(&entries)
+}
+
+fn collect(root: &Path, cur: &Path, out: &mut Vec<(String, Vec<u8>)>) -> Result<(), String> {
+    for entry in std::fs::read_dir(cur).map_err(|e| e.to_string())? {
+        let path = entry.map_err(|e| e.to_string())?.path();
+        if path.is_dir() {
+            collect(root, &path, out)?;
+        } else {
+            let rel = path.strip_prefix(root).map_err(|e| e.to_string())?;
+            // Forward-slash relative path (zip / blob key convention), regardless of OS separator.
+            let name = rel
+                .components()
+                .map(|c| c.as_os_str().to_string_lossy())
+                .collect::<Vec<_>>()
+                .join("/");
+            let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
+            out.push((name, bytes));
+        }
+    }
+    Ok(())
+}
+
+/// Uploads the zip to `{base}/publish` with the publish token. The token is sent as a header only,
+/// never logged.
+pub fn upload_bundle(base: &str, token: &str, zip: Vec<u8>) -> Result<PublishToCloudResult, String> {
+    let url = format!("{}/publish", base.trim_end_matches('/'));
+    match ureq::post(&url)
+        .set("X-Publish-Token", token)
+        .set("Content-Type", "application/zip")
+        .send_bytes(&zip)
+    {
+        Ok(resp) => {
+            let body = resp.into_string().map_err(|e| e.to_string())?;
+            parse_publish_response(&body)
+        }
+        Err(ureq::Error::Status(code, resp)) => {
+            let body = resp.into_string().unwrap_or_default();
+            Err(map_upload_error(code, &body))
+        }
+        Err(e) => Err(format!("could not reach the publish server: {e}")),
+    }
+}
+
+/// Renders the vault locally (temp output, read-only over the source — D13), zips it, and uploads.
+pub fn publish_to_cloud(
+    vault: &Path,
+    options: &PublishOptions,
+    canopy: &CanopyInvocation,
+    token: &str,
+) -> Result<PublishToCloudResult, String> {
+    let tmp = tempfile::tempdir().map_err(|e| e.to_string())?;
+    let out = tmp.path().join("site"); // a fresh dir outside the vault (run_publish validates this)
+    run_publish(vault, &out, options, canopy)?;
+    let zip = zip_vault_output(&out)?;
+    upload_bundle(&api_base(), token, zip)
+    // tmp (and the rendered output) is removed when `tmp` drops here.
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -105,5 +170,28 @@ mod tests {
         if std::env::var("TEXTREE_API_BASE").is_err() {
             assert_eq!(api_base(), "https://api.textree.me");
         }
+    }
+
+    #[test]
+    fn zip_vault_output_walks_dir_into_zip() {
+        use std::io::Read;
+        let tmp = tempfile::TempDir::new().unwrap();
+        std::fs::write(tmp.path().join("index.html"), "root").unwrap();
+        let sub = tmp.path().join("notes");
+        std::fs::create_dir(&sub).unwrap();
+        std::fs::write(sub.join("a.html"), "nested").unwrap();
+
+        let bytes = zip_vault_output(tmp.path()).expect("should zip the dir");
+        let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+        // Entry paths are relative + forward-slash, regardless of OS.
+        let mut names: Vec<String> = (0..archive.len())
+            .map(|i| archive.by_index(i).unwrap().name().to_string())
+            .collect();
+        names.sort();
+        assert_eq!(names, vec!["index.html".to_string(), "notes/a.html".to_string()]);
+        let mut f = archive.by_name("notes/a.html").unwrap();
+        let mut s = String::new();
+        f.read_to_string(&mut s).unwrap();
+        assert_eq!(s, "nested");
     }
 }

@@ -96,6 +96,7 @@ pub fn run() {
             commands::search_content,
             commands::rebuild_index,
             commands::publish_site,
+            commands::publish_to_cloud,
             commands::list_trash,
             commands::purge_trash,
             commands::ensure_default_vault,

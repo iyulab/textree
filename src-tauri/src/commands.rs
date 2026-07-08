@@ -651,6 +651,24 @@ pub fn publish_site(
     Ok(result)
 }
 
+/// Publishes the open vault to the cloud (pub.textree.me): renders locally via canopy, zips the
+/// output, and uploads it to api.textree.me/publish using the stored publish token. Read-only over
+/// the source (D13). Errors if no publish token is set (add one in Settings).
+#[tauri::command]
+pub fn publish_to_cloud(
+    app: AppHandle,
+    vault_path: String,
+    options: crate::publish::PublishOptions,
+) -> Result<crate::cloud_publish::PublishToCloudResult, String> {
+    let vault = PathBuf::from(&vault_path);
+    let canopy = resolve_canopy(&app)?;
+    let token = crate::publish_secret::get_token()
+        .ok_or("no publish token is set — add one in Settings")?;
+    let result = crate::cloud_publish::publish_to_cloud(&vault, &options, &canopy, &token)?;
+    log::info!("publish_to_cloud: {} ({} pages)", result.url, result.page_count);
+    Ok(result)
+}
+
 /// Opens the OS app log directory in the system file explorer. Useful for diagnostic sharing.
 /// Creates the directory if it does not yet exist (e.g. before the first app run that writes a log).
 #[tauri::command]
