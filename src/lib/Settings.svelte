@@ -273,7 +273,7 @@
       <p class="badge" role="status">{ai.badge}</p>
 
       <details class="byo-advanced">
-        <summary>▸ Advanced: custom AI server</summary>
+        <summary>▸ Advanced: custom AI server &amp; web publish</summary>
 
         <p class="badge">
           Paste the token from app.textree.me to publish your vault to the web with one click.
