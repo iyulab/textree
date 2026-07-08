@@ -20,6 +20,8 @@
     searchContent,
     rebuildIndex,
     publishSite,
+    publishToCloud,
+    hasPublishToken,
     prepareAiModel,
     openLogDir,
     type TreeNode,
@@ -29,6 +31,7 @@
   import { getByoConfig } from "$lib/byoConfig";
   import { decideStartup, LAST_VAULT_KEY } from "$lib/startup.helpers";
   import { toPublishTokens } from "$lib/publish.helpers";
+  import { cloudPublishNotice, cloudPublishErrorNotice } from "$lib/cloudPublish.helpers";
   import tokensCssRaw from "$lib/styles/tokens.css?raw";
   import { startSync } from "$lib/sync";
   import { buildWikiResolver } from "$lib/wikilink.helpers";
@@ -274,6 +277,33 @@
       title: "Choose an empty folder to publish the site into",
     });
     if (typeof out === "string") await publishToDir(out);
+  }
+
+  let cloudPublishing = $state(false);
+
+  /**
+   * Publish the open vault to the web (pub.textree.me) in one action: if no token is stored, guide
+   * the user to Settings; otherwise render + upload and show the resulting URL. Read-only over the
+   * source (same canopy render as the local publish).
+   */
+  async function publishToWeb() {
+    if (!root || cloudPublishing) return;
+    publishNotice = null;
+    if (!(await hasPublishToken())) {
+      publishNotice = {
+        kind: "error",
+        text: "Add a web publish token in Settings ▸ Advanced first (get one at app.textree.me).",
+      };
+      return;
+    }
+    cloudPublishing = true;
+    try {
+      const result = await publishToCloud(root, { tokensCss: toPublishTokens(tokensCssRaw) });
+      publishNotice = cloudPublishNotice(result);
+    } catch (e) {
+      publishNotice = cloudPublishErrorNotice(e);
+    }
+    cloudPublishing = false;
   }
 
   // ── Inline title editing (D5) ──────────────────────────────────────
@@ -962,6 +992,7 @@
     },
     hasVault: () => root !== null,
     publishSite: () => { void choosePublishTarget(); },
+    publishToWeb: () => { void publishToWeb(); },
     openTrash: () => { showTrash = true; },
     openLogDir: () => { void openLogDir(); },
     openSettings: () => { showSettings = true; },
@@ -1122,6 +1153,9 @@
       (window as unknown as { __textreeTest?: unknown }).__textreeTest = {
         loadVault,
         publishTo: publishToDir,
+        // Non-destructive read used by E2E to branch safely around the machine-global OS
+        // keychain token (no test teardown exists for it — see byo_secret.rs).
+        hasPublishToken,
       };
     }
 
