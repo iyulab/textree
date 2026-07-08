@@ -288,22 +288,26 @@
    */
   async function publishToWeb() {
     if (!root || cloudPublishing) return;
-    publishNotice = null;
-    if (!(await hasPublishToken())) {
-      publishNotice = {
-        kind: "error",
-        text: "Add a web publish token in Settings ▸ Advanced first (get one at app.textree.me).",
-      };
-      return;
-    }
+    // Claim the busy flag synchronously, before the first await, so two rapid invocations can't both
+    // pass the guard and start concurrent uploads. `finally` resets it on every path (including the
+    // no-token early return below).
     cloudPublishing = true;
+    publishNotice = null;
     try {
+      if (!(await hasPublishToken())) {
+        publishNotice = {
+          kind: "error",
+          text: "Add a web publish token in Settings ▸ Advanced first (get one at app.textree.me).",
+        };
+        return;
+      }
       const result = await publishToCloud(root, { tokensCss: toPublishTokens(tokensCssRaw) });
       publishNotice = cloudPublishNotice(result);
     } catch (e) {
       publishNotice = cloudPublishErrorNotice(e);
+    } finally {
+      cloudPublishing = false;
     }
-    cloudPublishing = false;
   }
 
   // ── Inline title editing (D5) ──────────────────────────────────────
