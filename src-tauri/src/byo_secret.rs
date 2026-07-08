@@ -20,7 +20,7 @@ const ACCOUNT: &str = "api-key";
 /// crate, e.g. `tauri-plugin-updater` in `lib.rs`), and `windows-native-keyring-store` is a
 /// `cfg(windows)`-only Cargo dependency. On a hypothetical non-Windows build this is a no-op,
 /// leaving `keyring::Entry` to surface the same upstream `NoDefaultStore` error it does today.
-fn ensure_store() {
+pub(crate) fn ensure_store() {
     static INIT: std::sync::Once = std::sync::Once::new();
     INIT.call_once(|| {
         #[cfg(windows)]

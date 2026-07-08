@@ -5,6 +5,7 @@ pub(crate) mod fs_ops;
 pub(crate) mod pathsafe;
 pub(crate) mod process_ext;
 pub(crate) mod publish;
+pub(crate) mod publish_secret;
 pub(crate) mod search;
 pub(crate) mod self_write;
 mod telemetry;
@@ -109,6 +110,9 @@ pub fn run() {
             byo_secret::set_byo_api_key,
             byo_secret::clear_byo_api_key,
             byo_secret::has_byo_api_key,
+            publish_secret::set_publish_token,
+            publish_secret::clear_publish_token,
+            publish_secret::has_publish_token,
             host::restart_ai_host
         ])
         .build(tauri::generate_context!())
