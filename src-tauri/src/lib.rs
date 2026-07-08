@@ -1,4 +1,5 @@
 pub(crate) mod byo_secret;
+pub(crate) mod cloud_publish;
 pub(crate) mod commands;
 pub(crate) mod host;
 pub(crate) mod fs_ops;

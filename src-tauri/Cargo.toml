@@ -49,6 +49,8 @@ keyring-core = "1"
 # (log::info!/warn!/error!) is used at call sites; the plugin wires the backend.
 log = "0.4"
 tauri-plugin-log = "2"
+# Zip the locally-rendered canopy bundle before uploading it to api.textree.me/publish (slice 2b).
+zip = "2"
 
 [target."cfg(windows)".dependencies]
 tauri-plugin-updater = "2.10.1"
