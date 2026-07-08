@@ -6,6 +6,7 @@
   import {
     prepareAiModel, prepareGeneration, stopHost, hostStatus, restartAiHost,
     testByoConnection, setByoApiKey, clearByoApiKey, hasByoApiKey, type HostStatus,
+    setPublishToken, clearPublishToken, hasPublishToken,
   } from "$lib/ipc";
   import {
     computeAiSectionState, themeButtons, planEmbeddingToggle,
@@ -51,6 +52,42 @@
   $effect(() => {
     void hasByoApiKey().then((v) => { byoHasStoredKey = v; });
   });
+
+  // Cloud publish token (Settings ▸Advanced) — a single opaque secret, stored in the OS keychain.
+  let publishTokenInput = $state("");
+  let publishHasToken = $state(false);
+  let publishSaving = $state(false);
+  let publishError = $state<string | null>(null);
+
+  $effect(() => {
+    void hasPublishToken().then((v) => { publishHasToken = v; });
+  });
+
+  async function onSavePublishToken(): Promise<void> {
+    if (!publishTokenInput) return;
+    publishSaving = true;
+    publishError = null;
+    try {
+      await setPublishToken(publishTokenInput);
+      publishHasToken = true;
+      publishTokenInput = ""; // never keep the plaintext around after storing it
+    } catch (err) {
+      publishError = err instanceof Error ? err.message : String(err);
+    }
+    publishSaving = false;
+  }
+
+  async function onClearPublishToken(): Promise<void> {
+    publishSaving = true;
+    publishError = null;
+    try {
+      await clearPublishToken();
+      publishHasToken = false;
+    } catch (err) {
+      publishError = err instanceof Error ? err.message : String(err);
+    }
+    publishSaving = false;
+  }
 
   function onPresetChange(preset: ByoPreset): void {
     byoPreset = preset;
@@ -237,6 +274,33 @@
 
       <details class="byo-advanced">
         <summary>▸ Advanced: custom AI server</summary>
+
+        <p class="badge">
+          Paste the token from app.textree.me to publish your vault to the web with one click.
+        </p>
+        {#if publishHasToken}
+          <p class="badge" role="status">✓ Publish token stored</p>
+          <button type="button" class="action" disabled={publishSaving} onclick={onClearPublishToken}>
+            Remove token
+          </button>
+        {:else}
+          <label>
+            Web publish token
+            <input type="password" bind:value={publishTokenInput} placeholder="tk_…" autocomplete="off" />
+          </label>
+          <button
+            type="button"
+            class="action"
+            disabled={publishSaving || !publishTokenInput}
+            onclick={onSavePublishToken}
+          >
+            {publishSaving ? "Saving…" : "Save token"}
+          </button>
+        {/if}
+        {#if publishError}
+          <p class="badge" role="status">✗ Failed: {publishError}</p>
+        {/if}
+
         <label class="toggle">
           <input
             type="checkbox"
