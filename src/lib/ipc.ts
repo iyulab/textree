@@ -205,6 +205,34 @@ export async function publishSite(
   return invoke<PublishResult>("publish_site", { vaultPath, outDir, options });
 }
 
+export interface CloudPublishResult {
+  url: string;
+  pageCount: number;
+}
+
+/** Render the open vault locally and upload it to pub.textree.me via api /publish. The publish
+ * token is read from the OS keychain in the backend (never passed from JS). Reuses the same
+ * read-only canopy render as `publishSite`. */
+export async function publishToCloud(
+  vaultPath: string,
+  options: PublishOptions = {},
+): Promise<CloudPublishResult> {
+  return invoke<CloudPublishResult>("publish_to_cloud", { vaultPath, options });
+}
+
+/** Store the publish token in the OS Credential Manager (never localStorage — D16). */
+export function setPublishToken(token: string): Promise<void> {
+  return invoke<void>("set_publish_token", { token });
+}
+
+export function clearPublishToken(): Promise<void> {
+  return invoke<void>("clear_publish_token");
+}
+
+export function hasPublishToken(): Promise<boolean> {
+  return invoke<boolean>("has_publish_token");
+}
+
 // ── Trash (B1) ───────────────────────────────────────────────────────────────
 
 export type TrashItem = {
