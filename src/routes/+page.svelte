@@ -53,6 +53,7 @@
   import { parseFrontmatter, getField } from "$lib/frontmatter.helpers";
   import { palette } from "$lib/paletteStore.svelte";
   import Palette from "$lib/Palette.svelte";
+  import AppMenu from "$lib/AppMenu.svelte";
   import TitleBar from "$lib/TitleBar.svelte";
   import { contextLabel } from "$lib/titlebar.helpers";
   import { buildCommands, activeCommands, type PaletteActions } from "$lib/commands";
@@ -1286,18 +1287,7 @@
           title={`Switch vault — current: ${root}`}
         ><Icon name="folder" /><span class="vault-label">{vaultName(root)}</span></button>
       {/if}
-      <button
-        class="icon-btn"
-        onclick={() => theme.toggle()}
-        title={theme.resolved === "dark" ? "Switch to light theme" : "Switch to dark theme"}
-        aria-label="Toggle theme"
-      ><Icon name={theme.resolved === "dark" ? "sun" : "moon"} /></button>
-      <button
-        class="icon-btn"
-        onclick={() => (showSettings = true)}
-        title="Settings"
-        aria-label="Settings"
-      ><Icon name="settings" /></button>
+      <AppMenu {commands} onRunCommand={(c) => c.run()} onOpenPalette={() => palette.show()} />
     </div>
     {#if root}
       <div class="toolbar" role="toolbar" aria-label="Note actions">
