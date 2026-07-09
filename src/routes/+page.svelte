@@ -1875,7 +1875,7 @@
   .conflict-item:hover {
     background: var(--bg-hover);
   }
-  /* Header icon buttons (theme/settings). Square, borderless, highlighted only on hover. */
+  /* Icon buttons (note-header read-toggle / chat). Square, borderless, highlighted only on hover. */
   .icon-btn {
     flex-shrink: 0;
     width: 26px;

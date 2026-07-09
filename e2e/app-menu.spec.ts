@@ -55,6 +55,7 @@ test("app menu: Search all… opens the palette", async () => {
   await page.getByTestId("app-menu-button").click();
   await page.getByTestId("app-menu-search-all").click();
 
+  await expect(page.getByTestId("app-menu")).toHaveCount(0);
   await expect(page.getByTestId("palette-overlay")).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(page.getByTestId("palette-overlay")).toHaveCount(0);
