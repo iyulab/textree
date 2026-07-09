@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { buildCommands, type PaletteActions } from "./commands";
+import { buildCommands, MENU_CATEGORIES, type PaletteActions } from "./commands";
 
 /** Every action stubbed to a no-op; override specific ones per test. */
 function stubActions(over: Partial<PaletteActions> = {}): PaletteActions {
@@ -7,7 +7,7 @@ function stubActions(over: Partial<PaletteActions> = {}): PaletteActions {
     "openVault", "toggleTheme", "toggleSidebar", "toggleReading", "toggleMode",
     "newNoteAtRoot", "newFolderAtRoot", "hasSelection", "renameSelected",
     "deleteSelected", "promoteSelected", "toggleFavoriteSelected", "moveSelectedUp",
-    "moveSelectedDown", "rebuildIndex", "hasVault", "publishSite", "openTrash",
+    "moveSelectedDown", "rebuildIndex", "hasVault", "publishSite", "publishToWeb", "openTrash",
     "openLogDir", "openSettings",
   ];
   const base = Object.fromEntries(keys.map((k) => [k, () => {}]));
@@ -33,5 +33,17 @@ describe("buildCommands — Note/Chat toggle", () => {
     const cmd = buildCommands(stubActions({ toggleMode })).find((c) => c.id === "view.modeToggle")!;
     cmd.run();
     expect(toggleMode).toHaveBeenCalledOnce();
+  });
+});
+
+describe("buildCommands — menu categories", () => {
+  it("every command declares a category within MENU_CATEGORIES", () => {
+    const cmds = buildCommands(stubActions());
+    const allowed = new Set<string>(MENU_CATEGORIES);
+    expect(cmds.length).toBeGreaterThan(0);
+    for (const c of cmds) {
+      expect(c.category, `command ${c.id} must have a category`).toBeDefined();
+      expect(allowed.has(c.category), `command ${c.id} category "${c.category}"`).toBe(true);
+    }
   });
 });
