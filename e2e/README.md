@@ -11,10 +11,26 @@ Two terminals are required.
 **Terminal 1 — launch the app with a remote debugging port:**
 
 ```powershell
-$env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS="--remote-debugging-port=9222"
-$env:TEXTREE_CANOPY_CLI="..\canopy\dist\cli.js"   # only needed for publish.spec (build canopy first)
-npm run tauri dev
+$env:TEXTREE_CANOPY_CLI=(Resolve-Path "..\canopy\dist\cli.js").Path   # only needed for publish.spec (build canopy first)
+npm run dev:e2e
 ```
+
+`TEXTREE_CANOPY_CLI` must be an **absolute** path (hence `Resolve-Path`): the backend passes it
+to `node` as-is, and under `tauri dev` the app process's working directory is `src-tauri/`, so a
+path relative to this folder silently fails to spawn and publish reports
+"The publishing tool couldn't finish".
+
+`dev:e2e` is `tauri dev --config src-tauri/tauri.e2e.conf.json`: the overlay injects
+`--remote-debugging-port=9222` via the window's `additionalBrowserArgs` (the programmatic
+`CoreWebView2EnvironmentOptions` path).
+
+> ⚠️ The old `$env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS` route no longer works — WebView2
+> Runtime 150+ ignores the loader environment variable, so the CDP port silently never opens.
+> Setting `additionalBrowserArgs` replaces wry's default arguments, which is why the overlay
+> restates `--disable-features=...` and `--autoplay-policy=...` alongside the debug port.
+> The overlay must also restate the full window object: `--config` merges via JSON Merge
+> Patch (RFC 7396), which replaces the `app.windows` array wholesale — keep it in sync with
+> `tauri.conf.json` if the main window config changes.
 
 **Terminal 2 — run the E2E suite:**
 

@@ -10,8 +10,7 @@ import { connectToApp } from "./helpers";
  *
  * Setup (PowerShell):
  *   $env:TEXTREE_DEFAULT_VAULT_BASE = (New-Item -ItemType Directory -Force -Path "$env:TEMP\textree-e2e-onboarding").FullName
- *   $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = "--remote-debugging-port=9222"
- *   npm run tauri dev
+ *   npm run dev:e2e
  */
 
 const LAST_VAULT_KEY = "textree-last-vault";

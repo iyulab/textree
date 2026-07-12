@@ -5,10 +5,11 @@ import { defineConfig } from "@playwright/test";
  * mock IPC가 아니라 실제 파일시스템 백엔드를 거치므로 "파일시스템이 진실의
  * 원천"이라는 핵심 가치를 그대로 검증한다.
  *
- * 사전 조건: 앱이 원격 디버깅 포트로 떠 있어야 한다.
- *   $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS="--remote-debugging-port=9222"
- *   npm run tauri dev
- * (CDP는 Windows/WebView2에서만 지원된다.)
+ * Precondition: the app must be running with the remote debugging port open.
+ *   npm run dev:e2e
+ * (= tauri dev --config src-tauri/tauri.e2e.conf.json — WebView2 150+ ignores the
+ * WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS env var, so the port is injected via the
+ * window's additionalBrowserArgs instead. CDP is Windows/WebView2 only.)
  */
 export default defineConfig({
   testDir: "./e2e",

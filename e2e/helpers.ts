@@ -32,7 +32,7 @@ export async function connectToApp(): Promise<{ browser: Browser; page: Page }> 
   await browser.close();
   throw new Error(
     `Could not find the Textree app page via CDP (${CDP_ENDPOINT}). ` +
-      `Make sure the app is running with '$env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS="--remote-debugging-port=9222"; npm run tauri dev'.`,
+      `Make sure the app is running with 'npm run dev:e2e' (tauri dev --config src-tauri/tauri.e2e.conf.json).`,
   );
 }
 

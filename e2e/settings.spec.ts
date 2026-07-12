@@ -13,7 +13,7 @@ import { connectToApp, loadVault, sampleVaultPath } from "./helpers";
  * HOST-PRESENT MANUAL SMOKE (human gate — do not automate):
  * ──────────────────────────────────────────────────────────────────────────────
  * Prerequisites: app running with real host sidecar available
- *   ($env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS="--remote-debugging-port=9222"; npm run tauri dev)
+ *   ($env:TEXTREE_HOST_EXE="<host exe>"; npm run dev:e2e)
  *
  * 1. Open Settings (Ctrl+,). Enable "Embeddings & search" → badge shows "preparing" then "ready".
  * 2. Verify CPU/RAM usage indicates the host process is running.
