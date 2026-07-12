@@ -206,9 +206,12 @@ pub fn rebuild_index(handle: &IndexHandle, root: &Path) {
 /// Builds a recursive debouncer for the vault root wired to the watchdog's shared
 /// state. The callback holds a `Weak<Shared>` to avoid a reference cycle
 /// (`Shared` → debouncer → callback → `Shared`); on each flush it observes canary
-/// round-trips, surfaces real changes, and — only on real activity — asks the
-/// watchdog to arm the next probe (a canary-only flush must not re-arm, or canary
-/// writes would loop).
+/// round-trips and surfaces real changes. It does NOT arm probes — arming is
+/// timer-only (the watchdog thread's backup interval). Flush-driven arming would
+/// re-arm on every external burst, clearing the in-flight canary ~75ms after it was
+/// written (long before its ~300ms round-trip), so a busy but live watcher would be
+/// falsely judged dead and recreated in a storm. A silently-dead watcher emits no
+/// flushes anyway, so detection is timer-bound regardless.
 pub(crate) fn build_debouncer(shared: &Arc<Shared>) -> Result<VaultWatcher, String> {
     let weak: Weak<Shared> = Arc::downgrade(shared);
     let mut debouncer = new_debouncer(
@@ -241,17 +244,11 @@ pub(crate) fn build_debouncer(shared: &Arc<Shared>) -> Result<VaultWatcher, Stri
                         let _ = shared.app.emit("fs_changed", change.clone());
                     }
                     apply_changes_to_index(&shared.index, &shared.root, &batch);
-                    // Real activity → probe soon. Canary-only flushes yield an empty
-                    // batch and deliberately do NOT re-arm (feedback-loop guard).
-                    if !batch.is_empty() {
-                        shared.request_arm();
-                    }
                 }
                 FlushOutcome::Rescan => {
                     log::warn!("watcher: OS reported dropped events (rescan) — full refresh");
                     rebuild_index(&shared.index, &shared.root);
                     let _ = shared.app.emit("fs_rescan", ());
-                    shared.request_arm();
                 }
             }
         },

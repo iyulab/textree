@@ -96,20 +96,35 @@ New file `src-tauri/src/liveness.rs` owns the watchdog. Three well-bounded units
 
 ## 4. Arming policy (probe triggers)
 
-Two triggers, per approved decision "post-flush + long backup interval":
+**Timer-only arming.** A background thread arms a canary every **5 minutes**
+(`BACKUP_INTERVAL`), regardless of activity. On a healthy vault the canary
+round-trips and simply re-confirms `Alive`; on a silently-dead watcher no canary
+comes back, and after `MISS_THRESHOLD` (2) consecutive unobserved probes the
+verdict is `Dead`.
 
-1. **Post-flush arm.** After each debounce callback finishes processing a
-   `Changes`/`Rescan` flush, the watchdog arms a new canary. Rationale: overflow
-   happens *during* a burst, so a flush is the highest-correlation signal that the
-   watcher may be at risk — probe right after activity.
-2. **Backup timer.** A background thread arms a canary every **5 minutes** of
-   idle (no flushes). Catches death on an otherwise-quiet vault. A long interval
-   keeps unsolicited traffic near zero on a healthy idle vault (minimizing
-   OneDrive churn).
+> **Why not post-flush arming?** An earlier revision also armed a fresh canary
+> after every non-empty debounce flush, on the theory that overflow happens *during*
+> a burst. That trigger was **removed** — it caused a recreate storm on healthy
+> watchers. Under sustained external activity (OneDrive sync, git checkout, another
+> device) the debounce callback fires roughly every 75 ms (`tick_rate: None` →
+> timeout/4). Each flush would re-arm, and `arm_once` clears the previous canary
+> *first* — so the in-flight canary was deleted ~75 ms after being written, long
+> before its ~300 ms debounce round-trip could surface it. The canary never got
+> observed, misses reached the threshold within ~150 ms of any burst, and a perfectly
+> live watcher was declared `Dead` and recreated repeatedly. Post-flush arming buys
+> nothing for detection anyway: a genuinely dead watcher emits **no** flushes, so
+> detection is backup-timer-bound in every case. Dropping it makes the single-`pending`
+> liveness model provably correct (interval 300 s ≫ round-trip ~300 ms) and is a net
+> simplification.
 
-On a healthy vault the canary round-trips and simply re-confirms `Alive`. Under a
-burst, the post-flush probe detects death within seconds; on an idle vault, within
-one backup interval.
+**Detection latency (honest bound).** Because arming is timer-only, detecting a
+silently-dead watcher is bounded by the backup interval, not "seconds". At
+`BACKUP_INTERVAL = 300 s` and `MISS_THRESHOLD = 2`, worst case is roughly **three
+intervals (~10–15 min)**: the interval already in progress when the watcher died,
+then two more to accumulate two misses. The interval is the single tuning knob —
+shorten it for faster detection, at the cost of one tiny (sync-ignored) canary
+write per interval. It is intentionally left at 300 s here; retuning is a separate
+owner decision.
 
 ## 5. Recovery flow
 
@@ -171,6 +186,8 @@ watchdog just reaches the same recovery via a different (proactive) detection.
 
 - Detection mechanism: **A. canary watchdog hybrid** (over blind-periodic and
   notify-rebind).
-- Probe trigger: **post-flush + 5-min backup interval**.
+- Probe trigger: originally "post-flush + 5-min backup interval"; **revised during
+  implementation to timer-only** (5-min backup interval, no post-flush arm) after the
+  post-flush trigger was found to storm-recreate a live watcher under load (see §4).
 - Death judgment: **2 consecutive misses** (not single-miss), to absorb debounce
   latency false positives.

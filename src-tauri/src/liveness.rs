@@ -171,8 +171,12 @@ pub(crate) struct Shared {
     liveness: Mutex<LivenessState>,
     counter: AtomicU64,
     debouncer: Mutex<Option<VaultWatcher>>,
-    arm_requested: Mutex<bool>,
-    arm_cv: Condvar,
+    /// Set to `true` only by `Watchdog::drop` to wake the thread out of its backup-interval
+    /// sleep immediately. Mutated under this mutex (paired with `shutdown_cv`) so the thread's
+    /// wait predicate — which reads it and `stop` — cannot miss the wakeup. There is no
+    /// post-flush arming: arming is timer-only, so nothing else ever sets this.
+    shutdown: Mutex<bool>,
+    shutdown_cv: Condvar,
     stop: AtomicBool,
 }
 
@@ -184,25 +188,20 @@ impl Shared {
             .unwrap_or_else(|e| e.into_inner())
             .observe(token);
     }
-
-    /// The debounce callback saw real (non-canary) activity — wake the thread to
-    /// probe. Never called for canary-only flushes (see the feedback-loop guard).
-    pub(crate) fn request_arm(&self) {
-        *self.arm_requested.lock().unwrap_or_else(|e| e.into_inner()) = true;
-        self.arm_cv.notify_all();
-    }
 }
 
-/// Background loop: wait for an arm request or the backup timeout, run one probe
-/// cycle, and recreate the watcher if it looks dead.
+/// Background loop: sleep for the backup interval (or until `Watchdog::drop` wakes it),
+/// run one probe cycle, and recreate the watcher if it looks dead. Arming is timer-only:
+/// external flushes never wake this loop, which keeps a busy but live watcher from being
+/// probed to death (each probe would clear the in-flight canary before its round-trip).
 fn run_thread(shared: Arc<Shared>) {
     loop {
         {
-            let guard = shared.arm_requested.lock().unwrap_or_else(|e| e.into_inner());
+            let guard = shared.shutdown.lock().unwrap_or_else(|e| e.into_inner());
             let (mut guard, _timeout) = shared
-                .arm_cv
-                .wait_timeout_while(guard, BACKUP_INTERVAL, |req| {
-                    !*req && !shared.stop.load(Ordering::SeqCst)
+                .shutdown_cv
+                .wait_timeout_while(guard, BACKUP_INTERVAL, |flag| {
+                    !*flag && !shared.stop.load(Ordering::SeqCst)
                 })
                 .unwrap_or_else(|e| e.into_inner());
             *guard = false;
@@ -260,8 +259,8 @@ impl Watchdog {
             liveness: Mutex::new(LivenessState::new(MISS_THRESHOLD)),
             counter: AtomicU64::new(0),
             debouncer: Mutex::new(None),
-            arm_requested: Mutex::new(false),
-            arm_cv: Condvar::new(),
+            shutdown: Mutex::new(false),
+            shutdown_cv: Condvar::new(),
             stop: AtomicBool::new(false),
         });
 
@@ -284,11 +283,11 @@ impl Watchdog {
 impl Drop for Watchdog {
     fn drop(&mut self) {
         {
-            let mut g = self.shared.arm_requested.lock().unwrap_or_else(|e| e.into_inner());
+            let mut g = self.shared.shutdown.lock().unwrap_or_else(|e| e.into_inner());
             self.shared.stop.store(true, Ordering::SeqCst);
             *g = true;
         }
-        self.shared.arm_cv.notify_all();
+        self.shared.shutdown_cv.notify_all();
         if let Some(t) = self.thread.take() {
             let _ = t.join();
         }
@@ -453,5 +452,72 @@ mod tests {
             Verdict::Alive,
             "healthy watcher must observe the canary and keep misses at 0"
         );
+    }
+
+    // Regression guard for the recreate-storm bug: under SUSTAINED external file activity
+    // (the feature's own target scenario — sync/checkout/other device), a live watcher must
+    // stay Alive. A background thread hammers the vault with external .md writes while
+    // arm_once runs at a moderate cadence (500ms > the ~300ms round-trip, simulating the
+    // timer). With timer-only arming the in-flight canary is never cleared early, so it
+    // round-trips and the verdict stays Alive every cycle. Timing-dependent → #[ignore].
+    // Run: cargo test --manifest-path src-tauri/Cargo.toml -- --ignored alive_under_sustained
+    #[test]
+    #[ignore = "real-OS integration: spins the actual debouncer under load; timing-dependent"]
+    fn alive_under_sustained_external_activity() {
+        use notify_debouncer_full::notify::RecursiveMode;
+        use notify_debouncer_full::{new_debouncer, DebounceEventResult};
+        use std::sync::atomic::AtomicBool;
+        use std::sync::Arc;
+
+        let vault = TempDir::new().unwrap();
+        let tmp_dir = vault.path().join(".textree").join("tmp");
+        std::fs::create_dir_all(&tmp_dir).unwrap();
+        let liveness = Arc::new(Mutex::new(LivenessState::new(2)));
+        let counter = AtomicU64::new(0);
+
+        let liveness_cb = liveness.clone();
+        let mut deb = new_debouncer(
+            Duration::from_millis(300),
+            None,
+            move |res: DebounceEventResult| {
+                if let Ok(events) = res {
+                    for t in observed_canary_tokens(&events) {
+                        liveness_cb.lock().unwrap_or_else(|e| e.into_inner()).observe(t);
+                    }
+                }
+            },
+        )
+        .unwrap();
+        deb.watch(vault.path(), RecursiveMode::Recursive).unwrap();
+        std::thread::sleep(Duration::from_millis(400)); // settle initial watch
+
+        // Background writer: continuous external activity for the whole probe window.
+        let stop = Arc::new(AtomicBool::new(false));
+        let stop_w = stop.clone();
+        let vault_w = vault.path().to_path_buf();
+        let writer = std::thread::spawn(move || {
+            let mut n: u64 = 0;
+            while !stop_w.load(Ordering::SeqCst) {
+                let f = vault_w.join(format!("ext-{}.md", n % 8));
+                let _ = std::fs::write(&f, format!("external burst content {n}"));
+                n += 1;
+                std::thread::sleep(Duration::from_millis(50)); // ~20 writes/s
+            }
+        });
+
+        // Probe at a moderate cadence WHILE the writer runs. arm_once fires during the burst,
+        // so this genuinely exercises the "does external churn starve the canary?" path. If
+        // the canary were cleared early / starved, misses would reach threshold 2 → Dead.
+        for cycle in 0..6 {
+            std::thread::sleep(Duration::from_millis(500)); // > 300ms round-trip
+            assert_eq!(
+                arm_once(&liveness, &counter, &tmp_dir),
+                Verdict::Alive,
+                "cycle {cycle}: live watcher under external load must stay Alive (no false death)"
+            );
+        }
+
+        stop.store(true, Ordering::SeqCst);
+        writer.join().unwrap();
     }
 }
