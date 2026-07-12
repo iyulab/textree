@@ -82,13 +82,14 @@ test("title bar center button opens the command palette", async () => {
 test("sidebar controls are always visible (no hover needed)", async () => {
   await ensureExpanded(page);
 
-  const themeBtn = page.getByRole("button", { name: "Toggle theme" });
+  // The theme/settings icons were absorbed into the ⋮ app menu, so the always-visible
+  // header controls are now the ⋮ menu button and the vault-name button.
+  const menuBtn = page.getByTestId("app-menu-button");
   // Move the mouse away from the sidebar so we're testing the at-rest state, not a hover.
   await page.mouse.move(0, 0);
 
-  // The header controls (theme/settings) and the vault-name button are always shown.
-  await expect(themeBtn).toHaveCSS("opacity", "1");
-  await expect(themeBtn).toBeVisible();
+  await expect(menuBtn).toHaveCSS("opacity", "1");
+  await expect(menuBtn).toBeVisible();
   await expect(page.locator(".vault-name")).toBeVisible();
 });
 

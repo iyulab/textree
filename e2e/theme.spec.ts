@@ -4,7 +4,8 @@ import { connectToApp } from "./helpers";
 /**
  * D1 — design tokens + theme. Assert in the real webview that the theme toggle
  * switches <html data-theme> and the actual background color changes (tokens
- * applied). Works without a vault (the toggle is always shown).
+ * applied). The toggle lives in the ⋮ app menu (the standalone sidebar button
+ * was absorbed into it), and the ungated View category is always shown.
  *
  * The starting theme varies with the environment (OS prefers-color-scheme +
  * persisted selection), so verify by **relative switch** rather than absolute
@@ -15,6 +16,13 @@ let browser: Browser;
 let page: Page;
 
 const opposite = (t: string) => (t === "dark" ? "light" : "dark");
+
+/** Toggle the theme via the ⋮ app menu (same path a user takes). */
+async function toggleTheme(p: Page): Promise<void> {
+  await p.getByTestId("app-menu-button").click();
+  await p.getByTestId("app-menu-item").filter({ hasText: "Toggle theme" }).click();
+  await expect(p.getByTestId("app-menu")).toHaveCount(0);
+}
 
 test.beforeAll(async () => {
   ({ browser, page } = await connectToApp());
@@ -38,7 +46,7 @@ test("theme toggle: data-theme switch + actual background color change", async (
   const beforeBg = await bg();
   expect(await scheme()).toBe(before);
 
-  await page.getByRole("button", { name: "Toggle theme" }).click();
+  await toggleTheme(page);
   await expect(html).toHaveAttribute("data-theme", opposite(before));
 
   // If tokens are actually applied, the background color must differ after the switch (wait for the transition animation to settle).
@@ -46,14 +54,14 @@ test("theme toggle: data-theme switch + actual background color change", async (
   await expect.poll(scheme).toBe(opposite(before));
 
   // Toggling again returns to the original theme (+ background color reverts).
-  await page.getByRole("button", { name: "Toggle theme" }).click();
+  await toggleTheme(page);
   await expect(html).toHaveAttribute("data-theme", before);
   await expect.poll(bg).toBe(beforeBg);
   await expect.poll(scheme).toBe(before);
 });
 
 test("theme selection persists in localStorage", async () => {
-  await page.getByRole("button", { name: "Toggle theme" }).click();
+  await toggleTheme(page);
   const applied = await page.locator("html").getAttribute("data-theme");
   const stored = await page.evaluate(() => localStorage.getItem("textree-theme"));
   // The toggle persists the explicit selection (light/dark) and must match the applied theme.
