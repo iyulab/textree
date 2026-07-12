@@ -36,4 +36,23 @@ public sealed class TextGeneratorSelectionTests
         var env = new Dictionary<string, string?> { ["TEXTREE_BYO_PRESET"] = preset };
         Assert.Equal(preset, TextGeneratorSelection.SelectedPreset(env));
     }
+
+    [Fact]
+    public void Local_backend_keeps_the_512_token_default()
+    {
+        Assert.Equal(512, TextGeneratorSelection.DefaultMaxTokens(null));
+    }
+
+    [Theory]
+    [InlineData("ollama")]
+    [InlineData("gpustack")]
+    [InlineData("openai")]
+    [InlineData("anthropic")]
+    [InlineData("gemini")]
+    [InlineData("grok")]
+    [InlineData("custom")]
+    public void Byo_backend_raises_the_default_to_4096(string preset)
+    {
+        Assert.Equal(4096, TextGeneratorSelection.DefaultMaxTokens(preset));
+    }
 }

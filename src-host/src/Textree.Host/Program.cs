@@ -213,7 +213,9 @@ app.MapPost("/chat", async (ChatRequestDto req, ITextGenerator gen, HttpContext 
 
     ctx.Response.ContentType = "text/event-stream";
     var msgs = req.Messages.Select(m => new ChatMessage(m.Role, m.Content)).ToList();
-    var genOpts = new GenerationOptions(MaxTokens: req.MaxTokens ?? 512);
+    // The desktop app never sets MaxTokens, so this default IS the effective cap: 512 protects
+    // the bundled CPU model; a BYO backend gets 4096 (see TextGeneratorSelection.DefaultMaxTokens).
+    var genOpts = new GenerationOptions(MaxTokens: req.MaxTokens ?? TextGeneratorSelection.DefaultMaxTokens(byoPreset));
 
     // ct = HttpContext.RequestAborted -> client disconnect stops generation, frees CPU.
     await foreach (var chunk in gen.GenerateAsync(msgs, genOpts, ct))
