@@ -283,7 +283,11 @@ impl Watchdog {
 
 impl Drop for Watchdog {
     fn drop(&mut self) {
-        self.shared.stop.store(true, Ordering::SeqCst);
+        {
+            let mut g = self.shared.arm_requested.lock().unwrap_or_else(|e| e.into_inner());
+            self.shared.stop.store(true, Ordering::SeqCst);
+            *g = true;
+        }
         self.shared.arm_cv.notify_all();
         if let Some(t) = self.thread.take() {
             let _ = t.join();
