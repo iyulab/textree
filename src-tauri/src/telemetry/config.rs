@@ -1,7 +1,7 @@
 //! Telemetry connection config — pure parsing of the App Insights connection string.
 //! No I/O, no env reads here; the single on/off gate lives in `super::resolved_connection`.
 
-/// The only switch for outbound telemetry. Absent/blank ⇒ disabled (dev, test, MIT forks,
+/// The only switch for outbound telemetry. Absent/blank ⇒ disabled (dev, test, forks,
 /// and official builds whose CI has not injected the string yet).
 pub const ENV_VAR: &str = "TEXTREE_TELEMETRY_CONNECTION";
 

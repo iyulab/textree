@@ -19,7 +19,7 @@ Your notes are not trapped in some cloud table. They sit right on your disk, as 
 **Text** — pure, unprocessed text. Not bound to any database; an `.md` file that opens in Notepad even after you delete the app.
 **Tree** — mirrors your filesystem's folder/directory tree. Scattered notes grow into a single tree of knowledge.
 
-True to its name, Textree is **plain text on top of a tree-structured filesystem** — combining no-code databases and a tidy result with local files, full ownership, and portability, on a single-user, offline, MIT core that is **free forever**.
+True to its name, Textree is **plain text on top of a tree-structured filesystem** — combining no-code databases and a tidy result with local files, full ownership, and portability, on a single-user, offline, open-source (GPL-3.0) core that is **free forever**.
 
 ---
 
@@ -171,7 +171,9 @@ Requirements: Node 24+, Rust (stable). Windows/macOS/Linux desktop.
 
 ## License
 
-MIT
+[GPL-3.0-only](LICENSE). Copyright (C) 2026 iyulab.
+
+Releases up to and including v0.4.0 were published under the MIT license and remain available under it; this change applies from the next release onward.
 
 ---
 
