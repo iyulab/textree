@@ -7,6 +7,7 @@ use crate::publish::{run_publish, CanopyInvocation, PublishOptions};
 use serde::Serialize;
 use std::io::Write;
 use std::path::Path;
+use std::time::Duration;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -16,6 +17,10 @@ pub struct PublishToCloudResult {
 }
 
 const DEFAULT_API_BASE: &str = "https://api.textree.me";
+
+/// Overall deadline for the publish upload (connect + send + response). Bounds a hung/stalled
+/// server so a publish can never wedge forever. Mirrors the `ask` chat timeout (host.rs).
+const UPLOAD_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// The publish API base — `TEXTREE_API_BASE` override (dev/E2E/staging) or the production default.
 pub fn api_base() -> String {
@@ -87,12 +92,19 @@ fn collect(root: &Path, cur: &Path, out: &mut Vec<(String, Vec<u8>)>) -> Result<
 }
 
 /// Uploads the zip to `{base}/publish` with the publish token. The token is sent as a header only,
-/// never logged.
-pub fn upload_bundle(base: &str, token: &str, zip: Vec<u8>) -> Result<PublishToCloudResult, String> {
+/// never logged. `timeout` bounds the whole request (connect + send + response) so a stalled server
+/// cannot hang the caller forever.
+pub fn upload_bundle(
+    base: &str,
+    token: &str,
+    zip: Vec<u8>,
+    timeout: Duration,
+) -> Result<PublishToCloudResult, String> {
     let url = format!("{}/publish", base.trim_end_matches('/'));
     match ureq::post(&url)
         .set("X-Publish-Token", token)
         .set("Content-Type", "application/zip")
+        .timeout(timeout)
         .send_bytes(&zip)
     {
         Ok(resp) => {
@@ -103,7 +115,11 @@ pub fn upload_bundle(base: &str, token: &str, zip: Vec<u8>) -> Result<PublishToC
             let body = resp.into_string().unwrap_or_default();
             Err(map_upload_error(code, &body))
         }
-        Err(e) => Err(format!("could not reach the publish server: {e}")),
+        // Transport failure: a timeout (stalled/hung server) or an unreachable host. Both are
+        // retryable — the message covers both honestly rather than matching ureq internals.
+        Err(e) => Err(format!(
+            "the upload could not complete ({e}) — check your connection and try again"
+        )),
     }
 }
 
@@ -118,7 +134,7 @@ pub fn publish_to_cloud(
     let out = tmp.path().join("site"); // a fresh dir outside the vault (run_publish validates this)
     run_publish(vault, &out, options, canopy)?;
     let zip = zip_vault_output(&out)?;
-    upload_bundle(&api_base(), token, zip)
+    upload_bundle(&api_base(), token, zip, UPLOAD_TIMEOUT)
     // tmp (and the rendered output) is removed when `tmp` drops here.
 }
 
@@ -170,6 +186,40 @@ mod tests {
         if std::env::var("TEXTREE_API_BASE").is_err() {
             assert_eq!(api_base(), "https://api.textree.me");
         }
+    }
+
+    #[test]
+    fn upload_times_out_when_server_stalls() {
+        use std::net::TcpListener;
+        use std::time::{Duration, Instant};
+
+        // A server that accepts the connection but never sends a response — this is the
+        // mid-transfer stall / hung-ingress failure mode, NOT a connect failure.
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback");
+        let addr = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            if let Ok((stream, _)) = listener.accept() {
+                std::thread::sleep(Duration::from_secs(5));
+                drop(stream);
+            }
+        });
+
+        let base = format!("http://{addr}");
+        let start = Instant::now();
+        let result = upload_bundle(&base, "tok", vec![1, 2, 3], Duration::from_millis(300));
+
+        assert!(result.is_err(), "a stalled server must not hang forever");
+        assert!(
+            start.elapsed() < Duration::from_secs(2),
+            "must return near the 300ms timeout, not wait ~5s for the server: took {:?}",
+            start.elapsed()
+        );
+        let msg = result.unwrap_err();
+        assert!(
+            msg.to_lowercase().contains("try again") || msg.to_lowercase().contains("connection"),
+            "timeout error should guide the user to retry, got: {msg}"
+        );
+        let _ = server.join();
     }
 
     #[test]
