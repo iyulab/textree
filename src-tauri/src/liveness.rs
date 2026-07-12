@@ -8,6 +8,8 @@
 
 use notify_debouncer_full::DebouncedEvent;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Mutex;
 
 /// Verdict of a liveness probe cycle.
 #[derive(Debug, PartialEq, Eq)]
@@ -113,6 +115,47 @@ pub(crate) fn observed_canary_tokens(events: &[DebouncedEvent]) -> Vec<u64> {
     out
 }
 
+/// Removes any canary files left in `tmp_dir`. Only the watchdog writes these, so
+/// this is safe; it keeps at most one probe on disk at a time.
+#[allow(dead_code)]
+pub(crate) fn clear_canaries(tmp_dir: &Path) {
+    let Ok(entries) = std::fs::read_dir(tmp_dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        if token_of(&entry.path()).is_some() {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
+}
+
+/// Runs one probe cycle: arm the next token, drop the previous canary, write a fresh
+/// one, and return the verdict. A write failure is logged (probe inconclusive) but is
+/// never itself a death verdict — the watchdog must not destabilize the app.
+#[allow(dead_code)]
+pub(crate) fn arm_once(
+    liveness: &Mutex<LivenessState>,
+    counter: &AtomicU64,
+    tmp_dir: &Path,
+) -> Verdict {
+    let token = counter.fetch_add(1, Ordering::SeqCst);
+    let verdict = liveness
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .arm(token);
+
+    if let Err(e) = std::fs::create_dir_all(tmp_dir) {
+        log::warn!("watchdog: cannot create canary dir: {e}");
+        return verdict;
+    }
+    clear_canaries(tmp_dir);
+    let path = canary_path(tmp_dir, token);
+    if let Err(e) = std::fs::write(&path, b"canary") {
+        log::warn!("watchdog: canary write failed: {e}");
+    }
+    verdict
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -189,5 +232,40 @@ mod tests {
             Instant::now(),
         );
         assert_eq!(observed_canary_tokens(&[ev_canary, ev_note]), vec![3]);
+    }
+
+    use std::sync::atomic::AtomicU64;
+    use std::sync::Mutex;
+    use tempfile::TempDir;
+
+    fn canary_count(dir: &Path) -> usize {
+        std::fs::read_dir(dir)
+            .map(|it| it.flatten().filter(|e| token_of(&e.path()).is_some()).count())
+            .unwrap_or(0)
+    }
+
+    #[test]
+    fn arm_once_keeps_single_canary_and_reports_alive() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().join(".textree").join("tmp");
+        let liveness = Mutex::new(LivenessState::new(2));
+        let counter = AtomicU64::new(0);
+
+        assert_eq!(arm_once(&liveness, &counter, &dir), Verdict::Alive);
+        assert_eq!(arm_once(&liveness, &counter, &dir), Verdict::Alive);
+        // The prior canary is cleared before the next is written → exactly one remains.
+        assert_eq!(canary_count(&dir), 1);
+    }
+
+    #[test]
+    fn arm_once_reaches_dead_without_observation() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().join(".textree").join("tmp");
+        let liveness = Mutex::new(LivenessState::new(2));
+        let counter = AtomicU64::new(0);
+
+        arm_once(&liveness, &counter, &dir); // miss 0
+        arm_once(&liveness, &counter, &dir); // miss 1
+        assert_eq!(arm_once(&liveness, &counter, &dir), Verdict::Dead); // miss 2
     }
 }
