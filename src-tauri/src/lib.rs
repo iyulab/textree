@@ -12,6 +12,7 @@ pub(crate) mod self_write;
 mod telemetry;
 pub(crate) mod vault;
 pub(crate) mod watcher;
+pub(crate) mod liveness;
 
 use host::HostHandle;
 use search::IndexHandle;
