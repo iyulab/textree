@@ -646,7 +646,7 @@ pub fn publish_site(
     let vault = PathBuf::from(&vault_path);
     let out = PathBuf::from(&out_dir);
     let canopy = resolve_canopy(&app)?;
-    let result = crate::publish::run_publish(&vault, &out, &options, &canopy)?;
+    let result = crate::publish::run_publish(&vault, &out, &options, &canopy, crate::publish::RENDER_TIMEOUT)?;
     log::info!("publish_site: {} ({} pages)", result.out_dir, result.page_count);
     Ok(result)
 }

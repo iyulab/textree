@@ -8,9 +8,10 @@
 
 use serde::{Deserialize, Serialize};
 use std::ffi::OsString;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Output, Stdio};
+use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -28,6 +29,10 @@ pub struct PublishResult {
     pub page_count: usize,
     pub out_dir: String,
 }
+
+/// Overall deadline for a canopy render. Bounds a hung renderer so publish can never wedge forever.
+/// A normal vault renders in seconds; 120s is a generous ceiling (mirrors the ask chat timeout).
+pub const RENDER_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// How to invoke canopy: a program plus any fixed leading args. In production
 /// (`canopy_from_resource_dir`) the program is the bundled pinned `node` runtime and `prefix_args`
@@ -122,6 +127,50 @@ pub fn count_html_pages(out: &Path) -> usize {
     count
 }
 
+/// Spawns `cmd` and waits up to `timeout` for it to exit. stdout is discarded (unused — page count
+/// comes from the output dir on disk); stderr is captured. A drain thread reads stderr while we poll
+/// so a chatty child can't fill the pipe buffer and deadlock our wait. On timeout the child is
+/// killed and reaped, and an error is returned promptly — we don't wait for the stderr drain thread
+/// to finish, since a killed child can leave grandchildren holding the pipe open (see comment below).
+fn spawn_bounded(mut cmd: Command, timeout: Duration) -> Result<Output, String> {
+    cmd.stdout(Stdio::null());
+    cmd.stderr(Stdio::piped());
+    let mut child = cmd.spawn().map_err(|e| format!("failed to start canopy: {e}"))?;
+
+    // Drain stderr on a thread — prevents a full-pipe deadlock while we poll try_wait().
+    let mut stderr_pipe = child.stderr.take().expect("stderr was piped");
+    let drain = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        let _ = stderr_pipe.read_to_end(&mut buf);
+        buf
+    });
+
+    let deadline = Instant::now() + timeout;
+    loop {
+        match child.try_wait().map_err(|e| e.to_string())? {
+            Some(status) => {
+                let stderr = drain.join().unwrap_or_default();
+                return Ok(Output { status, stdout: Vec::new(), stderr });
+            }
+            None => {
+                if Instant::now() >= deadline {
+                    let _ = child.kill();
+                    let _ = child.wait(); // reap the zombie
+                    // Do NOT join `drain` here: on Windows, kill() only terminates the immediate
+                    // child (e.g. a `cmd /C` wrapper), not any grandchild it spawned. A grandchild
+                    // can keep the inherited stderr pipe write end open for a while after kill,
+                    // which would block this join well past our deadline. We don't need the
+                    // captured stderr for a timeout error, so let the drain thread finish on its
+                    // own in the background instead of waiting on it.
+                    drop(drain);
+                    return Err(format!("rendering timed out after {}s", timeout.as_secs()));
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+        }
+    }
+}
+
 /// Validates, then spawns canopy to build the site. Returns the page count and output directory.
 /// The source vault is read-only throughout (canopy never writes into it).
 pub fn run_publish(
@@ -129,6 +178,7 @@ pub fn run_publish(
     out: &Path,
     options: &PublishOptions,
     canopy: &CanopyInvocation,
+    timeout: Duration,
 ) -> Result<PublishResult, String> {
     validate_publish_paths(vault, out)?;
 
@@ -158,9 +208,7 @@ pub fn run_publish(
     // Run the canopy CLI without flashing a console window (Windows).
     crate::process_ext::no_console_window(&mut cmd);
 
-    let output = cmd
-        .output()
-        .map_err(|e| format!("failed to start canopy: {e}"))?;
+    let output = spawn_bounded(cmd, timeout)?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         return Err(format!("canopy failed: {}", stderr.trim()));
@@ -176,6 +224,33 @@ pub fn run_publish(
 mod tests {
     use super::*;
     use tempfile::TempDir;
+
+    /// The render wait must be bounded: a child that outlives the deadline is killed and the call
+    /// returns promptly with a timeout error — it must NOT wait for the child to finish on its own.
+    #[test]
+    #[cfg(windows)]
+    fn spawn_bounded_kills_a_hung_child() {
+        use std::process::Command;
+        use std::time::{Duration, Instant};
+
+        // `ping -n 3 127.0.0.1` runs for ~2 seconds. Our deadline is 200ms.
+        let mut cmd = Command::new("cmd");
+        cmd.args(["/C", "ping", "-n", "3", "127.0.0.1"]);
+
+        let start = Instant::now();
+        let result = spawn_bounded(cmd, Duration::from_millis(200));
+
+        assert!(result.is_err(), "a child outliving the deadline must return an error");
+        assert!(
+            result.unwrap_err().to_lowercase().contains("timed out"),
+            "the error should say it timed out"
+        );
+        assert!(
+            start.elapsed() < Duration::from_secs(1),
+            "must kill and return near the 200ms deadline, not wait ~2s for ping: took {:?}",
+            start.elapsed()
+        );
+    }
 
     #[test]
     fn validate_rejects_non_directory_vault() {
@@ -273,7 +348,7 @@ mod tests {
         std::fs::write(&note, source).unwrap();
         let out = tmp.path().join("site");
 
-        let result = run_publish(&vault, &out, &PublishOptions { site_title: None, tokens_css: None }, &canopy)
+        let result = run_publish(&vault, &out, &PublishOptions { site_title: None, tokens_css: None }, &canopy, RENDER_TIMEOUT)
             .expect("publish should succeed via the assembled sidecar");
 
         assert!(result.page_count >= 1, "expected at least one published page");
@@ -312,7 +387,7 @@ mod tests {
             prefix_args: vec![cli.into_os_string()],
         };
 
-        let result = run_publish(&vault, &out, &options, &canopy).expect("publish should succeed");
+        let result = run_publish(&vault, &out, &options, &canopy, RENDER_TIMEOUT).expect("publish should succeed");
 
         assert!(result.page_count > 0, "at least one page emitted");
         assert!(out.join("note.html").is_file(), "the note rendered to html");

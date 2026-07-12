@@ -132,7 +132,7 @@ pub fn publish_to_cloud(
 ) -> Result<PublishToCloudResult, String> {
     let tmp = tempfile::tempdir().map_err(|e| e.to_string())?;
     let out = tmp.path().join("site"); // a fresh dir outside the vault (run_publish validates this)
-    run_publish(vault, &out, options, canopy)?;
+    run_publish(vault, &out, options, canopy, crate::publish::RENDER_TIMEOUT)?;
     let zip = zip_vault_output(&out)?;
     upload_bundle(&api_base(), token, zip, UPLOAD_TIMEOUT)
     // tmp (and the rendered output) is removed when `tmp` drops here.
