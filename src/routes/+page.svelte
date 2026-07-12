@@ -99,7 +99,7 @@
   // Absolute path where the default vault was created when Documents was unusable (fallback). Drives
   // a dismissible notice so the user knows where their notes live; null when no fallback happened.
   let vaultFallbackPath = $state<string | null>(null);
-  let publishNotice = $state<{ kind: "ok" | "error"; text: string; detail?: string } | null>(null);
+  let publishNotice = $state<{ kind: "ok" | "error"; text: string; detail?: string; onRetry?: () => void } | null>(null);
   let showTrash = $state(false);
   let showSettings = $state(false);
 
@@ -305,7 +305,7 @@
       const result = await publishToCloud(root, { tokensCss: toPublishTokens(tokensCssRaw) });
       publishNotice = cloudPublishNotice(result);
     } catch (e) {
-      publishNotice = cloudPublishErrorNotice(e);
+      publishNotice = { ...cloudPublishErrorNotice(e), onRetry: () => void publishToWeb() };
     } finally {
       cloudPublishing = false;
     }
@@ -1375,9 +1375,19 @@
     {#if updateInfo}
       <UpdateBanner info={updateInfo} />
     {/if}
-    {#if publishNotice}
+    {#if cloudPublishing}
+      <div class="publish-banner publishing" role="status" aria-busy="true">
+        <span>Publishing…</span>
+      </div>
+    {:else if publishNotice}
       <div class="publish-banner {publishNotice.kind}" role="status">
         <span title={publishNotice.detail}>{publishNotice.kind === "ok" ? "✓" : "⚠"} {publishNotice.text}</span>
+        {#if publishNotice.onRetry}
+          <button
+            class="banner-retry"
+            onclick={() => { const retry = publishNotice?.onRetry; publishNotice = null; retry?.(); }}
+          >Retry</button>
+        {/if}
         <button
           class="banner-dismiss"
           onclick={() => (publishNotice = null)}
@@ -1787,6 +1797,22 @@
   }
   .publish-banner.error {
     color: var(--text-error);
+  }
+  .publish-banner.publishing {
+    color: var(--text-muted);
+  }
+  .banner-retry {
+    border: 1px solid var(--border);
+    background: none;
+    color: inherit;
+    cursor: pointer;
+    font-size: var(--font-size-small);
+    padding: var(--sp-1) var(--sp-2);
+    border-radius: var(--radius-s);
+    transition: background var(--transition-fast);
+  }
+  .banner-retry:hover {
+    background: var(--bg-hover);
   }
   .publish-banner span {
     flex: 1;
