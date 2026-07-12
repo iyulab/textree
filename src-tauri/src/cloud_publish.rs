@@ -197,9 +197,14 @@ mod tests {
         // mid-transfer stall / hung-ingress failure mode, NOT a connect failure.
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback");
         let addr = listener.local_addr().unwrap();
-        let server = std::thread::spawn(move || {
+        // Discriminator: the stall (sleep 2s) must outlast the assert bound (1s), which in turn must
+        // exceed the client timeout (300ms). If the server closed before the bound, a BROKEN (absent)
+        // timeout could also return within the bound and the test would pass for the wrong reason.
+        // The thread is intentionally detached (not joined) — it self-terminates after the sleep, and
+        // joining would make this fast test wait out that sleep for no added coverage.
+        std::thread::spawn(move || {
             if let Ok((stream, _)) = listener.accept() {
-                std::thread::sleep(Duration::from_secs(5));
+                std::thread::sleep(Duration::from_secs(2));
                 drop(stream);
             }
         });
@@ -210,8 +215,8 @@ mod tests {
 
         assert!(result.is_err(), "a stalled server must not hang forever");
         assert!(
-            start.elapsed() < Duration::from_secs(2),
-            "must return near the 300ms timeout, not wait ~5s for the server: took {:?}",
+            start.elapsed() < Duration::from_secs(1),
+            "must return near the 300ms timeout, not wait for the stalled server: took {:?}",
             start.elapsed()
         );
         let msg = result.unwrap_err();
@@ -219,7 +224,6 @@ mod tests {
             msg.to_lowercase().contains("try again") || msg.to_lowercase().contains("connection"),
             "timeout error should guide the user to retry, got: {msg}"
         );
-        let _ = server.join();
     }
 
     #[test]

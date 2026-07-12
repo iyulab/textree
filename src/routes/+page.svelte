@@ -1385,7 +1385,13 @@
         {#if publishNotice.onRetry}
           <button
             class="banner-retry"
-            onclick={() => { const retry = publishNotice?.onRetry; publishNotice = null; retry?.(); }}
+            onclick={() => {
+              // Snapshot onRetry before clearing the notice, then invoke — order is deliberate so the
+              // banner clears immediately and the closure isn't lost when publishNotice is nulled.
+              const retry = publishNotice?.onRetry;
+              publishNotice = null;
+              retry?.();
+            }}
           >Retry</button>
         {/if}
         <button
