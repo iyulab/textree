@@ -56,6 +56,11 @@ public sealed class RemoteChatTextGenerator : ITextGenerator
         // disposing this wrapper after one request would dispose that singleton and break every
         // subsequent call. The wrapper itself owns no other disposable state, so never disposing
         // it leaks nothing; the per-call streaming enumerator is still disposed below.
+        //
+        // The probe's model-id list (`new[] { _model }`) is inert on this path: LocalSafetyChatClient
+        // consults GetAvailableModelIdsAsync only when ChatOptions.ModelId is set, and this class
+        // deliberately omits ModelId (see the ChatOptions note below). The list is still passed so
+        // the probe reports an accurate set should a future caller ever set ModelId.
         var chat = new LocalSafetyChatClient(
             _client,
             new LocalSafetyOptions { DefaultMaxOutputTokens = 512 },
