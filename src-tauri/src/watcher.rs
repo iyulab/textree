@@ -5,6 +5,7 @@
 //! `fs_changed` events to the frontend. Dropping the debouncer stops watching,
 //! so the returned handle is kept alive in state.
 
+use crate::liveness::{self, Shared};
 use crate::search::IndexHandle;
 use crate::self_write::SelfWrites;
 use notify_debouncer_full::notify::{EventKind, RecommendedWatcher, RecursiveMode};
@@ -13,9 +14,9 @@ use notify_debouncer_full::{
 };
 use serde::Serialize;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
-use tauri::{AppHandle, Emitter};
+use tauri::Emitter;
 
 #[derive(Debug, Serialize, Clone, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -34,10 +35,11 @@ pub struct FsChange {
 
 pub type VaultWatcher = Debouncer<RecommendedWatcher, RecommendedCache>;
 
-/// Handle to the running vault watcher. Managed as a Tauri `State`.
-/// Opening a new vault drops the previous debouncer (stops watching) and replaces it.
+/// Handle to the running vault watchdog. Managed as a Tauri `State`.
+/// Opening a new vault drops the previous watchdog (stops its thread and the
+/// debouncer) and replaces it.
 #[derive(Default)]
-pub struct WatcherHandle(pub Mutex<Option<VaultWatcher>>);
+pub struct WatcherHandle(pub Mutex<Option<crate::liveness::Watchdog>>);
 
 /// Reduces a notify `EventKind` to our change kind. Kinds we don't care about return `None`.
 fn map_kind(kind: &EventKind) -> Option<ChangeKind> {
@@ -201,49 +203,55 @@ pub fn rebuild_index(handle: &IndexHandle, root: &Path) {
     }
 }
 
-/// Starts a debouncer that recursively watches the vault root.
-pub fn start(
-    app: AppHandle,
-    root: &Path,
-    self_writes: Arc<SelfWrites>,
-    index: Arc<IndexHandle>,
-) -> Result<VaultWatcher, String> {
-    let root_owned = root.to_path_buf();
+/// Builds a recursive debouncer for the vault root wired to the watchdog's shared
+/// state. The callback holds a `Weak<Shared>` to avoid a reference cycle
+/// (`Shared` → debouncer → callback → `Shared`); on each flush it observes canary
+/// round-trips, surfaces real changes, and — only on real activity — asks the
+/// watchdog to arm the next probe (a canary-only flush must not re-arm, or canary
+/// writes would loop).
+pub(crate) fn build_debouncer(shared: &Arc<Shared>) -> Result<VaultWatcher, String> {
+    let weak: Weak<Shared> = Arc::downgrade(shared);
     let mut debouncer = new_debouncer(
         Duration::from_millis(300),
         None,
         move |result: DebounceEventResult| {
+            let Some(shared) = weak.upgrade() else {
+                return;
+            };
             let events = match result {
                 Ok(events) => events,
                 Err(errors) => {
                     // Watch errors are logged, not acted on: dropped-event recovery does NOT
-                    // arrive here (it comes as a Rescan flag on the Ok arm), and refreshing on
-                    // every transient error (e.g. access denied) would churn. Known limitation
-                    // (Windows): a ReadDirectoryChangesW buffer overflow reaches neither arm —
-                    // notify logs, unwatches and goes silent (upstream gap); the manual-refresh
-                    // UX is the fallback until that is fixed upstream.
+                    // arrive here (Ok-arm Rescan on Linux/macOS, or the watchdog on Windows),
+                    // and refreshing on every transient error would churn.
                     for e in &errors {
                         log::warn!("watcher error: {e}");
                     }
                     return;
                 }
             };
-            match changes_from_events(events, &root_owned, &self_writes) {
-                // Collapse the flush to one change per path by final state (see process_batch —
-                // fixes the self-write echo where one atomic write emits several events on the
-                // same path).
+            // Observe canary round-trips first — they are dropped by is_ignored below,
+            // so this pre-pass is the only place the watchdog can see them.
+            for token in liveness::observed_canary_tokens(&events) {
+                shared.observe(token);
+            }
+            match changes_from_events(events, &shared.root, &shared.self_writes) {
                 FlushOutcome::Changes(batch) => {
                     for change in &batch {
-                        let _ = app.emit("fs_changed", change.clone());
+                        let _ = shared.app.emit("fs_changed", change.clone());
                     }
-                    apply_changes_to_index(&index, &root_owned, &batch);
+                    apply_changes_to_index(&shared.index, &shared.root, &batch);
+                    // Real activity → probe soon. Canary-only flushes yield an empty
+                    // batch and deliberately do NOT re-arm (feedback-loop guard).
+                    if !batch.is_empty() {
+                        shared.request_arm();
+                    }
                 }
-                // The OS dropped events: per-path state is unknowable. Rebuild the index from
-                // disk and tell the frontend to refresh everything it derives from the vault.
                 FlushOutcome::Rescan => {
                     log::warn!("watcher: OS reported dropped events (rescan) — full refresh");
-                    rebuild_index(&index, &root_owned);
-                    let _ = app.emit("fs_rescan", ());
+                    rebuild_index(&shared.index, &shared.root);
+                    let _ = shared.app.emit("fs_rescan", ());
+                    shared.request_arm();
                 }
             }
         },
@@ -251,7 +259,7 @@ pub fn start(
     .map_err(|e| e.to_string())?;
 
     debouncer
-        .watch(root, RecursiveMode::Recursive)
+        .watch(&shared.root, RecursiveMode::Recursive)
         .map_err(|e| e.to_string())?;
     Ok(debouncer)
 }

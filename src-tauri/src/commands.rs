@@ -3,7 +3,7 @@ use crate::pathsafe::is_within;
 use crate::search::{IndexHandle, IndexState, SearchHit};
 use crate::self_write::SelfWrites;
 use crate::vault::{self, TreeNode};
-use crate::watcher::{self, WatcherHandle};
+use crate::watcher::WatcherHandle;
 use serde::{Deserialize, Serialize};
 use std::io::{self, Write};
 use std::path::{Component, Path, PathBuf};
@@ -339,11 +339,16 @@ pub fn open_vault(
         host::reindex_vault(&host_arc, &vault_str);
     });
 
-    // Explicitly drop the previous watcher (stop watching) before starting the new one, so that
-    // on a vault switch leftover events from the old vault don't bleed into the new vault's processing.
+    // Explicitly drop the previous watchdog (stops its thread and the debouncer) before
+    // starting the new one, so leftover events from the old vault don't bleed into the new.
     *watcher_handle.0.lock().unwrap() = None;
-    let w = watcher::start(app, &root_path, self_writes.inner().clone(), index.inner().clone())?;
-    *watcher_handle.0.lock().unwrap() = Some(w);
+    let wd = crate::liveness::Watchdog::spawn(
+        app,
+        &root_path,
+        self_writes.inner().clone(),
+        index.inner().clone(),
+    )?;
+    *watcher_handle.0.lock().unwrap() = Some(wd);
 
     Ok(tree)
 }
