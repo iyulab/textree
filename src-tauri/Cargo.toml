@@ -31,8 +31,10 @@ notify-debouncer-full = "0.7.0"
 base64 = "0.22"
 # 로컬 본문 전문검색 인덱스(P1b). ngram 토크나이저로 한글 부분일치.
 tantivy = "0.22"
-# 볼트 루트 경로 → 인덱스 디렉터리 식별 해시.
+# 볼트 루트 경로 → 인덱스 디렉터리 식별 해시. (+ slice 2c: PKCE S256 challenge)
 sha2 = "0.10"
+# In-app web-publish auth (slice 2c): CSPRNG for the PKCE code_verifier + loopback state nonce.
+getrandom = "0.2"
 tauri-plugin-process = "2.3.1"
 # Lightweight blocking HTTP for loopback sidecar health-check; no TLS needed.
 ureq = { version = "2.10", features = ["json"] }

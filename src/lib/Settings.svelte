@@ -6,7 +6,7 @@
   import {
     prepareAiModel, prepareGeneration, stopHost, hostStatus, restartAiHost,
     testByoConnection, setByoApiKey, clearByoApiKey, hasByoApiKey, type HostStatus,
-    setPublishToken, clearPublishToken, hasPublishToken,
+    connectPublish, clearPublishToken, hasPublishToken,
   } from "$lib/ipc";
   import {
     computeAiSectionState, themeButtons, planEmbeddingToggle,
@@ -53,8 +53,9 @@
     void hasByoApiKey().then((v) => { byoHasStoredKey = v; });
   });
 
-  // Cloud publish token (Settings ▸Advanced) — a single opaque secret, stored in the OS keychain.
-  let publishTokenInput = $state("");
+  // Web publishing connection (Settings ▸Advanced). The token is obtained via in-app sign-in
+  // (browser OAuth) — never pasted — and lives in the OS keychain. The UI only ever knows whether
+  // a token is stored (D16); it never sees the token itself.
   let publishHasToken = $state(false);
   let publishSaving = $state(false);
   let publishError = $state<string | null>(null);
@@ -63,14 +64,12 @@
     void hasPublishToken().then((v) => { publishHasToken = v; });
   });
 
-  async function onSavePublishToken(): Promise<void> {
-    if (!publishTokenInput) return;
+  async function onConnectPublish(): Promise<void> {
     publishSaving = true;
     publishError = null;
     try {
-      await setPublishToken(publishTokenInput);
+      await connectPublish(); // opens the browser; resolves once the token is stored
       publishHasToken = true;
-      publishTokenInput = ""; // never keep the plaintext around after storing it
     } catch (err) {
       publishError = err instanceof Error ? err.message : String(err);
     }
@@ -276,25 +275,16 @@
         <summary>▸ Advanced: custom AI server &amp; web publish</summary>
 
         <p class="badge">
-          Paste the token from app.textree.me to publish your vault to the web with one click.
+          Connect your account to publish your vault to the web with one click.
         </p>
         {#if publishHasToken}
-          <p class="badge" role="status">✓ Publish token stored</p>
+          <p class="badge" role="status">✓ Connected to web publishing</p>
           <button type="button" class="action" disabled={publishSaving} onclick={onClearPublishToken}>
-            Remove token
+            {publishSaving ? "…" : "Disconnect"}
           </button>
         {:else}
-          <label>
-            Web publish token
-            <input type="password" bind:value={publishTokenInput} placeholder="tk_…" autocomplete="off" />
-          </label>
-          <button
-            type="button"
-            class="action"
-            disabled={publishSaving || !publishTokenInput}
-            onclick={onSavePublishToken}
-          >
-            {publishSaving ? "Saving…" : "Save token"}
+          <button type="button" class="action" disabled={publishSaving} onclick={onConnectPublish}>
+            {publishSaving ? "Connecting…" : "Connect"}
           </button>
         {/if}
         {#if publishError}

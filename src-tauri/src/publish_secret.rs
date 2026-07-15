@@ -39,11 +39,6 @@ pub fn get_token() -> Option<String> {
 }
 
 #[tauri::command]
-pub fn set_publish_token(token: String) -> Result<(), String> {
-    set_token(&token)
-}
-
-#[tauri::command]
 pub fn clear_publish_token() -> Result<(), String> {
     clear_token()
 }

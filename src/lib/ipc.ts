@@ -220,9 +220,11 @@ export async function publishToCloud(
   return invoke<CloudPublishResult>("publish_to_cloud", { vaultPath, options });
 }
 
-/** Store the publish token in the OS Credential Manager (never localStorage — D16). */
-export function setPublishToken(token: string): Promise<void> {
-  return invoke<void>("set_publish_token", { token });
+/** Run the in-app web-publish sign-in (browser OAuth loopback + PKCE) and store the resulting
+ * token in the OS Credential Manager. Resolves once connected; rejects on cancel/timeout/error.
+ * The desktop only ever receives the opaque token — never the cloud identity (D15). */
+export function connectPublish(): Promise<void> {
+  return invoke<void>("connect_publish");
 }
 
 export function clearPublishToken(): Promise<void> {

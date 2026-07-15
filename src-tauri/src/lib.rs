@@ -1,4 +1,5 @@
 pub(crate) mod byo_secret;
+pub(crate) mod cloud_auth;
 pub(crate) mod cloud_publish;
 pub(crate) mod commands;
 pub(crate) mod host;
@@ -98,6 +99,7 @@ pub fn run() {
             commands::rebuild_index,
             commands::publish_site,
             commands::publish_to_cloud,
+            cloud_auth::connect_publish,
             commands::list_trash,
             commands::purge_trash,
             commands::ensure_default_vault,
@@ -113,7 +115,6 @@ pub fn run() {
             byo_secret::set_byo_api_key,
             byo_secret::clear_byo_api_key,
             byo_secret::has_byo_api_key,
-            publish_secret::set_publish_token,
             publish_secret::clear_publish_token,
             publish_secret::has_publish_token,
             host::restart_ai_host

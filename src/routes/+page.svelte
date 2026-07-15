@@ -22,6 +22,7 @@
     publishSite,
     publishToCloud,
     hasPublishToken,
+    connectPublish,
     prepareAiModel,
     openLogDir,
     type TreeNode,
@@ -281,6 +282,9 @@
   }
 
   let cloudPublishing = $state(false);
+  // True while the browser OAuth round-trip (connect_publish) is in flight — shows a distinct
+  // "Connecting…" banner instead of "Publishing…".
+  let cloudConnecting = $state(false);
 
   /**
    * Publish the open vault to the web (pub.textree.me) in one action: if no token is stored, guide
@@ -295,18 +299,22 @@
     cloudPublishing = true;
     publishNotice = null;
     try {
+      // First-time publish: no token yet → run the in-app sign-in (browser OAuth loopback + PKCE)
+      // instead of dead-ending on "paste a token". On success the token is stored; we continue.
       if (!(await hasPublishToken())) {
-        publishNotice = {
-          kind: "error",
-          text: "Add a web publish token in Settings ▸ Advanced first (get one at app.textree.me).",
-        };
-        return;
+        cloudConnecting = true;
+        try {
+          await connectPublish();
+        } finally {
+          cloudConnecting = false;
+        }
       }
       const result = await publishToCloud(root, { tokensCss: toPublishTokens(tokensCssRaw) });
       publishNotice = cloudPublishNotice(result);
     } catch (e) {
       publishNotice = { ...cloudPublishErrorNotice(e), onRetry: () => void publishToWeb() };
     } finally {
+      cloudConnecting = false;
       cloudPublishing = false;
     }
   }
@@ -1377,7 +1385,7 @@
     {/if}
     {#if cloudPublishing}
       <div class="publish-banner publishing" role="status" aria-busy="true">
-        <span>Publishing…</span>
+        <span>{cloudConnecting ? "Connecting… (sign in in the browser window that opened)" : "Publishing…"}</span>
       </div>
     {:else if publishNotice}
       <div class="publish-banner {publishNotice.kind}" role="status">

@@ -2,18 +2,17 @@ import { test, expect, type Browser, type Page } from "@playwright/test";
 import { connectToApp, loadVault, sampleVaultPath } from "./helpers";
 
 /**
- * "Publish to web" (slice 2b) — host-absent-safe E2E (CDP attach to WebView2).
+ * "Publish to web" (slice 2c — in-app auth) — host-absent-safe E2E (CDP attach to WebView2).
  *
- * The publish token lives in the machine-global OS keychain (no test teardown — see
- * byo_secret.rs), and invoking "Publish to web" WITH a token stored triggers a real
- * render+upload to the owner's live pub.textree.me. So this spec:
- *   - always asserts the command surfaces in the palette (never presses Enter for that check),
- *   - always asserts Settings ▸ Advanced exposes the web publish token controls,
- *   - only invokes the command (safe: it guides to Settings and returns without uploading)
- *     when the dev bridge's non-destructive `hasPublishToken()` read confirms no token is
- *     stored; otherwise it skips that one assertion with a clear reason.
+ * With no token stored, invoking "Publish to web" now starts an in-app browser sign-in
+ * (OAuth loopback + PKCE), which opens a real browser window and waits for a redirect — not
+ * safe or completable in CI. So this spec only exercises the non-destructive surfaces:
+ *   - the command surfaces in the palette (never presses Enter — executing it would upload if a
+ *     token is stored, or open a browser sign-in if not),
+ *   - Settings ▸ Advanced exposes the web-publishing connect/disconnect controls, branching
+ *     read-only on the dev bridge's `hasPublishToken()`.
  *
- * The real upload round-trip is out of scope here (owner e2e, per the slice 2b spec).
+ * The real sign-in + upload round-trip is owner e2e (slice 2c spec §6).
  */
 
 let browser: Browser;
@@ -54,54 +53,30 @@ test("the command palette surfaces 'Publish to web'", async () => {
   await page.getByTestId("palette-input").fill(">Publish to web");
   await expect(page.getByTestId("palette-item").filter({ hasText: "Publish to web" })).toBeVisible();
 
-  // Do NOT press Enter — executing it could trigger a real upload if a token is stored
-  // in this machine's keychain. Close via Escape instead.
+  // Do NOT press Enter — with a token it uploads; without one it opens a browser sign-in.
   await page.keyboard.press("Escape");
   await expect(page.getByTestId("palette-overlay")).toHaveCount(0);
 });
 
-test("Settings ▸ Advanced exposes the web publish token controls", async () => {
+test("Settings ▸ Advanced exposes the web-publishing connect controls", async () => {
   await openSettingsViaPalette(page);
   const dialog = page.getByRole("dialog", { name: "Settings" });
   await expect(dialog).toBeVisible();
 
   await dialog.getByText("Advanced: custom AI server").click();
 
-  // The intro copy is present regardless of whether a token is already stored.
-  await expect(dialog.getByText(/Paste the token from app\.textree\.me/i)).toBeVisible();
+  // The intro copy is present regardless of connection state.
+  await expect(dialog.getByText(/Connect your account to publish/i)).toBeVisible();
 
   // Branch (read-only, non-destructive) on whether a token already exists in the keychain:
-  // the field toggles between an entry form and a "stored" confirmation.
+  // the control toggles between "Connect" and a connected + "Disconnect" state.
   if (await hasPublishTokenStored(page)) {
-    await expect(dialog.getByText(/Publish token stored/i)).toBeVisible();
-    await expect(dialog.getByRole("button", { name: "Remove token" })).toBeVisible();
+    await expect(dialog.getByText(/Connected to web publishing/i)).toBeVisible();
+    await expect(dialog.getByRole("button", { name: "Disconnect" })).toBeVisible();
   } else {
-    await expect(dialog.getByLabel("Web publish token")).toBeVisible();
-    await expect(dialog.getByRole("button", { name: /Save token/i })).toBeVisible();
+    await expect(dialog.getByRole("button", { name: "Connect", exact: true })).toBeVisible();
   }
 
   await page.keyboard.press("Escape");
   await expect(dialog).toBeHidden();
-});
-
-test("Publish to web without a stored token guides to Settings instead of uploading", async () => {
-  const hasToken = await hasPublishTokenStored(page);
-  test.skip(
-    hasToken,
-    "A real publish token is stored in this machine's OS keychain — invoking 'Publish to web' " +
-      "would trigger a real render+upload to the owner's live pub.textree.me. This guide-notice " +
-      "path is only safe to exercise when no token is stored (e.g. a fresh machine).",
-  );
-
-  await loadVault(page, sampleVaultPath());
-
-  await page.keyboard.press("Control+p");
-  await expect(page.getByTestId("palette-overlay")).toBeVisible();
-  await page.getByTestId("palette-input").fill(">Publish to web");
-  await expect(page.getByTestId("palette-item").filter({ hasText: "Publish to web" })).toBeVisible();
-  await page.keyboard.press("Enter");
-  await expect(page.getByTestId("palette-overlay")).toHaveCount(0);
-
-  // No upload attempted — the notice points the user at Settings instead.
-  await expect(page.locator(".publish-banner.error")).toContainText(/token in Settings/i);
 });
