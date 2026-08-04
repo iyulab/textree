@@ -157,22 +157,27 @@ app.MapPost("/index", async (IndexRequest req, CancellationToken ct) =>
     {
         await mgr.MemorizeAsync(req.VaultPath, req.Path, ct);
     }
-    catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException)
-    {
-        // The note disappeared between the change notification and this call — an ordinary race
-        // when indexing follows a live directory tree, not a server fault. There is nothing left
-        // to index, so say so instead of failing.
-        indexLog.LogDebug(ex, "Index skipped: the source is gone");
-        return Results.NotFound(new { status = "gone" });
-    }
     catch (Exception ex)
     {
-        // Anything else is a real indexing failure. Mirror /reindex: it must not vanish into an
-        // unhandled 500, because the caller indexes in the background and never reads the result.
-        indexLog.LogError(ex, "Index failed");
-        app.Services.GetRequiredService<ITelemetryEmitter>()
-            .ReportError(TelemetryEventName.IndexFailed, "embedder", ModelPhase.Error, ex);
-        throw;
+        switch (IndexFailurePolicy.Classify(ex, ct.IsCancellationRequested))
+        {
+            case IndexFailureKind.SourceGone:
+                indexLog.LogDebug(ex, "Index skipped: the source is gone");
+                return Results.NotFound(new { status = "gone" });
+
+            case IndexFailureKind.CallerGone:
+                // Let the server handle the abandoned request the way it normally does.
+                indexLog.LogDebug("Index cancelled: the caller went away");
+                throw;
+
+            default:
+                // A real failure must not vanish into an unhandled 500: the caller indexes in the
+                // background and never reads the result, so this is the only place it is visible.
+                indexLog.LogError(ex, "Index failed");
+                app.Services.GetRequiredService<ITelemetryEmitter>()
+                    .ReportError(TelemetryEventName.IndexFailed, "embedder", ModelPhase.Error, ex);
+                throw;
+        }
     }
     return Results.Ok(new { status = "ok" });
 });
