@@ -3,7 +3,11 @@ import { resolve, join } from "node:path";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 
-const CDP_ENDPOINT = "http://localhost:9222";
+// 9222 by default, matching the port injected in tauri.e2e.conf.json. Overridable because that
+// port is a popular default: anything else already debugging on it (a browser, another harness)
+// silently takes it, and the app then comes up with no CDP at all. Point both the app config and
+// TEXTREE_E2E_CDP at a free port to work around that.
+const CDP_ENDPOINT = process.env.TEXTREE_E2E_CDP ?? "http://localhost:9222";
 const APP_URL_FRAGMENT = "localhost:1420";
 
 /** Absolute path to sample-vault (slash-normalized — the Tauri backend accepts both separators). */
@@ -32,7 +36,8 @@ export async function connectToApp(): Promise<{ browser: Browser; page: Page }> 
   await browser.close();
   throw new Error(
     `Could not find the Textree app page via CDP (${CDP_ENDPOINT}). ` +
-      `Make sure the app is running with 'npm run dev:e2e' (tauri dev --config src-tauri/tauri.e2e.conf.json).`,
+      `Make sure the app is running with 'npm run dev:e2e' (tauri dev --config src-tauri/tauri.e2e.conf.json), ` +
+      `and that nothing else is already listening on that debugging port (set TEXTREE_E2E_CDP to move it).`,
   );
 }
 
