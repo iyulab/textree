@@ -198,6 +198,8 @@ pub async fn connect_publish() -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Read;
+    use std::net::Shutdown;
 
     #[test]
     fn challenge_for_matches_rfc7636_test_vector() {
@@ -300,30 +302,42 @@ mod tests {
 
     #[test]
     fn exchange_code_posts_and_returns_token() {
-        // Fake api server: read the request, respond 200 with a token body.
+        // Fake api server: read the whole request, respond 200 with a token body. The request body
+        // must be consumed before responding — closing a socket that still holds unread data is a
+        // reset, not an orderly shutdown, and the client would race it and see a broken connection
+        // instead of the response.
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
-        std::thread::spawn(move || {
+        let server = std::thread::spawn(move || {
             let (mut stream, _) = listener.accept().unwrap();
             let mut reader = BufReader::new(&stream);
             let mut line = String::new();
-            // Drain request headers up to the blank line so the client's send completes.
+            let mut content_length = 0usize;
             loop {
                 line.clear();
                 let n = reader.read_line(&mut line).unwrap();
                 if n == 0 || line == "\r\n" {
                     break;
                 }
+                if let Some(v) = line.strip_prefix("Content-Length:").or_else(|| line.strip_prefix("content-length:")) {
+                    content_length = v.trim().parse().unwrap();
+                }
             }
+            let mut request_body = vec![0u8; content_length];
+            reader.read_exact(&mut request_body).unwrap();
             let body = r#"{"token":"tk_exchanged"}"#;
             let resp = format!(
                 "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
                 body.len()
             );
             stream.write_all(resp.as_bytes()).unwrap();
+            stream.flush().unwrap();
+            // Half-close so the peer sees end-of-response as a FIN rather than a reset.
+            stream.shutdown(Shutdown::Write).unwrap();
         });
         let base = format!("http://{addr}");
         let token = exchange_code(&base, "thecode", "theverifier").unwrap();
         assert_eq!(token, "tk_exchanged");
+        server.join().unwrap();
     }
 }
