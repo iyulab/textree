@@ -2,12 +2,13 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 
 /**
  * Stand-in for the publishing backend, so the in-app sign-in can be driven end to end without
- * reaching the real service — and, critically, without ever completing: the token exchange always
- * fails, so the flow stops before it would write to the OS credential store.
+ * reaching the real service.
  *
- * That last point is the whole design constraint. The credential store has no fake seam, and a
- * successful sign-in overwrites whatever real token the machine already holds. Failing the
- * exchange keeps every step before it under test while leaving the store untouched.
+ * The token exchange rejects by default and grants only when a test asks it to (`grantToken`), so
+ * a test that means to cover the failure path cannot accidentally complete a sign-in. Completing
+ * one is safe because a development build stores credentials under its own namespace and cannot
+ * reach the installed app's entry (see `secret_store.rs`); `credential-probe.ts` checks that
+ * separation still holds rather than trusting it.
  *
  * Ports are fixed because the app reads its base URLs from the environment at launch, before a
  * test process exists to negotiate them.
@@ -32,7 +33,9 @@ export interface CloudMock {
   waitForAuthorize(timeoutMs?: number): Promise<AuthorizeParams>;
   /** Bodies the desktop POSTed to the token endpoint, oldest first. */
   exchangeBodies(): unknown[];
-  /** Forgets what was recorded, so a second sign-in in the same run starts clean. */
+  /** Makes the next exchanges succeed with this token. Rejection is the default. */
+  grantToken(token: string): void;
+  /** Forgets what was recorded and reverts to rejecting, so the next sign-in starts clean. */
   reset(): void;
   close(): Promise<void>;
 }
@@ -61,6 +64,7 @@ function readBody(req: IncomingMessage): Promise<string> {
 
 export async function startCloudMock(): Promise<CloudMock> {
   let authorize: AuthorizeParams | null = null;
+  let granted: string | null = null;
   const exchanges: unknown[] = [];
 
   const app = createServer((req: IncomingMessage, res: ServerResponse) => {
@@ -90,7 +94,11 @@ export async function startCloudMock(): Promise<CloudMock> {
       } catch {
         exchanges.push(raw);
       }
-      // Always reject: see the note at the top of this file.
+      if (granted !== null) {
+        res.writeHead(200, { "content-type": "application/json", connection: "close" });
+        res.end(JSON.stringify({ token: granted }));
+        return;
+      }
       res.writeHead(400, { "content-type": "application/json", connection: "close" });
       res.end(JSON.stringify({ error: "invalid_grant" }));
       return;
@@ -114,8 +122,12 @@ export async function startCloudMock(): Promise<CloudMock> {
       );
     },
     exchangeBodies: () => exchanges.slice(),
+    grantToken(token: string) {
+      granted = token;
+    },
     reset() {
       authorize = null;
+      granted = null;
       exchanges.length = 0;
     },
     async close() {

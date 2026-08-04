@@ -11,24 +11,29 @@
  *                npm run test:e2e -- publish-connect
  *
  * Without TEXTREE_CONNECT_E2E the whole file skips, so the default suite never triggers a sign-in
- * against the real service (which would open a browser and block for three minutes). The tests
- * also skip when a publish token is already stored: they cover the not-yet-connected path, and
- * clearing a real token to reach that state would be destructive and unrecoverable here.
+ * against the real service (which would open a browser and block for three minutes).
  *
  * What this covers that unit tests cannot: the button in the app actually starts a loopback
  * listener, hands the cloud a fresh state + PKCE challenge, accepts only the callback carrying its
- * own state, exchanges the code, and renders the failure where a user would see it.
+ * own state, exchanges the code, stores the granted token, and renders a failure where a user would
+ * see it.
  *
- * What it deliberately does NOT cover: a successful sign-in. The mock always rejects the exchange,
- * because succeeding would write to the machine-wide OS credential store and destroy whatever real
- * publishing token this machine holds. Every test asserts the store is still untouched afterwards.
- * The success path is covered by the Rust round-trip tests and by a manual owner sign-in.
+ * Completing a sign-in is safe because the app under test is a development build, and those are
+ * compiled to use their own credential entry (`secret_store.rs`) — the entry the installed app uses
+ * is unreachable from here. The success test proves that separation rather than trusting it: it
+ * reads both entries and fails if the installed app's one moved.
  *
  * Selectors come from Settings.svelte (Advanced section) and +page.svelte (publish banner).
  */
 import { test, expect, type Browser, type Page } from "@playwright/test";
 import { connectToApp, createTempVault, loadVault, removeTempVault } from "./helpers";
 import { deliverCallback, startCloudMock, type CloudMock } from "./cloud-mock";
+import {
+  DEV_PUBLISH_TARGET,
+  PRODUCTION_PUBLISH_TARGET,
+  readCredential,
+  sameRecord,
+} from "./credential-probe";
 
 const PROFILE = process.env.TEXTREE_CONNECT_E2E;
 
@@ -86,17 +91,21 @@ async function closeSettings(p: Page) {
 /** base64url, no padding — the shape both the state and the S256 challenge must have. */
 const BASE64URL_32_BYTES = /^[A-Za-z0-9_-]{43}$/;
 
+/** Returns the app to the not-yet-connected state, whatever a previous test left behind. */
+async function disconnect(p: Page) {
+  if (!(await hasPublishToken(p))) return;
+  const dialog = await openPublishSettings(p);
+  await dialog.getByRole("button", { name: "Disconnect", exact: true }).click();
+  await expect.poll(() => hasPublishToken(p)).toBe(false);
+  await closeSettings(p);
+}
+
 test.describe("in-app sign-in", () => {
   test.beforeEach(async () => {
     test.skip(PROFILE !== "mock", "Set TEXTREE_CONNECT_E2E=mock and launch the app against the mock backend.");
-    // These tests exercise the path taken when nothing is stored yet. On a machine that is already
-    // connected the app correctly skips the sign-in, so there is nothing here to observe — and the
-    // spec will not clear a real token to manufacture the precondition, because it cannot put it
-    // back (a token can only be minted by a real sign-in). Disconnect deliberately to run these.
-    test.skip(
-      await hasPublishToken(page),
-      "Requires a machine with no publish token stored — disconnect first (Settings ▸ Advanced ▸ Disconnect).",
-    );
+    // Every test here starts from "nothing stored yet". A development build keeps its token in its
+    // own entry, so clearing it costs nothing and no longer has to be worked around by skipping.
+    await disconnect(page);
     mock.reset();
   });
 
@@ -150,6 +159,41 @@ test.describe("in-app sign-in", () => {
     expect((mock.exchangeBodies()[0] as { code?: string }).code).toBe("e2e-code");
 
     expect(await hasPublishToken(page)).toBe(false);
+    await closeSettings(page);
+  });
+
+  test("a completed sign-in stores the token, and stores it away from the installed app", async () => {
+    // Read both entries first: the one this build is expected to write, and the one it must never
+    // touch. The second reading is what turns "we namespaced it" into something the suite checks.
+    const productionBefore = readCredential(PRODUCTION_PUBLISH_TARGET);
+    expect(readCredential(DEV_PUBLISH_TARGET).present, "starts disconnected").toBe(false);
+
+    mock.grantToken("tk_e2e_granted");
+
+    const dialog = await openPublishSettings(page);
+    void dialog.getByRole("button", { name: "Connect", exact: true }).click();
+
+    const auth = await mock.waitForAuthorize();
+    expect(await deliverCallback(auth.port, "e2e-code", auth.state)).toBe(200);
+
+    // The granted token reaches the keychain, and the UI switches to connected.
+    await expect.poll(() => hasPublishToken(page), { message: "the token was stored" }).toBe(true);
+    await expect(dialog.getByRole("button", { name: "Disconnect", exact: true })).toBeVisible();
+    await expect(dialog.getByText(/Connected to web publishing/i)).toBeVisible();
+
+    // It landed in this build's own entry...
+    expect(readCredential(DEV_PUBLISH_TARGET).present, "the development entry now holds it").toBe(true);
+    // ...and the entry the installed app reads is byte-for-byte where it was.
+    expect(
+      sameRecord(readCredential(PRODUCTION_PUBLISH_TARGET), productionBefore),
+      `a test wrote to ${PRODUCTION_PUBLISH_TARGET} — the credential namespacing in secret_store.rs is gone, ` +
+        "and a real publishing token has just been overwritten",
+    ).toBe(true);
+
+    // Disconnecting takes it back out, so the next test starts clean.
+    await dialog.getByRole("button", { name: "Disconnect", exact: true }).click();
+    await expect.poll(() => hasPublishToken(page)).toBe(false);
+    expect(readCredential(DEV_PUBLISH_TARGET).present).toBe(false);
     await closeSettings(page);
   });
 
