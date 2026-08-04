@@ -13,7 +13,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 const IMAGE_EXTS: &[&str] = &["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "avif"];
 
 fn err(msg: impl Into<String>) -> io::Error {
-    io::Error::new(io::ErrorKind::Other, msg.into())
+    io::Error::other(msg.into())
 }
 
 /// Validates that the parent directory is a real directory inside the vault, and the new name is safe.

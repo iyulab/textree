@@ -40,7 +40,6 @@ pub fn is_valid_name(name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
     use tempfile::TempDir;
 
     #[test]
@@ -85,6 +84,6 @@ mod tests {
     fn within_is_false_for_nonexistent_path() {
         let tmp = TempDir::new().unwrap();
         // A path that does not exist yet fails canonicalize -> false (creation must be validated against the parent).
-        assert!(!is_within(tmp.path(), &PathBuf::from(tmp.path().join("new.md"))));
+        assert!(!is_within(tmp.path(), &tmp.path().join("new.md")));
     }
 }

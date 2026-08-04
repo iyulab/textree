@@ -20,19 +20,16 @@ pub fn parse_connection(raw: &str) -> Option<TelemetryConfig> {
     let mut endpoint: Option<&str> = None;
     for part in raw.split(';') {
         let mut kv = part.splitn(2, '=');
-        match (kv.next(), kv.next()) {
-            (Some(k), Some(v)) => {
-                let v = v.trim();
-                if v.is_empty() {
-                    continue;
-                }
-                match k.trim() {
-                    "InstrumentationKey" => key = Some(v),
-                    "IngestionEndpoint" => endpoint = Some(v),
-                    _ => {}
-                }
+        if let (Some(k), Some(v)) = (kv.next(), kv.next()) {
+            let v = v.trim();
+            if v.is_empty() {
+                continue;
             }
-            _ => {}
+            match k.trim() {
+                "InstrumentationKey" => key = Some(v),
+                "IngestionEndpoint" => endpoint = Some(v),
+                _ => {}
+            }
         }
     }
     let key = key?;
