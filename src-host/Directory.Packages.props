@@ -17,6 +17,24 @@
     <PackageVersion Include="sqlite-vec" Version="0.1.7-alpha.2.1" />
     <PackageVersion Include="Microsoft.Data.Sqlite" Version="10.0.9" />
   </ItemGroup>
+  <!-- Transitive security pins.
+       These packages are not referenced by our code; they are pulled in through the
+       dependency graph at a version that a published advisory flags. Because NuGet
+       audit failures are build errors here (TreatWarningsAsErrors), each one is lifted
+       to a non-affected version with a direct PackageReference in the consuming project.
+       Every pin states the condition under which it should be removed — a pin without an
+       expiry is indistinguishable from a permanent suppression. -->
+  <ItemGroup Label="Transitive security pins">
+    <!-- Pulled in by the retrieval SDK -> HTML pipeline -> AngleSharp 1.4.0.
+         GHSA-pgww-w46g-26qg (moderate, mXSS via MathML annotation-xml): affected < 1.5.0.
+         Remove once the retrieval SDK line in use no longer resolves AngleSharp below 1.5.0. -->
+    <PackageVersion Include="AngleSharp" Version="1.5.2" />
+    <!-- Pulled in by Microsoft.Data.Sqlite -> SQLitePCLRaw.bundle_e_sqlite3 -> lib.e_sqlite3 2.1.11.
+         GHSA-2m69-gcr7-jv3q (high, vulnerable bundled SQLite): affected <= 2.1.11, so 2.1.12
+         is outside the audited range rather than an upstream-declared fix.
+         Remove once the SQLite provider resolves 2.1.12 or later on its own. -->
+    <PackageVersion Include="SQLitePCLRaw.lib.e_sqlite3" Version="2.1.12" />
+  </ItemGroup>
   <ItemGroup>
     <PackageVersion Include="xunit" Version="2.9.2" />
     <PackageVersion Include="xunit.runner.visualstudio" Version="2.8.2" />
