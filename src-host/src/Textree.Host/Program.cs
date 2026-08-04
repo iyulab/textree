@@ -96,6 +96,7 @@ _ = Task.Run(async () =>
 });
 
 var mgr = app.Services.GetRequiredService<VaultManager>();
+var indexLog = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Textree.Host.Index");
 var reindexLog = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Textree.Host.Reindex");
 var genLog = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Textree.Host.Generation");
 
@@ -152,7 +153,27 @@ app.MapPost("/index", async (IndexRequest req, CancellationToken ct) =>
     if (string.IsNullOrWhiteSpace(req.VaultPath) || string.IsNullOrWhiteSpace(req.Path))
         return Results.BadRequest("VaultPath and Path required");
 
-    await mgr.MemorizeAsync(req.VaultPath, req.Path, ct);
+    try
+    {
+        await mgr.MemorizeAsync(req.VaultPath, req.Path, ct);
+    }
+    catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException)
+    {
+        // The note disappeared between the change notification and this call — an ordinary race
+        // when indexing follows a live directory tree, not a server fault. There is nothing left
+        // to index, so say so instead of failing.
+        indexLog.LogDebug(ex, "Index skipped: the source is gone");
+        return Results.NotFound(new { status = "gone" });
+    }
+    catch (Exception ex)
+    {
+        // Anything else is a real indexing failure. Mirror /reindex: it must not vanish into an
+        // unhandled 500, because the caller indexes in the background and never reads the result.
+        indexLog.LogError(ex, "Index failed");
+        app.Services.GetRequiredService<ITelemetryEmitter>()
+            .ReportError(TelemetryEventName.IndexFailed, "embedder", ModelPhase.Error, ex);
+        throw;
+    }
     return Results.Ok(new { status = "ok" });
 });
 
