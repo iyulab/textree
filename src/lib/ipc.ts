@@ -48,6 +48,20 @@ export async function writeNote(
   return invoke<void>("write_note", { root, path, content });
 }
 
+/**
+ * Records the given notes as one revision of the vault. Returns the revision identifier.
+ *
+ * Rejects rather than partially applying: an ignored path, a path outside the vault, or a
+ * repository busy with another operation all leave the history untouched.
+ */
+export async function commitNotes(
+  root: string,
+  paths: string[],
+  message: string,
+): Promise<string> {
+  return invoke<string>("commit_notes", { root, paths, message });
+}
+
 // ── Structure edits (M4) ────────────────────────────────────────────────
 
 export async function createNote(

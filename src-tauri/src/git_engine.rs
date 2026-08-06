@@ -7,11 +7,48 @@
 //! starts using them when commits are wired up.
 #![allow(dead_code)]
 
-use git2::{Oid, Repository, Signature, Tree};
+use git2::{Oid, Repository, RepositoryState, Signature, Tree};
 use std::path::{Component, Path, PathBuf};
 
 const MODE_BLOB: i32 = 0o100644;
 const MODE_TREE: i32 = 0o040000;
+
+/// The reference every note commit advances.
+///
+/// Deliberately outside `refs/heads/`: it never appears in branch listings, is never a
+/// checkout target, and is unaffected by whatever the person working in the repository does
+/// to their own branches. It is still an ordinary reference, so everything it holds is a
+/// reachability root — garbage collection keeps it, and `git log --all` shows it.
+pub const NOTES_REF: &str = "refs/textree/notes";
+
+/// Where the contents of never-recorded files are kept when they are deleted.
+///
+/// A note that was never recorded has nothing in history to go back to, so deleting it would
+/// otherwise be the end of it. This reference is not part of the history anyone reads; it
+/// exists only so a deletion can be undone.
+pub const SNAPSHOT_REF: &str = "refs/textree/snapshots";
+
+/// Whether `reference` already holds something at `rel`.
+pub fn is_recorded(repo: &Repository, reference: &str, rel: &Path) -> bool {
+    repo.find_reference(reference)
+        .and_then(|r| r.peel_to_commit())
+        .and_then(|c| c.tree())
+        .map(|t| t.get_path(rel).is_ok())
+        .unwrap_or(false)
+}
+
+/// Reports an operation the repository is in the middle of, if any.
+///
+/// Writing while a merge, rebase, bisect, revert, cherry-pick or mailbox application is in
+/// flight interferes with state the other tool is about to act on. Any state other than a
+/// clean one counts: the set of operations grows over time, and a state that has not been
+/// enumerated here is exactly the one whose interaction is unknown.
+pub fn operation_in_progress(repo: &Repository) -> Option<RepositoryState> {
+    match repo.state() {
+        RepositoryState::Clean => None,
+        other => Some(other),
+    }
+}
 
 /// Builds a new tree from `base` with `rel` replaced by `blob` (or removed when `blob` is
 /// `None`). Neither the index nor the working tree is read or written.
@@ -58,11 +95,52 @@ pub fn tree_with_file(
     builder.write()
 }
 
-/// Commits `content` at `rel` onto `reference`, carrying every other path in that reference's
-/// tree forward unchanged. The index, the working tree and `HEAD` are all left alone, so this
-/// is safe to run inside a repository someone else is working in.
+/// Commits several paths onto `reference` as one revision, carrying every other path in that
+/// reference's tree forward unchanged. The index, the working tree and `HEAD` are all left
+/// alone, so this is safe to run inside a repository someone else is working in.
+///
+/// Grouping the paths into a single revision matters when a change spans files: committing
+/// them one at a time publishes intermediate states in which links between them are broken.
 ///
 /// `reference` is a full name such as `refs/heads/main`, and is created when absent.
+pub fn commit_paths(
+    repo: &Repository,
+    reference: &str,
+    entries: &[(PathBuf, Vec<u8>)],
+    message: &str,
+    author: &Signature<'_>,
+    committer: &Signature<'_>,
+) -> Result<Oid, git2::Error> {
+    if entries.is_empty() {
+        return Err(git2::Error::from_str("nothing to commit"));
+    }
+
+    let parent = repo
+        .find_reference(reference)
+        .ok()
+        .and_then(|r| r.peel_to_commit().ok());
+    let mut tree = match parent.as_ref() {
+        Some(commit) => Some(commit.tree()?),
+        None => None,
+    };
+
+    for (rel, content) in entries {
+        let blob = repo.blob(content)?;
+        let oid = tree_with_file(repo, tree.as_ref(), rel, Some(blob))?;
+        tree = Some(repo.find_tree(oid)?);
+    }
+    let tree = tree.expect("entries is non-empty, so a tree was built");
+
+    let parents: Vec<&git2::Commit<'_>> = parent.iter().collect();
+    // Passing `None` as the update target keeps libgit2 from moving any reference on our
+    // behalf: only the reference named by the caller is advanced, below.
+    let commit = repo.commit(None, author, committer, message, &tree, &parents)?;
+    repo.reference(reference, commit, true, message)?;
+    Ok(commit)
+}
+
+/// Commits a single path. Convenience over [`commit_paths`] for callers with one file and no
+/// separate committer.
 pub fn commit_file(
     repo: &Repository,
     reference: &str,
@@ -71,26 +149,36 @@ pub fn commit_file(
     message: &str,
     author: &Signature<'_>,
 ) -> Result<Oid, git2::Error> {
-    let blob = repo.blob(content)?;
+    let entries = [(rel.to_path_buf(), content.to_vec())];
+    commit_paths(repo, reference, &entries, message, author, author)
+}
 
-    let parent = repo
-        .find_reference(reference)
-        .ok()
-        .and_then(|r| r.peel_to_commit().ok());
-    let base_tree = match parent.as_ref() {
-        Some(commit) => Some(commit.tree()?),
-        None => None,
-    };
+/// The name recorded as the committer of everything this application writes.
+const APP_COMMITTER_NAME: &str = "Textree";
+const APP_COMMITTER_EMAIL: &str = "noreply@textree.me";
 
-    let tree_oid = tree_with_file(repo, base_tree.as_ref(), rel, Some(blob))?;
-    let tree = repo.find_tree(tree_oid)?;
+/// Who a commit is recorded as being written by, and who recorded it.
+///
+/// The author is whoever the repository is configured for, so history stays theirs. Many
+/// repositories have no identity configured at all — asking for one at this point would
+/// interrupt saving a note, so the application's own identity stands in.
+///
+/// The committer is always the application, which makes every commit it wrote identifiable
+/// without inspecting anything else.
+pub fn commit_identities(
+    repo: &Repository,
+) -> Result<(Signature<'static>, Signature<'static>), git2::Error> {
+    identities_from(repo.signature())
+}
 
-    let parents: Vec<&git2::Commit<'_>> = parent.iter().collect();
-    // Passing `None` as the update target keeps libgit2 from moving any reference on our
-    // behalf: only the reference named by the caller is advanced, below.
-    let commit = repo.commit(None, author, author, message, &tree, &parents)?;
-    repo.reference(reference, commit, true, message)?;
-    Ok(commit)
+/// The identity rule itself, separated from where the configured identity comes from so the
+/// fallback can be exercised without depending on the machine's git configuration.
+fn identities_from(
+    configured: Result<Signature<'static>, git2::Error>,
+) -> Result<(Signature<'static>, Signature<'static>), git2::Error> {
+    let app = || Signature::now(APP_COMMITTER_NAME, APP_COMMITTER_EMAIL);
+    let author = configured.or_else(|_| app())?;
+    Ok((author, app()?))
 }
 
 /// How a folder relates to whatever repository governs it. Purely observational: `probe`
@@ -108,6 +196,14 @@ pub enum RepoState {
     None,
 }
 
+/// The storage directory of the repository governing `root`, if there is one.
+///
+/// Cheaper than opening the repository, and enough for callers that only need somewhere on the
+/// same volume that is not part of anyone's working tree.
+pub fn git_dir(root: &Path) -> Option<PathBuf> {
+    Repository::discover(root).ok().map(|r| r.path().to_path_buf())
+}
+
 /// Classifies `root` against the repository, if any, that contains it.
 pub fn probe(root: &Path) -> RepoState {
     let Ok(repo) = Repository::discover(root) else {
@@ -122,6 +218,71 @@ pub fn probe(root: &Path) -> RepoState {
         Ok(canonical) if canonical == workdir => RepoState::AtRoot,
         Ok(_) => RepoState::NestedIn(workdir),
         Err(_) => RepoState::None,
+    }
+}
+
+/// A repository together with where a vault folder sits inside it.
+///
+/// When the folder is itself a repository root the two coincide and the prefix is empty. When
+/// it sits under a repository that already exists, that repository is used as-is and the
+/// prefix records the distance, so writes land where the folder actually is.
+pub struct VaultRepo {
+    repo: Repository,
+    prefix: PathBuf,
+}
+
+impl VaultRepo {
+    pub fn repo(&self) -> &Repository {
+        &self.repo
+    }
+
+    /// Translates a path relative to the vault folder into one relative to the repository.
+    pub fn path_in_repo(&self, rel: &Path) -> PathBuf {
+        if self.prefix.as_os_str().is_empty() {
+            rel.to_path_buf()
+        } else {
+            self.prefix.join(rel)
+        }
+    }
+}
+
+/// Opens the repository that will hold a vault folder's history, creating one only when no
+/// repository governs the folder yet.
+///
+/// A folder under an existing repository uses that repository rather than getting one of its
+/// own: a repository inside a repository is recorded by the outer one as a link, so the outer
+/// one's clones come out empty at that path, and staging everything breaks while the inner one
+/// has no commit yet.
+pub fn prepare(vault_root: &Path) -> Result<VaultRepo, git2::Error> {
+    match probe(vault_root) {
+        RepoState::AtRoot => Ok(VaultRepo {
+            repo: Repository::open(vault_root)?,
+            prefix: PathBuf::new(),
+        }),
+        RepoState::NestedIn(workdir) => {
+            let canonical = std::fs::canonicalize(vault_root)
+                .map_err(|e| git2::Error::from_str(&format!("cannot resolve the folder: {e}")))?;
+            let prefix = canonical
+                .strip_prefix(&workdir)
+                .map_err(|_| {
+                    git2::Error::from_str("the folder is not inside the repository that reported it")
+                })?
+                .to_path_buf();
+            Ok(VaultRepo {
+                repo: Repository::open(&workdir)?,
+                prefix,
+            })
+        }
+        // A bare repository is storage, not a place files live. Initialising another one on
+        // top of its internals would layer a working tree over object storage, so this is
+        // refused rather than guessed at.
+        RepoState::Bare(_) => Err(git2::Error::from_str(
+            "this folder is a repository without a working tree, so notes cannot live in it",
+        )),
+        RepoState::None => Ok(VaultRepo {
+            repo: Repository::init(vault_root)?,
+            prefix: PathBuf::new(),
+        }),
     }
 }
 
@@ -364,6 +525,387 @@ mod tests {
             other => panic!("expected a bare repository, got {other:?}"),
         }
     }
+
+    #[test]
+    fn the_notes_reference_is_not_a_branch() {
+        // Branch namespace is the user's. A reference outside it never shows up in branch
+        // listings, is never a checkout target, and survives whatever they do to their own
+        // branches.
+        assert!(!NOTES_REF.starts_with("refs/heads/"));
+        assert!(NOTES_REF.starts_with("refs/"));
+
+        let dir = TempDir::new().unwrap();
+        let repo = Repository::init(dir.path()).unwrap();
+        commit_file(
+            &repo,
+            NOTES_REF,
+            Path::new("a.md"),
+            b"# heading",
+            "add a note",
+            &author(),
+        )
+        .unwrap();
+
+        let branches = repo.branches(None).unwrap().count();
+        assert_eq!(branches, 0, "a note must not appear as a branch");
+        assert!(repo.find_reference(NOTES_REF).is_ok());
+    }
+
+    #[test]
+    fn committing_notes_never_moves_head() {
+        let dir = TempDir::new().unwrap();
+        let repo = Repository::init(dir.path()).unwrap();
+
+        // A repository someone else is working in: a branch exists and is checked out.
+        commit_file(
+            &repo,
+            "refs/heads/main",
+            Path::new("app.txt"),
+            b"their work",
+            "their work",
+            &author(),
+        )
+        .unwrap();
+        repo.set_head("refs/heads/main").unwrap();
+        let head_before = repo.head().unwrap().target().unwrap();
+
+        for n in 0..5 {
+            commit_file(
+                &repo,
+                NOTES_REF,
+                Path::new("notes/a.md"),
+                format!("# revision {n}").as_bytes(),
+                "update a note",
+                &author(),
+            )
+            .unwrap();
+        }
+
+        assert_eq!(
+            repo.head().unwrap().target().unwrap(),
+            head_before,
+            "the checked-out branch must not advance"
+        );
+        assert!(
+            repo.head()
+                .unwrap()
+                .peel_to_commit()
+                .unwrap()
+                .tree()
+                .unwrap()
+                .get_path(Path::new("notes/a.md"))
+                .is_err(),
+            "notes must not enter the tree the branch points at"
+        );
+    }
+
+    #[test]
+    fn negative_control_targeting_the_checked_out_branch_does_move_head() {
+        // Establishes that the property above is not vacuous: the same call aimed at the
+        // checked-out branch advances it.
+        let dir = TempDir::new().unwrap();
+        let repo = Repository::init(dir.path()).unwrap();
+
+        commit_file(
+            &repo,
+            "refs/heads/main",
+            Path::new("app.txt"),
+            b"their work",
+            "their work",
+            &author(),
+        )
+        .unwrap();
+        repo.set_head("refs/heads/main").unwrap();
+        let head_before = repo.head().unwrap().target().unwrap();
+
+        commit_file(
+            &repo,
+            "refs/heads/main",
+            Path::new("notes/a.md"),
+            b"# heading",
+            "add a note",
+            &author(),
+        )
+        .unwrap();
+
+        assert_ne!(repo.head().unwrap().target().unwrap(), head_before);
+    }
+
+    #[test]
+    fn a_clean_repository_reports_no_operation_in_progress() {
+        let dir = TempDir::new().unwrap();
+        let repo = Repository::init(dir.path()).unwrap();
+        assert_eq!(operation_in_progress(&repo), None);
+    }
+
+    #[test]
+    fn a_repository_mid_operation_reports_it() {
+        // Each marker is what the library itself looks for when classifying repository state,
+        // so writing one reproduces the condition without running the operation.
+        let cases: [(&str, bool); 4] = [
+            ("MERGE_HEAD", false),
+            ("BISECT_LOG", false),
+            ("CHERRY_PICK_HEAD", false),
+            ("rebase-merge", true),
+        ];
+
+        for (marker, is_dir) in cases {
+            let dir = TempDir::new().unwrap();
+            let repo = Repository::init(dir.path()).unwrap();
+            let marker_path = repo.path().join(marker);
+            if is_dir {
+                std::fs::create_dir_all(&marker_path).unwrap();
+            } else {
+                std::fs::write(&marker_path, "0\n").unwrap();
+            }
+
+            assert!(
+                operation_in_progress(&repo).is_some(),
+                "{marker} must be reported as an operation in progress"
+            );
+        }
+    }
+
+    #[test]
+    fn preparing_a_plain_folder_creates_a_repository_there() {
+        let dir = TempDir::new().unwrap();
+        let vault = dir.path().join("notes");
+        std::fs::create_dir(&vault).unwrap();
+
+        let prepared = prepare(&vault).unwrap();
+        assert!(vault.join(".git").exists());
+        assert_eq!(prepared.path_in_repo(Path::new("a.md")), PathBuf::from("a.md"));
+
+        // Preparing again opens what is already there rather than starting over.
+        let again = prepare(&vault).unwrap();
+        assert_eq!(again.repo().path(), prepared.repo().path());
+    }
+
+    #[test]
+    fn several_paths_become_one_revision() {
+        // A change that spans files has to land as one revision: committing them separately
+        // publishes states in which the links between them point at things that are not
+        // there yet.
+        let dir = TempDir::new().unwrap();
+        let repo = Repository::init(dir.path()).unwrap();
+        let entries = vec![
+            (PathBuf::from("a.md"), b"# a links to b".to_vec()),
+            (PathBuf::from("sub/b.md"), b"# b".to_vec()),
+        ];
+
+        commit_paths(
+            &repo,
+            NOTES_REF,
+            &entries,
+            "move a section out",
+            &author(),
+            &author(),
+        )
+        .unwrap();
+
+        let head = repo
+            .find_reference(NOTES_REF)
+            .unwrap()
+            .peel_to_commit()
+            .unwrap();
+        assert_eq!(head.parent_count(), 0, "one revision, not two");
+        let tree = head.tree().unwrap();
+        assert!(tree.get_path(Path::new("a.md")).is_ok());
+        assert!(tree.get_path(&Path::new("sub").join("b.md")).is_ok());
+    }
+
+    #[test]
+    fn committing_nothing_is_refused() {
+        let dir = TempDir::new().unwrap();
+        let repo = Repository::init(dir.path()).unwrap();
+        assert!(commit_paths(&repo, NOTES_REF, &[], "empty", &author(), &author()).is_err());
+        assert!(repo.find_reference(NOTES_REF).is_err(), "no reference is created");
+    }
+
+    #[test]
+    fn the_author_is_the_repository_owner_and_the_committer_is_the_application() {
+        let dir = TempDir::new().unwrap();
+        let repo = Repository::init(dir.path()).unwrap();
+        let mut config = repo.config().unwrap();
+        config.set_str("user.name", "Their Name").unwrap();
+        config.set_str("user.email", "them@example.invalid").unwrap();
+
+        let (author, committer) = commit_identities(&repo).unwrap();
+        assert_eq!(author.name().unwrap(), "Their Name");
+        assert_eq!(author.email().unwrap(), "them@example.invalid");
+        assert_ne!(
+            committer.email().unwrap(),
+            author.email().unwrap(),
+            "the application records itself as the committer"
+        );
+    }
+
+    #[test]
+    fn a_missing_identity_falls_back_to_the_application() {
+        // Configuring an identity is a step many repositories never take, and asking for one
+        // mid-save would interrupt writing a note over something the note does not need.
+        //
+        // The absence is injected rather than arranged on disk: clearing the repository's own
+        // configuration would still leave a machine-wide identity in place, so a test built
+        // that way passes without ever reaching the fallback.
+        let unconfigured = Err(git2::Error::from_str("no identity configured"));
+        let (author, committer) = identities_from(unconfigured).unwrap();
+
+        assert_eq!(author.email().unwrap(), committer.email().unwrap());
+        assert_eq!(author.name().unwrap(), APP_COMMITTER_NAME);
+
+        let dir = TempDir::new().unwrap();
+        let repo = Repository::init(dir.path()).unwrap();
+        commit_paths(
+            &repo,
+            NOTES_REF,
+            &[(PathBuf::from("a.md"), b"# heading".to_vec())],
+            "add a note",
+            &author,
+            &committer,
+        )
+        .expect("committing must not depend on a configured identity");
+    }
+
+    #[test]
+    fn preparing_a_repository_without_a_working_tree_is_refused() {
+        let dir = TempDir::new().unwrap();
+        Repository::init_bare(dir.path()).unwrap();
+        assert!(prepare(dir.path()).is_err());
+    }
+
+    #[test]
+    fn a_fresh_vault_leaves_the_default_branch_unborn() {
+        // Records the shape a brand-new vault actually has. Notes live on their own reference,
+        // so the branch `init` set up never receives a commit: `HEAD` stays unborn and branch
+        // listings are empty. A tool that shows only branches shows nothing here, while
+        // `--all` and reference enumeration show the notes.
+        let dir = TempDir::new().unwrap();
+        let vault = dir.path().join("notes");
+        std::fs::create_dir(&vault).unwrap();
+
+        let prepared = prepare(&vault).unwrap();
+        commit_file(
+            prepared.repo(),
+            NOTES_REF,
+            Path::new("a.md"),
+            b"# heading",
+            "add a note",
+            &author(),
+        )
+        .unwrap();
+
+        assert!(
+            prepared.repo().head().is_err(),
+            "the default branch never receives a commit"
+        );
+        assert_eq!(prepared.repo().branches(None).unwrap().count(), 0);
+        assert!(prepared.repo().find_reference(NOTES_REF).is_ok());
+    }
+
+    #[test]
+    fn preparing_a_folder_inside_a_repository_does_not_nest_one() {
+        let dir = TempDir::new().unwrap();
+        Repository::init(dir.path()).unwrap();
+        let vault = dir.path().join("docs").join("notes");
+        std::fs::create_dir_all(&vault).unwrap();
+
+        let prepared = prepare(&vault).unwrap();
+
+        assert!(
+            !vault.join(".git").exists(),
+            "a repository inside a repository is what this avoids"
+        );
+        assert_eq!(
+            prepared.path_in_repo(Path::new("a.md")),
+            Path::new("docs").join("notes").join("a.md"),
+            "paths are written where the folder actually sits"
+        );
+
+        commit_file(
+            prepared.repo(),
+            NOTES_REF,
+            &prepared.path_in_repo(Path::new("a.md")),
+            b"# heading",
+            "add a note",
+            &author(),
+        )
+        .unwrap();
+
+        let tree = prepared
+            .repo()
+            .find_reference(NOTES_REF)
+            .unwrap()
+            .peel_to_commit()
+            .unwrap()
+            .tree()
+            .unwrap();
+        assert!(tree
+            .get_path(&Path::new("docs").join("notes").join("a.md"))
+            .is_ok());
+    }
+
+    #[test]
+    fn staging_everything_in_the_outer_repository_stays_unaffected() {
+        let dir = TempDir::new().unwrap();
+        let outer = Repository::init(dir.path()).unwrap();
+        std::fs::write(dir.path().join("app.txt"), "their work").unwrap();
+        let vault = dir.path().join("docs");
+        std::fs::create_dir_all(&vault).unwrap();
+
+        prepare(&vault).unwrap();
+        std::fs::write(vault.join("a.md"), "# heading").unwrap();
+
+        let mut index = outer.index().unwrap();
+        index
+            .add_all(["*"].iter(), git2::IndexAddOption::DEFAULT, None)
+            .expect("staging everything must keep working");
+
+        // Nothing was turned into a repository link; the note is an ordinary tracked file.
+        let entry = index.get_path(&Path::new("docs").join("a.md"), 0).unwrap();
+        assert_eq!(entry.mode, 0o100644, "the note must be a plain blob entry");
+    }
+
+    #[test]
+    fn negative_control_a_nested_repository_breaks_staging_for_the_whole_repository() {
+        // Establishes that the avoided arrangement causes real harm, so the test above is not
+        // guarding against nothing. Staging everything is an everyday command, and with a
+        // repository nested inside one it errors out partway: the caller gets a failure, the
+        // nested folder contributes nothing, and whatever had already been walked stays
+        // staged — a partial result nobody asked for.
+        let dir = TempDir::new().unwrap();
+        let outer = Repository::init(dir.path()).unwrap();
+        std::fs::write(dir.path().join("app.txt"), "their work").unwrap();
+        let vault = dir.path().join("docs");
+        std::fs::create_dir_all(&vault).unwrap();
+
+        let inner = Repository::init(&vault).unwrap();
+        std::fs::write(vault.join("a.md"), "# heading").unwrap();
+        commit_file(
+            &inner,
+            "refs/heads/main",
+            Path::new("a.md"),
+            b"# heading",
+            "seed",
+            &author(),
+        )
+        .unwrap();
+        inner.set_head("refs/heads/main").unwrap();
+
+        let mut index = outer.index().unwrap();
+        let result = index.add_all(["*"].iter(), git2::IndexAddOption::DEFAULT, None);
+
+        assert!(result.is_err(), "staging everything is expected to fail");
+        assert!(
+            index.get_path(&Path::new("docs").join("a.md"), 0).is_none(),
+            "the nested folder's file cannot be staged"
+        );
+        assert!(
+            index.get_path(Path::new("docs"), 0).is_none(),
+            "and the folder itself contributes no entry"
+        );
+    }
+
 
     #[test]
     fn a_folder_inside_a_repository_reports_the_enclosing_root() {

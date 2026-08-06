@@ -12,22 +12,38 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Manager, State};
 use tempfile::NamedTempFile;
 
-/// The staging directory for atomic writes: `<root>/.textree/tmp/`. Confining temp files here
-/// (instead of beside each target) keeps the user's content folders free of transient `.tmpXXXX`
-/// files — a sync client (OneDrive/Dropbox) otherwise churns on every autosave. It stays under the
-/// vault root, so `persist` is still a same-volume rename (atomic); `.textree/` is already excluded
-/// from the tree, search, and the watcher, and is sync-ignorable as one path.
+/// Name of the staging directory for atomic writes, inside the repository's own storage.
+const TEMP_DIR_NAME: &str = "textree-tmp";
+
+/// Legacy staging location, kept only so leftovers from earlier versions get cleaned up.
+const LEGACY_TEMP_DIR: [&str; 2] = [".textree", "tmp"];
+
+/// Where atomic writes stage their temp file.
+///
+/// Repository storage is the right home for it: it is on the same volume as the target (so
+/// `persist` is still an atomic rename), it is not part of anyone's working tree (so transient
+/// `.tmpXXXX` files never show up as changes, not even when the folder sits inside a
+/// repository someone else uses), and it leaves no trace in the folder itself. A folder with no
+/// repository at all falls back to the older location so writing still works.
 fn temp_dir(root: &Path) -> PathBuf {
-    root.join(".textree").join("tmp")
+    match crate::git_engine::git_dir(root) {
+        Some(git) => git.join(TEMP_DIR_NAME),
+        None => root.join(LEGACY_TEMP_DIR[0]).join(LEGACY_TEMP_DIR[1]),
+    }
 }
 
-/// Best-effort removal of orphaned temp files left under `<root>/.textree/tmp/` — e.g. a crash or
-/// power loss between create and rename. Without this they would linger (and sync) forever. Called
-/// on vault open. Errors are ignored (an in-flight temp held open by another instance simply stays).
+/// Best-effort removal of orphaned temp files — e.g. a crash or power loss between create and
+/// rename. Without this they would linger forever. Called on vault open. Errors are ignored (an
+/// in-flight temp held open by another instance simply stays).
+///
+/// The older location is swept as well, so upgrading leaves nothing behind.
 fn clear_temp_dir(root: &Path) {
-    if let Ok(entries) = std::fs::read_dir(temp_dir(root)) {
-        for entry in entries.flatten() {
-            let _ = std::fs::remove_file(entry.path());
+    let legacy = root.join(LEGACY_TEMP_DIR[0]).join(LEGACY_TEMP_DIR[1]);
+    for dir in [temp_dir(root), legacy] {
+        if let Ok(entries) = std::fs::read_dir(&dir) {
+            for entry in entries.flatten() {
+                let _ = std::fs::remove_file(entry.path());
+            }
         }
     }
 }
@@ -424,12 +440,92 @@ fn rel_to_root(root: &Path, target: &Path) -> Result<String, String> {
         .ok_or_else(|| "target is not within the vault".to_string())
 }
 
+/// Every file at or under `target` whose contents history does not already hold.
+///
+/// Returned as (path on disk, path within the repository) pairs.
+fn unrecorded_under(
+    prepared: &crate::git_engine::VaultRepo,
+    root: &Path,
+    target: &Path,
+) -> Vec<(PathBuf, PathBuf)> {
+    let mut found = Vec::new();
+    let mut stack = vec![target.to_path_buf()];
+    while let Some(current) = stack.pop() {
+        if current.is_dir() {
+            if let Ok(entries) = std::fs::read_dir(&current) {
+                for entry in entries.flatten() {
+                    stack.push(entry.path());
+                }
+            }
+            continue;
+        }
+        let Ok(rel) = rel_to_root(root, &current) else {
+            continue;
+        };
+        let in_repo = prepared.path_in_repo(Path::new(&rel));
+        if !crate::git_engine::is_recorded(prepared.repo(), crate::git_engine::NOTES_REF, &in_repo)
+        {
+            found.push((current, in_repo));
+        }
+    }
+    found
+}
+
+/// Keeps the contents of anything about to be deleted that history does not already hold.
+///
+/// Deleting something that was recorded needs no safety net — history has it. Deleting
+/// something that never was is otherwise final, so its contents are put somewhere recoverable
+/// first. Nothing here is part of the history anyone reads.
+fn snapshot_unrecorded(root: &Path, target: &Path) -> Result<(), String> {
+    let prepared = match crate::git_engine::prepare(root) {
+        Ok(p) => p,
+        // Without a repository there is nothing to snapshot into. Deleting still works; this
+        // is a safety net, not a precondition.
+        Err(e) => {
+            log::warn!("snapshot_unrecorded: no repository available: {}", e.message());
+            return Ok(());
+        }
+    };
+
+    let mut entries: Vec<(PathBuf, Vec<u8>)> = Vec::new();
+    for (on_disk, in_repo) in unrecorded_under(&prepared, root, target) {
+        match std::fs::read(&on_disk) {
+            Ok(content) => entries.push((in_repo, content)),
+            Err(e) => {
+                // A file that cannot be read cannot be kept. Say so rather than deleting it
+                // while reporting success.
+                return Err(format!("'{}' could not be read: {e}", on_disk.display()));
+            }
+        }
+    }
+    if entries.is_empty() {
+        return Ok(());
+    }
+
+    let (author, committer) = crate::git_engine::commit_identities(prepared.repo())
+        .map_err(|e| e.message().to_string())?;
+    crate::git_engine::commit_paths(
+        prepared.repo(),
+        crate::git_engine::SNAPSHOT_REF,
+        &entries,
+        "keep deleted content",
+        &author,
+        &committer,
+    )
+    .map_err(|e| e.message().to_string())?;
+    log::info!("snapshot_unrecorded: kept {} file(s)", entries.len());
+    Ok(())
+}
+
 #[tauri::command]
 pub fn delete_node(root: String, path: String) -> Result<(), String> {
     let root_p = Path::new(&root);
     let target = Path::new(&path);
     // Capture provenance before the move (canonicalize needs the path to still exist).
     let original_rel = rel_to_root(root_p, target)?;
+    // Anything history does not already hold is kept first: once the delete goes through,
+    // there is nowhere else for it to come back from.
+    snapshot_unrecorded(root_p, target)?;
     let is_dir = target.is_dir();
     // Move first (fs_ops validates is_within / root / .textree). Manifest after — a mid-crash
     // leaves an "unknown-origin" trash file (recoverable) rather than a dangling manifest entry.
@@ -686,10 +782,215 @@ pub fn open_log_dir(app: tauri::AppHandle) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
+/// Records the given notes as one revision in the vault's history.
+///
+/// Only the paths named here are written. What the person working in the repository has
+/// staged, which branch they have checked out, and what is in their working tree are all left
+/// exactly as they were.
+///
+/// Refused rather than half-done when: the repository is in the middle of another operation,
+/// a path lies outside the vault, or a path is covered by an ignore rule (in which case the
+/// history would silently not contain what was asked for).
+#[tauri::command]
+pub fn commit_notes(root: String, paths: Vec<String>, message: String) -> Result<String, String> {
+    let root_p = Path::new(&root);
+    if paths.is_empty() {
+        return Err("nothing was selected".into());
+    }
+
+    let prepared = crate::git_engine::prepare(root_p).map_err(|e| e.message().to_string())?;
+    let repo = prepared.repo();
+
+    if let Some(state) = crate::git_engine::operation_in_progress(repo) {
+        log::warn!("commit_notes: refused, repository is busy: {state:?}");
+        return Err(format!(
+            "the repository is in the middle of another operation ({state:?})"
+        ));
+    }
+
+    let mut entries: Vec<(PathBuf, Vec<u8>)> = Vec::with_capacity(paths.len());
+    for raw in &paths {
+        let target = Path::new(raw);
+        if !is_within(root_p, target) {
+            log::warn!("commit_notes: rejected unsafe path: {}", target.display());
+            return Err("path is outside the vault".into());
+        }
+        let rel = rel_to_root(root_p, target)?;
+        if target.is_dir() {
+            // Reading a directory fails with an operating-system error that says nothing about
+            // what went wrong. The caller expands a selection into files before asking.
+            return Err(format!("'{rel}' is a folder, not a note"));
+        }
+        let in_repo = prepared.path_in_repo(Path::new(&rel));
+        if repo.is_path_ignored(&in_repo).unwrap_or(false) {
+            log::warn!("commit_notes: refused, path is ignored: {rel}");
+            return Err(format!(
+                "'{rel}' is covered by an ignore rule, so recording it would leave it out"
+            ));
+        }
+        let content = std::fs::read(target).map_err(|e| e.to_string())?;
+        entries.push((in_repo, content));
+    }
+
+    let (author, committer) =
+        crate::git_engine::commit_identities(repo).map_err(|e| e.message().to_string())?;
+    let oid = crate::git_engine::commit_paths(
+        repo,
+        crate::git_engine::NOTES_REF,
+        &entries,
+        &message,
+        &author,
+        &committer,
+    )
+    .map_err(|e| e.message().to_string())?;
+
+    log::info!("commit_notes: {} path(s) as {}", entries.len(), oid);
+    Ok(oid.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use tempfile::TempDir;
+
+    fn seed_note(root: &Path, rel: &str, body: &str) -> String {
+        let target = root.join(rel);
+        if let Some(parent) = target.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        std::fs::write(&target, body).unwrap();
+        target.to_string_lossy().to_string()
+    }
+
+    #[test]
+    fn committing_records_the_named_paths_and_nothing_else() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        let repo = git2::Repository::init(root).unwrap();
+
+        // Unrelated work the person has staged. It must come through untouched.
+        std::fs::write(root.join("app.txt"), "their work").unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(Path::new("app.txt")).unwrap();
+        index.write().unwrap();
+        let staged_before = index.len();
+
+        let a = seed_note(root, "a.md", "# a");
+        let b = seed_note(root, "sub/b.md", "# b");
+
+        let oid = commit_notes(
+            root.to_string_lossy().to_string(),
+            vec![a, b],
+            "record two notes".into(),
+        )
+        .unwrap();
+        assert_eq!(oid.len(), 40, "a revision identifier is returned");
+
+        let tree = repo
+            .find_reference(crate::git_engine::NOTES_REF)
+            .unwrap()
+            .peel_to_commit()
+            .unwrap()
+            .tree()
+            .unwrap();
+        assert!(tree.get_path(Path::new("a.md")).is_ok());
+        assert!(tree.get_path(&Path::new("sub").join("b.md")).is_ok());
+        assert!(
+            tree.get_path(Path::new("app.txt")).is_err(),
+            "staged work must not be swept in"
+        );
+
+        let index_after = repo.index().unwrap();
+        assert_eq!(index_after.len(), staged_before, "the index is untouched");
+    }
+
+    #[test]
+    fn committing_is_refused_while_the_repository_is_busy() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        let repo = git2::Repository::init(root).unwrap();
+        let a = seed_note(root, "a.md", "# a");
+        std::fs::write(repo.path().join("MERGE_HEAD"), "0\n").unwrap();
+
+        let err = commit_notes(
+            root.to_string_lossy().to_string(),
+            vec![a],
+            "record a note".into(),
+        )
+        .unwrap_err();
+
+        assert!(err.contains("another operation"), "got: {err}");
+        assert!(
+            repo.find_reference(crate::git_engine::NOTES_REF).is_err(),
+            "nothing may be recorded when the attempt is refused"
+        );
+    }
+
+    #[test]
+    fn committing_an_ignored_path_is_refused_rather_than_silently_dropped() {
+        // Without this, the history simply would not contain what was asked for, and there
+        // would be nothing on screen to explain why.
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        let repo = git2::Repository::init(root).unwrap();
+        std::fs::write(root.join(".gitignore"), "drafts/\n").unwrap();
+        let hidden = seed_note(root, "drafts/a.md", "# a");
+
+        let err = commit_notes(
+            root.to_string_lossy().to_string(),
+            vec![hidden],
+            "record a note".into(),
+        )
+        .unwrap_err();
+
+        assert!(err.contains("ignore rule"), "got: {err}");
+        assert!(repo.find_reference(crate::git_engine::NOTES_REF).is_err());
+    }
+
+    #[test]
+    fn committing_a_path_outside_the_vault_is_refused() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path().join("vault");
+        std::fs::create_dir_all(&root).unwrap();
+        git2::Repository::init(&root).unwrap();
+        let outside = seed_note(tmp.path(), "elsewhere.md", "# elsewhere");
+
+        let err = commit_notes(
+            root.to_string_lossy().to_string(),
+            vec![outside],
+            "record a note".into(),
+        )
+        .unwrap_err();
+        assert!(err.contains("outside the vault"), "got: {err}");
+    }
+
+    #[test]
+    fn committing_a_folder_says_so_instead_of_failing_obscurely() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        git2::Repository::init(root).unwrap();
+        std::fs::create_dir(root.join("sub")).unwrap();
+
+        let err = commit_notes(
+            root.to_string_lossy().to_string(),
+            vec![root.join("sub").to_string_lossy().to_string()],
+            "record".into(),
+        )
+        .unwrap_err();
+        assert!(err.contains("is a folder"), "got: {err}");
+    }
+
+    #[test]
+    fn committing_nothing_is_refused() {
+        let tmp = TempDir::new().unwrap();
+        let err = commit_notes(
+            tmp.path().to_string_lossy().to_string(),
+            vec![],
+            "record".into(),
+        )
+        .unwrap_err();
+        assert!(err.contains("nothing was selected"), "got: {err}");
+    }
 
     #[test]
     fn sidecar_path_confines_to_dot_textree() {
@@ -742,26 +1043,65 @@ mod tests {
     }
 
     #[test]
-    fn temp_dir_is_confined_to_dot_textree() {
-        let root = Path::new("/vault");
-        assert_eq!(temp_dir(root), Path::new("/vault/.textree/tmp"));
+    fn temp_dir_lives_in_repository_storage() {
+        let root = TempDir::new().unwrap();
+        let repo = git2::Repository::init(root.path()).unwrap();
+        assert_eq!(temp_dir(root.path()), repo.path().join(TEMP_DIR_NAME));
     }
 
     #[test]
-    fn atomic_write_stages_temp_in_dot_textree_not_the_content_dir() {
-        // Temp files must not litter the user's content folders (sync tools churn on them).
+    fn temp_dir_of_a_nested_folder_uses_the_governing_repository() {
+        // The folder someone opens may sit inside a repository they are working in. Staging
+        // under that folder would put temp files in their working tree; the repository's own
+        // storage is outside it.
         let root = TempDir::new().unwrap();
+        let repo = git2::Repository::init(root.path()).unwrap();
+        let inner = root.path().join("docs");
+        std::fs::create_dir_all(&inner).unwrap();
+
+        assert_eq!(temp_dir(&inner), repo.path().join(TEMP_DIR_NAME));
+        assert!(!temp_dir(&inner).starts_with(&inner));
+    }
+
+    #[test]
+    fn temp_dir_falls_back_when_no_repository_governs_the_folder() {
+        // Writing must keep working before a repository exists.
+        let root = Path::new("/nowhere-that-exists");
+        assert_eq!(temp_dir(root), root.join(".textree").join("tmp"));
+    }
+
+    #[test]
+    fn atomic_write_leaves_no_temp_beside_the_target() {
+        // Temp files must not litter the user's content folders (sync tools churn on them),
+        // and must not appear as changes in a repository they are working in.
+        let root = TempDir::new().unwrap();
+        git2::Repository::init(root.path()).unwrap();
         let notes = root.path().join("notes");
         std::fs::create_dir(&notes).unwrap();
         let f = notes.join("foo.md");
         atomic_write(root.path(), &f, "body").unwrap();
 
         assert_eq!(std::fs::read_to_string(&f).unwrap(), "body");
-        // The content dir holds only the target — no `.tmpXXXX` sibling left behind.
         let entries: Vec<_> = std::fs::read_dir(&notes).unwrap().flatten().collect();
         assert_eq!(entries.len(), 1, "only foo.md, no temp litter");
-        // The staging dir lives under `.textree/` (watcher- and search-excluded; sync-ignorable).
-        assert!(root.path().join(".textree").join("tmp").is_dir());
+        assert!(temp_dir(root.path()).is_dir());
+        assert!(
+            !root.path().join(".textree").exists(),
+            "nothing of ours is left in the folder itself"
+        );
+    }
+
+    #[test]
+    fn clear_temp_dir_also_sweeps_the_older_location() {
+        // Upgrading must not leave orphans behind at the previous address.
+        let root = TempDir::new().unwrap();
+        git2::Repository::init(root.path()).unwrap();
+        let legacy = root.path().join(".textree").join("tmp");
+        std::fs::create_dir_all(&legacy).unwrap();
+        std::fs::write(legacy.join(".tmpOrphan"), "stale").unwrap();
+
+        clear_temp_dir(root.path());
+        assert_eq!(std::fs::read_dir(&legacy).unwrap().flatten().count(), 0);
     }
 
     #[test]

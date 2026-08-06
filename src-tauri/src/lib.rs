@@ -4,6 +4,10 @@ pub(crate) mod cloud_publish;
 pub(crate) mod commands;
 pub(crate) mod host;
 pub(crate) mod fs_ops;
+#[cfg(test)]
+mod gate_deletion_recoverable;
+#[cfg(test)]
+mod gate_staging_untouched;
 pub(crate) mod git_engine;
 pub(crate) mod pathsafe;
 pub(crate) mod process_ext;
@@ -83,6 +87,7 @@ pub fn run() {
             commands::list_tree,
             commands::read_note,
             commands::write_note,
+            commands::commit_notes,
             commands::create_note,
             commands::create_untitled_note,
             commands::create_note_with_content,

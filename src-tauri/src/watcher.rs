@@ -54,6 +54,25 @@ fn map_kind(kind: &EventKind) -> Option<ChangeKind> {
     }
 }
 
+/// The one path inside repository storage worth reacting to: the record of which branch is
+/// checked out.
+///
+/// When another tool switches branches, the folder's contents are replaced wholesale. Per-path
+/// events cannot describe that reliably, so it is treated the same way as the operating system
+/// dropping events — refresh everything.
+///
+/// Everything else under `.git` stays ignored. Object and index writes happen constantly, and
+/// surfacing them would turn every operation anyone performs into a storm of events about
+/// files that are not notes.
+///
+/// Only reachable when the folder is itself the repository root. A folder sitting inside a
+/// repository has that record outside the watched folder, and watching outside the folder
+/// someone opened is a different decision from this one.
+fn is_head_reference(root: &Path, path: &Path) -> bool {
+    path.strip_prefix(root)
+        .is_ok_and(|rel| rel == Path::new(".git").join("HEAD"))
+}
+
 /// Dot segments relative to the vault root (`.textree`, `.git`, etc.) are hidden in the
 /// tree, so the watcher ignores them too. Dots in the root path itself are not counted
 /// toward the ignore decision.
@@ -122,6 +141,9 @@ fn changes_from_events(
             continue;
         };
         for path in &ev.paths {
+            if is_head_reference(root, path) {
+                return FlushOutcome::Rescan;
+            }
             if is_ignored(root, path) {
                 continue;
             }
@@ -365,6 +387,46 @@ mod tests {
         assert!(is_ignored(&root, &PathBuf::from("/vault/.git/config")));
         assert!(!is_ignored(&root, &PathBuf::from("/vault/note.md")));
         assert!(!is_ignored(&root, &PathBuf::from("/vault/journal/2026.md")));
+    }
+
+    #[test]
+    fn the_checked_out_branch_record_is_singled_out_from_repository_storage() {
+        let root = PathBuf::from("/vault");
+        assert!(is_head_reference(&root, &PathBuf::from("/vault/.git/HEAD")));
+
+        // Everything else in there stays ignored: these change constantly, and none of them
+        // says anything about the notes.
+        for noisy in [
+            "/vault/.git/index",
+            "/vault/.git/config",
+            "/vault/.git/objects/ab/cdef",
+            "/vault/.git/logs/HEAD",
+            "/vault/.git/refs/heads/main",
+        ] {
+            let path = PathBuf::from(noisy);
+            assert!(!is_head_reference(&root, &path), "{noisy}");
+            assert!(is_ignored(&root, &path), "{noisy}");
+        }
+
+        // And a note that merely has a similar name is not it.
+        assert!(!is_head_reference(&root, &PathBuf::from("/vault/HEAD")));
+    }
+
+    #[test]
+    fn switching_branches_elsewhere_asks_for_a_full_refresh() {
+        // Switching branches replaces the folder's contents wholesale. Per-path events cannot
+        // describe that, so the only honest answer is to re-read everything.
+        let root = PathBuf::from("/vault");
+        let self_writes = SelfWrites::default();
+        let events = vec![DebouncedEvent::new(
+            Event::new(EventKind::Modify(ModifyKind::Any)).add_path(root.join(".git").join("HEAD")),
+            std::time::Instant::now(),
+        )];
+
+        assert!(matches!(
+            changes_from_events(events, &root, &self_writes),
+            FlushOutcome::Rescan
+        ));
     }
 
     #[test]
