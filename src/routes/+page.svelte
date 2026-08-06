@@ -1641,6 +1641,10 @@
     background: var(--border);
     cursor: col-resize;
     position: relative;
+    /* Lift above the content pane. The editor that follows is itself positioned, so with an auto
+       z-index it paints later and swallows the half of the hit area that overhangs to the right,
+       leaving only the sidebar-side half grabbable. */
+    z-index: 1;
   }
   .resize-handle::after {
     /* Invisible wide hit area (±3px). */
