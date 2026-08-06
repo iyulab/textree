@@ -1,9 +1,9 @@
 import { defineConfig } from "@playwright/test";
 
 /**
- * Textree E2E — 실행 중인 Tauri 앱의 WebView2에 CDP로 연결해 검증한다.
- * mock IPC가 아니라 실제 파일시스템 백엔드를 거치므로 "파일시스템이 진실의
- * 원천"이라는 핵심 가치를 그대로 검증한다.
+ * Textree E2E — connects over CDP to the WebView2 of the running Tauri app.
+ * Nothing is mocked: every assertion goes through the real filesystem backend, so the suite
+ * verifies the property the app is built on, that the files on disk are the source of truth.
  *
  * Precondition: the app must be running with the remote debugging port open.
  *   npm run dev:e2e
@@ -13,7 +13,7 @@ import { defineConfig } from "@playwright/test";
  */
 export default defineConfig({
   testDir: "./e2e",
-  // 단일 webview에 CDP로 붙으므로 병렬 불가.
+  // A single webview is shared over one CDP connection, so the suite cannot run in parallel.
   fullyParallel: false,
   workers: 1,
   reporter: [["list"]],

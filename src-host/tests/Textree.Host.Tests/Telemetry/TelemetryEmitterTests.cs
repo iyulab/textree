@@ -43,14 +43,14 @@ public class TelemetryEmitterTests
 
         emitter.ReportError(
             TelemetryEventName.ModelDownloadFailed, "embedder", ModelPhase.Downloading,
-            new IOException("No such file or directory: C:/Users/alice/.cache/일기.onnx"));
+            new IOException("No such file or directory: C:/Users/alice/.cache/café.onnx"));
 
         var evt = Assert.IsType<EventTelemetry>(Assert.Single(channel.Sent));
         Assert.Equal(TelemetryEventName.ModelDownloadFailed, evt.Name);
         Assert.Equal("IOException", evt.Properties["exception_type"]);
         Assert.Equal("embedder", evt.Properties["model_slot"]);
         // The exception MESSAGE (with the path) must appear in NO property value.
-        Assert.DoesNotContain(evt.Properties.Values, v => v.Contains("alice") || v.Contains(".cache") || v.Contains("일기"));
+        Assert.DoesNotContain(evt.Properties.Values, v => v.Contains("alice") || v.Contains(".cache") || v.Contains("café"));
         // Identifying context cleared by ContextScrubProcessor (after the SDK's post-init re-stamp).
         Assert.True(string.IsNullOrEmpty(evt.Context.Cloud.RoleInstance));
     }
@@ -96,11 +96,11 @@ public class TelemetryEmitterTests
 
         emitter.ReportError(
             TelemetryEventName.ModelDownloadFailed, "embedder", ModelPhase.Downloading,
-            new IOException("No such file: C:/Users/alice/일기.onnx"));
+            new IOException("No such file: C:/Users/alice/café.onnx"));
 
         var line = Assert.Single(logger.Messages);
         Assert.Contains(TelemetryEventName.ModelDownloadFailed, line);
         Assert.DoesNotContain("alice", line);
-        Assert.DoesNotContain("일기", line);
+        Assert.DoesNotContain("café", line);
     }
 }

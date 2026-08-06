@@ -316,7 +316,7 @@ mod tests {
     fn rebuild_index_recovers_changes_the_watcher_missed() {
         let vault = TempDir::new().unwrap();
         let idx = TempDir::new().unwrap();
-        std::fs::write(vault.path().join("a.md"), "예전 노트").unwrap();
+        std::fs::write(vault.path().join("a.md"), "stale note").unwrap();
 
         let handle: Arc<IndexHandle> = Arc::new(IndexHandle::default());
         *handle.0.lock().unwrap() = Some(IndexState::open_or_create(idx.path()).unwrap());
@@ -331,14 +331,14 @@ mod tests {
 
         // Simulate dropped events: a.md vanished and b.md appeared with no per-path event.
         std::fs::remove_file(vault.path().join("a.md")).unwrap();
-        std::fs::write(vault.path().join("b.md"), "신규 노트").unwrap();
+        std::fs::write(vault.path().join("b.md"), "fresh note").unwrap();
 
         rebuild_index(&handle, vault.path());
 
         let guard = handle.0.lock().unwrap();
         let st = guard.as_ref().unwrap();
-        assert_eq!(st.search("예전", 10).unwrap().len(), 0, "stale doc must be gone");
-        assert_eq!(st.search("신규", 10).unwrap().len(), 1, "missed file must be indexed");
+        assert_eq!(st.search("stale", 10).unwrap().len(), 0, "stale doc must be gone");
+        assert_eq!(st.search("fresh", 10).unwrap().len(), 1, "missed file must be indexed");
     }
 
     #[test]
@@ -363,15 +363,15 @@ mod tests {
         let root = PathBuf::from("/vault");
         assert!(is_ignored(&root, &PathBuf::from("/vault/.textree/db.json")));
         assert!(is_ignored(&root, &PathBuf::from("/vault/.git/config")));
-        assert!(!is_ignored(&root, &PathBuf::from("/vault/노트.md")));
-        assert!(!is_ignored(&root, &PathBuf::from("/vault/일기/2026.md")));
+        assert!(!is_ignored(&root, &PathBuf::from("/vault/note.md")));
+        assert!(!is_ignored(&root, &PathBuf::from("/vault/journal/2026.md")));
     }
 
     #[test]
     fn is_ignored_does_not_count_dot_in_root_path() {
         let root = PathBuf::from("/home/.config/vault");
         // .config inside the root is not subject to the ignore decision.
-        assert!(!is_ignored(&root, &PathBuf::from("/home/.config/vault/노트.md")));
+        assert!(!is_ignored(&root, &PathBuf::from("/home/.config/vault/note.md")));
         // A dot folder below the root is still ignored.
         assert!(is_ignored(
             &root,
@@ -535,7 +535,7 @@ mod tests {
     fn apply_changes_to_index_upserts_and_deletes() {
         let vault = TempDir::new().unwrap();
         let idx = TempDir::new().unwrap();
-        std::fs::write(vault.path().join("a.md"), "처음 본문").unwrap();
+        std::fs::write(vault.path().join("a.md"), "initial body").unwrap();
 
         let handle: Arc<IndexHandle> = Arc::new(IndexHandle::default());
         *handle.0.lock().unwrap() = Some(IndexState::open_or_create(idx.path()).unwrap());
@@ -548,7 +548,7 @@ mod tests {
         {
             let guard = handle.0.lock().unwrap();
             let st = guard.as_ref().unwrap();
-            assert_eq!(st.search("본문", 10).unwrap().len(), 1);
+            assert_eq!(st.search("body", 10).unwrap().len(), 1);
         }
 
         // removed → delete
@@ -558,7 +558,7 @@ mod tests {
         apply_changes_to_index(&handle, vault.path(), &changes);
         {
             let guard = handle.0.lock().unwrap();
-            assert_eq!(guard.as_ref().unwrap().search("본문", 10).unwrap().len(), 0);
+            assert_eq!(guard.as_ref().unwrap().search("body", 10).unwrap().len(), 0);
         }
     }
 

@@ -120,12 +120,12 @@ mod tests {
     #[test]
     fn leaf_note_is_mapped() {
         let tmp = TempDir::new().unwrap();
-        touch(tmp.path(), "프로젝트.md");
+        touch(tmp.path(), "project.md");
         let tree = build_tree(tmp.path()).unwrap();
         assert_eq!(tree.len(), 1);
-        assert_eq!(tree[0].name, "프로젝트");
+        assert_eq!(tree[0].name, "project");
         assert_eq!(tree[0].kind, NodeKind::Leaf);
-        assert_eq!(tree[0].path, tmp.path().join("프로젝트.md"));
+        assert_eq!(tree[0].path, tmp.path().join("project.md"));
         assert!(tree[0].body_path.is_some());
         assert!(tree[0].children.is_empty());
     }
@@ -144,12 +144,12 @@ mod tests {
     #[test]
     fn folder_note_becomes_container_body_not_child() {
         let tmp = TempDir::new().unwrap();
-        touch(tmp.path(), "일기/일기.md"); // folder note (body)
-        touch(tmp.path(), "일기/2026-06-13.md"); // child leaf
+        touch(tmp.path(), "journal/journal.md"); // folder note (body)
+        touch(tmp.path(), "journal/2026-06-13.md"); // child leaf
         let tree = build_tree(tmp.path()).unwrap();
         assert_eq!(tree.len(), 1);
         let diary = &tree[0];
-        assert_eq!(diary.name, "일기");
+        assert_eq!(diary.name, "journal");
         assert_eq!(diary.kind, NodeKind::Container);
         assert!(diary.body_path.is_some(), "folder note should be picked up as the body");
         assert_eq!(diary.children.len(), 1);
@@ -159,8 +159,8 @@ mod tests {
     #[test]
     fn non_markdown_files_are_hidden() {
         let tmp = TempDir::new().unwrap();
-        touch(tmp.path(), "자료실/자료실.md");
-        touch(tmp.path(), "자료실/assets/diagram.png"); // not shown in the tree
+        touch(tmp.path(), "library/library.md");
+        touch(tmp.path(), "library/assets/diagram.png"); // not shown in the tree
         let tree = build_tree(tmp.path()).unwrap();
         let archive = &tree[0];
         assert_eq!(archive.children.len(), 1);
@@ -174,12 +174,12 @@ mod tests {
     #[test]
     fn dotfolders_are_hidden() {
         let tmp = TempDir::new().unwrap();
-        touch(tmp.path(), "노트.md");
+        touch(tmp.path(), "note.md");
         touch(tmp.path(), ".textree/order.json");
         touch(tmp.path(), ".git/config");
         let tree = build_tree(tmp.path()).unwrap();
         assert_eq!(tree.len(), 1, ".textree/.git are hidden");
-        assert_eq!(tree[0].name, "노트");
+        assert_eq!(tree[0].name, "note");
     }
 
     #[test]
@@ -188,16 +188,16 @@ mod tests {
         // nor its JSON Canvas files (`.canvas`). The tree shows only the notes; the artifacts stay
         // untouched on disk so the two apps can take turns on the same vault losslessly.
         let tmp = TempDir::new().unwrap();
-        touch(tmp.path(), "노트.md");
+        touch(tmp.path(), "note.md");
         touch(tmp.path(), ".obsidian/app.json");
         touch(tmp.path(), ".obsidian/workspace.json");
-        touch(tmp.path(), "보드.canvas");
+        touch(tmp.path(), "board.canvas");
         let tree = build_tree(tmp.path()).unwrap();
         assert_eq!(tree.len(), 1, "only the markdown note is shown");
-        assert_eq!(tree[0].name, "노트");
+        assert_eq!(tree[0].name, "note");
         // build_tree is read-only: the Obsidian artifacts remain exactly where they were.
         assert!(tmp.path().join(".obsidian/app.json").is_file());
-        assert!(tmp.path().join("보드.canvas").is_file());
+        assert!(tmp.path().join("board.canvas").is_file());
     }
 
     #[test]

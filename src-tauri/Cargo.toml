@@ -1,7 +1,7 @@
 [package]
 name = "textree"
 version = "0.6.0"
-description = "로컬 파일시스템 기반 노트 앱"
+description = "A local-first note app that keeps notes as plain files"
 authors = ["iyulab"]
 license = "GPL-3.0-only"
 edition = "2021"
@@ -24,14 +24,15 @@ tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tauri-plugin-dialog = "2.7.1"
-# 원자적 노트 저장(temp+rename)에 사용 — 쓰기 중 크래시 시 truncation 방지.
+# Atomic note writes (temp + rename), so a crash mid-write cannot truncate a note.
 tempfile = "3"
 notify-debouncer-full = "0.7.0"
-# 첨부(이미지) 붙여넣기 — base64 문자열로 IPC 전달된 바이너리를 디코드.
+# Pasted image attachments: decodes the binary that crosses IPC as a base64 string.
 base64 = "0.22"
-# 로컬 본문 전문검색 인덱스(P1b). ngram 토크나이저로 한글 부분일치.
+# Full-text index over note bodies. An n-gram tokenizer gives partial matches in scripts
+# that do not separate words with spaces.
 tantivy = "0.22"
-# 볼트 루트 경로 → 인덱스 디렉터리 식별 해시. (+ slice 2c: PKCE S256 challenge)
+# Hashes the vault root path into an index directory name, and builds the PKCE S256 challenge.
 sha2 = "0.10"
 # In-app web-publish auth (slice 2c): CSPRNG for the PKCE code_verifier + loopback state nonce.
 getrandom = "0.2"

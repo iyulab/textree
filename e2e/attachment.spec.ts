@@ -47,10 +47,10 @@ async function pasteImage(mime: string, base64: string): Promise<void> {
 }
 
 test("paste image → save to assets/ + auto-insert link into body", async () => {
-  const vault = createTempVault({ "그림노트.md": "본문\n" });
+  const vault = createTempVault({ "drawing-note.md": "body\n" });
   try {
     await loadVault(page, vault);
-    await page.getByRole("treeitem", { name: /그림노트/ }).click();
+    await page.getByRole("treeitem", { name: /drawing-note/ }).click();
     await expect(page.locator(".cm-content")).toBeVisible();
     await page.locator(".cm-content").click();
     await page.keyboard.press("Control+End");
@@ -59,7 +59,7 @@ test("paste image → save to assets/ + auto-insert link into body", async () =>
 
     // Markdown link is inserted into the body and persisted to disk via autosave.
     await expect
-      .poll(() => readVaultFile(vault, "그림노트.md"), { timeout: 5000 })
+      .poll(() => readVaultFile(vault, "drawing-note.md"), { timeout: 5000 })
       .toContain("![](assets/");
     // Actual image file saved to assets/ next to the note.
     await expect
@@ -73,10 +73,10 @@ test("paste image → save to assets/ + auto-insert link into body", async () =>
 });
 
 test("paste of unsupported format (image/tiff) is not intercepted — no assets created", async () => {
-  const vault = createTempVault({ "무관노트.md": "본문\n" });
+  const vault = createTempVault({ "unrelated-note.md": "body\n" });
   try {
     await loadVault(page, vault);
-    await page.getByRole("treeitem", { name: /무관노트/ }).click();
+    await page.getByRole("treeitem", { name: /unrelated-note/ }).click();
     await expect(page.locator(".cm-content")).toBeVisible();
     await page.locator(".cm-content").click();
 
@@ -86,7 +86,7 @@ test("paste of unsupported format (image/tiff) is not intercepted — no assets 
     // After a brief wait, confirm no assets created and no link inserted.
     await page.waitForTimeout(800);
     expect(listVaultDir(vault, "assets")).toHaveLength(0);
-    expect(readVaultFile(vault, "무관노트.md")).not.toContain("![](assets/");
+    expect(readVaultFile(vault, "unrelated-note.md")).not.toContain("![](assets/");
   } finally {
     removeTempVault(vault);
   }

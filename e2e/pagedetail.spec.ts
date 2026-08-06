@@ -20,41 +20,41 @@ test.afterAll(async () => {
 });
 
 test("inline title edit -> file rename + title update", async () => {
-  const vault = createTempVault({ "원제목.md": "내용\n" });
+  const vault = createTempVault({ "Old title.md": "content\n" });
   try {
     await loadVault(page, vault);
-    await page.getByRole("treeitem", { name: /원제목/ }).click();
-    await expect(page.locator(".note-name")).toHaveText("원제목");
+    await page.getByRole("treeitem", { name: /Old title/ }).click();
+    await expect(page.locator(".note-name")).toHaveText("Old title");
 
     // Click title -> input -> enter new name -> Enter.
     await page.locator(".note-name").click();
     await expect(page.locator(".title-input")).toBeVisible();
-    await page.locator(".title-input").fill("새제목");
+    await page.locator(".title-input").fill("New title");
     await page.locator(".title-input").press("Enter");
 
     // Title updated + disk file renamed.
-    await expect(page.locator(".note-name")).toHaveText("새제목");
-    await expect(page.getByRole("treeitem", { name: /새제목/ })).toBeVisible();
-    expect(existsSync(join(vault, "새제목.md"))).toBe(true);
-    expect(existsSync(join(vault, "원제목.md"))).toBe(false);
+    await expect(page.locator(".note-name")).toHaveText("New title");
+    await expect(page.getByRole("treeitem", { name: /New title/ })).toBeVisible();
+    expect(existsSync(join(vault, "New title.md"))).toBe(true);
+    expect(existsSync(join(vault, "Old title.md"))).toBe(false);
   } finally {
     removeTempVault(vault);
   }
 });
 
 test("title edit Escape -> no change", async () => {
-  const vault = createTempVault({ "유지.md": "내용\n" });
+  const vault = createTempVault({ "kept.md": "content\n" });
   try {
     await loadVault(page, vault);
-    await page.getByRole("treeitem", { name: /유지/ }).click();
+    await page.getByRole("treeitem", { name: /kept/ }).click();
 
     await page.locator(".note-name").click();
-    await page.locator(".title-input").fill("바뀐이름");
+    await page.locator(".title-input").fill("renamed");
     await page.locator(".title-input").press("Escape");
 
-    await expect(page.locator(".note-name")).toHaveText("유지");
-    expect(existsSync(join(vault, "유지.md"))).toBe(true);
-    expect(existsSync(join(vault, "바뀐이름.md"))).toBe(false);
+    await expect(page.locator(".note-name")).toHaveText("kept");
+    expect(existsSync(join(vault, "kept.md"))).toBe(true);
+    expect(existsSync(join(vault, "renamed.md"))).toBe(false);
   } finally {
     removeTempVault(vault);
   }

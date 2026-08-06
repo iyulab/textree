@@ -366,8 +366,8 @@ mod tests {
     #[test]
     fn create_note_makes_md_file() {
         let tmp = TempDir::new().unwrap();
-        let p = create_note(tmp.path(), tmp.path(), "새노트").unwrap();
-        assert_eq!(p, tmp.path().join("새노트.md"));
+        let p = create_note(tmp.path(), tmp.path(), "new-note").unwrap();
+        assert_eq!(p, tmp.path().join("new-note.md"));
         assert!(p.is_file());
     }
 
@@ -383,28 +383,28 @@ mod tests {
     #[test]
     fn create_folder_makes_dir_and_folder_note() {
         let tmp = TempDir::new().unwrap();
-        let dir = create_folder(tmp.path(), tmp.path(), "일기").unwrap();
+        let dir = create_folder(tmp.path(), tmp.path(), "journal").unwrap();
         assert!(dir.is_dir());
-        assert!(dir.join("일기.md").is_file(), "the folder note should be created");
+        assert!(dir.join("journal.md").is_file(), "the folder note should be created");
     }
 
     #[test]
     fn promote_leaf_moves_md_into_namesake_folder() {
         let tmp = TempDir::new().unwrap();
         let leaf = tmp.path().join("foo.md");
-        std::fs::write(&leaf, "본문").unwrap();
+        std::fs::write(&leaf, "body text").unwrap();
         let dir = promote_leaf(tmp.path(), &leaf).unwrap();
         assert_eq!(dir, tmp.path().join("foo"));
         assert!(!leaf.exists(), "the original leaf file is moved");
         let body = dir.join("foo.md");
         assert!(body.is_file());
-        assert_eq!(std::fs::read_to_string(body).unwrap(), "본문", "content preserved");
+        assert_eq!(std::fs::read_to_string(body).unwrap(), "body text", "content preserved");
     }
 
     #[test]
     fn delete_moves_to_trash_not_permanent() {
         let tmp = TempDir::new().unwrap();
-        let note = tmp.path().join("지울노트.md");
+        let note = tmp.path().join("doomed-note.md");
         std::fs::write(&note, "x").unwrap();
         let dest = delete_to_trash(tmp.path(), &note).unwrap();
         assert!(!note.exists(), "the original is gone");
@@ -438,27 +438,27 @@ mod tests {
     fn rename_leaf_note() {
         let tmp = TempDir::new().unwrap();
         let leaf = tmp.path().join("old.md");
-        std::fs::write(&leaf, "본문").unwrap();
+        std::fs::write(&leaf, "body text").unwrap();
         let new = rename_node(tmp.path(), &leaf, "new").unwrap();
         assert_eq!(new, tmp.path().join("new.md"));
         assert!(!leaf.exists());
-        assert_eq!(std::fs::read_to_string(new).unwrap(), "본문");
+        assert_eq!(std::fs::read_to_string(new).unwrap(), "body text");
     }
 
     #[test]
     fn rename_container_renames_dir_and_folder_note() {
         let tmp = TempDir::new().unwrap();
-        let dir = tmp.path().join("일기");
+        let dir = tmp.path().join("diary");
         std::fs::create_dir(&dir).unwrap();
-        std::fs::write(dir.join("일기.md"), "다이어리").unwrap();
-        std::fs::write(dir.join("2026.md"), "자식").unwrap();
+        std::fs::write(dir.join("diary.md"), "diary body").unwrap();
+        std::fs::write(dir.join("2026.md"), "child").unwrap();
 
         let new_dir = rename_node(tmp.path(), &dir, "journal").unwrap();
         assert_eq!(new_dir, tmp.path().join("journal"));
         assert!(new_dir.join("journal.md").is_file(), "the folder note is renamed too");
         assert_eq!(
             std::fs::read_to_string(new_dir.join("journal.md")).unwrap(),
-            "다이어리"
+            "diary body"
         );
         assert!(new_dir.join("2026.md").is_file(), "children are unchanged");
         assert!(!dir.exists());
@@ -469,11 +469,11 @@ mod tests {
         // Renaming a folder must move everything it holds — including an Obsidian config folder and
         // a JSON Canvas file — so a vault shared with Obsidian stays lossless across the rename.
         let tmp = TempDir::new().unwrap();
-        let dir = tmp.path().join("프로젝트");
+        let dir = tmp.path().join("sketchbook");
         std::fs::create_dir_all(dir.join(".obsidian")).unwrap();
-        std::fs::write(dir.join("프로젝트.md"), "본문").unwrap();
+        std::fs::write(dir.join("sketchbook.md"), "body text").unwrap();
         std::fs::write(dir.join(".obsidian").join("app.json"), "{}").unwrap();
-        std::fs::write(dir.join("그림.canvas"), "{\"nodes\":[]}").unwrap();
+        std::fs::write(dir.join("drawing.canvas"), "{\"nodes\":[]}").unwrap();
 
         let new_dir = rename_node(tmp.path(), &dir, "project").unwrap();
         assert!(new_dir.join("project.md").is_file(), "folder note renamed");
@@ -483,7 +483,7 @@ mod tests {
             "the Obsidian config moved intact"
         );
         assert_eq!(
-            std::fs::read_to_string(new_dir.join("그림.canvas")).unwrap(),
+            std::fs::read_to_string(new_dir.join("drawing.canvas")).unwrap(),
             "{\"nodes\":[]}",
             "the canvas moved intact"
         );
@@ -494,16 +494,16 @@ mod tests {
     fn delete_note_leaves_sibling_obsidian_and_canvas_untouched() {
         // Deleting a note trashes only that file; sibling Obsidian artifacts are never collateral.
         let tmp = TempDir::new().unwrap();
-        let note = tmp.path().join("지울노트.md");
+        let note = tmp.path().join("doomed-note.md");
         std::fs::write(&note, "x").unwrap();
         std::fs::create_dir_all(tmp.path().join(".obsidian")).unwrap();
         std::fs::write(tmp.path().join(".obsidian").join("app.json"), "{}").unwrap();
-        std::fs::write(tmp.path().join("보드.canvas"), "{}").unwrap();
+        std::fs::write(tmp.path().join("board.canvas"), "{}").unwrap();
 
         delete_to_trash(tmp.path(), &note).unwrap();
         assert!(!note.exists(), "only the note is trashed");
         assert!(tmp.path().join(".obsidian").join("app.json").is_file());
-        assert!(tmp.path().join("보드.canvas").is_file());
+        assert!(tmp.path().join("board.canvas").is_file());
     }
 
     #[test]
@@ -557,18 +557,18 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let a = tmp.path().join("a.md");
         let b = tmp.path().join("b.md");
-        std::fs::write(&a, "에이").unwrap();
-        std::fs::write(&b, "비").unwrap();
+        std::fs::write(&a, "alpha").unwrap();
+        std::fs::write(&b, "beta").unwrap();
 
         let moved = adopt_into_leaf(tmp.path(), &a, &b).unwrap();
         // b is promoted to a container and the folder note is preserved.
         let b_dir = tmp.path().join("b");
         assert!(b_dir.is_dir());
-        assert_eq!(std::fs::read_to_string(b_dir.join("b.md")).unwrap(), "비");
+        assert_eq!(std::fs::read_to_string(b_dir.join("b.md")).unwrap(), "beta");
         // a is moved into b/, content preserved.
         assert_eq!(moved, b_dir.join("a.md"));
         assert!(!a.exists());
-        assert_eq!(std::fs::read_to_string(&moved).unwrap(), "에이");
+        assert_eq!(std::fs::read_to_string(&moved).unwrap(), "alpha");
     }
 
     #[test]
@@ -576,17 +576,17 @@ mod tests {
         // If src's name equals the leaf stem, it collides with the new folder note (b/b.md) → move fails → rollback.
         let tmp = TempDir::new().unwrap();
         let leaf = tmp.path().join("b.md");
-        std::fs::write(&leaf, "비").unwrap();
+        std::fs::write(&leaf, "beta").unwrap();
         let box_dir = tmp.path().join("box");
         std::fs::create_dir(&box_dir).unwrap();
         let src = box_dir.join("b.md"); // triggers the collision (b/b.md already exists on move)
-        std::fs::write(&src, "충돌").unwrap();
+        std::fs::write(&src, "clash").unwrap();
 
         assert!(adopt_into_leaf(tmp.path(), &src, &leaf).is_err());
         // Rollback verification: leaf restored, promotion folder removed, src preserved.
         assert!(leaf.is_file(), "the leaf should be restored");
         assert!(!tmp.path().join("b").exists(), "the promotion folder should be rolled back");
-        assert_eq!(std::fs::read_to_string(&leaf).unwrap(), "비");
+        assert_eq!(std::fs::read_to_string(&leaf).unwrap(), "beta");
         assert!(src.is_file(), "src is unchanged");
     }
 
@@ -594,7 +594,7 @@ mod tests {
     fn save_attachment_writes_to_assets_and_returns_rel_link() {
         let tmp = TempDir::new().unwrap();
         let note = tmp.path().join("note.md");
-        std::fs::write(&note, "본문").unwrap();
+        std::fs::write(&note, "body text").unwrap();
         let bytes = b"\x89PNG\r\n\x1a\n fake png";
 
         let rel = save_attachment(tmp.path(), &note, bytes, "png").unwrap();
@@ -655,7 +655,7 @@ mod tests {
         let dir = tmp.path().join("bar");
         std::fs::create_dir(&dir).unwrap();
         let body = dir.join("bar.md"); // folder note
-        std::fs::write(&body, "다이어리").unwrap();
+        std::fs::write(&body, "diary body").unwrap();
 
         let rel = save_attachment(tmp.path(), &body, b"img", "gif").unwrap();
         assert!(rel.starts_with("assets/"), "for a folder note too, the relative link is assets/");
@@ -698,7 +698,7 @@ mod tests {
         let src = tmp.path().join("p");
         std::fs::create_dir(&src).unwrap();
         let leaf = src.join("child.md");
-        std::fs::write(&leaf, "자식").unwrap();
+        std::fs::write(&leaf, "child").unwrap();
 
         assert!(adopt_into_leaf(tmp.path(), &src, &leaf).is_err());
         assert!(leaf.is_file(), "no mutation on rejection");

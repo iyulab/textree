@@ -40,7 +40,7 @@ public class AllowlistTelemetryProcessorTests
         var proc = new AllowlistTelemetryProcessor(next);
 
         var req = new RequestTelemetry { Name = "POST /index", Url = new Uri("https://host/index?vault=C:/Users/alice/notes") };
-        var ex = new ExceptionTelemetry(new IOException("No such file ... 일기/x.md")); // path-bearing
+        var ex = new ExceptionTelemetry(new IOException("No such file ... café/x.md")); // path-bearing
         var trace = new TraceTelemetry("loading C:/Users/alice/.cache/model.onnx");
 
         proc.Process(req);

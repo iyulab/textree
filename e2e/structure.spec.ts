@@ -23,7 +23,7 @@ test.afterAll(async () => {
 const exists = (vault: string, rel: string) => existsSync(join(vault, rel));
 
 test("＋note → instant Untitled note, header focused, typing renames the file", async () => {
-  const vault = createTempVault({ "기존.md": "x\n" });
+  const vault = createTempVault({ "existing.md": "x\n" });
   try {
     await loadVault(page, vault);
     await page.getByRole("button", { name: "New note" }).click();
@@ -35,10 +35,10 @@ test("＋note → instant Untitled note, header focused, typing renames the file
 
     // The pre-selected "Untitled" text is replaced by typing the first char (not fill,
     // which would replace regardless of selection) → proves focusSelect's select-all.
-    await page.locator(".title-input").pressSequentially("새노트");
+    await page.locator(".title-input").pressSequentially("new-note");
     await page.locator(".title-input").press("Enter");
-    await expect(page.getByRole("treeitem", { name: /새노트/ })).toBeVisible();
-    expect(exists(vault, "새노트.md")).toBe(true);
+    await expect(page.getByRole("treeitem", { name: /new-note/ })).toBeVisible();
+    expect(exists(vault, "new-note.md")).toBe(true);
     expect(exists(vault, "Untitled.md")).toBe(false);
 
     // A second New note auto-numbers.
@@ -50,7 +50,7 @@ test("＋note → instant Untitled note, header focused, typing renames the file
 });
 
 test("first H1 names an Untitled note on editor blur", async () => {
-  const vault = createTempVault({ "기존.md": "x\n" });
+  const vault = createTempVault({ "existing.md": "x\n" });
   try {
     await loadVault(page, vault);
     await page.getByRole("button", { name: "New note" }).click();
@@ -58,30 +58,30 @@ test("first H1 names an Untitled note on editor blur", async () => {
 
     // Move into the body and type the first H1, then blur by switching notes.
     await page.locator(".cm-content").click();
-    await page.locator(".cm-content").pressSequentially("# 회의록");
-    await page.getByRole("treeitem", { name: /기존/ }).click();
+    await page.locator(".cm-content").pressSequentially("# meeting-notes");
+    await page.getByRole("treeitem", { name: /existing/ }).click();
 
-    await expect.poll(() => exists(vault, "회의록.md"), { timeout: 5000 }).toBe(true);
+    await expect.poll(() => exists(vault, "meeting-notes.md"), { timeout: 5000 }).toBe(true);
     expect(exists(vault, "Untitled.md")).toBe(false);
-    await expect(page.getByRole("treeitem", { name: /회의록/ })).toBeVisible();
+    await expect(page.getByRole("treeitem", { name: /meeting-notes/ })).toBeVisible();
   } finally {
     removeTempVault(vault);
   }
 });
 
 test("first H1 auto-numbers when the name is taken", async () => {
-  const vault = createTempVault({ "회의록.md": "기존\n" });
+  const vault = createTempVault({ "meeting-notes.md": "existing\n" });
   try {
     await loadVault(page, vault);
     await page.getByRole("button", { name: "New note" }).click();
     await expect(page.locator(".title-input")).toBeFocused();
 
     await page.locator(".cm-content").click();
-    await page.locator(".cm-content").pressSequentially("# 회의록");
-    await page.getByRole("treeitem", { name: /회의록$/ }).click(); // blur via the existing note
+    await page.locator(".cm-content").pressSequentially("# meeting-notes");
+    await page.getByRole("treeitem", { name: /meeting-notes$/ }).click(); // blur via the existing note
 
-    await expect.poll(() => exists(vault, "회의록 (1).md"), { timeout: 5000 }).toBe(true);
-    expect(exists(vault, "회의록.md")).toBe(true); // the existing note is untouched
+    await expect.poll(() => exists(vault, "meeting-notes (1).md"), { timeout: 5000 }).toBe(true);
+    expect(exists(vault, "meeting-notes.md")).toBe(true); // the existing note is untouched
     expect(exists(vault, "Untitled.md")).toBe(false);
   } finally {
     removeTempVault(vault);
@@ -90,26 +90,26 @@ test("first H1 auto-numbers when the name is taken", async () => {
 
 test("editing the first H1 of a NAMED note does not rename it", async () => {
   // Core boundary regression: a named note's H1 edits must NOT rename (protects inbound links).
-  const vault = createTempVault({ "내노트.md": "본문\n" });
+  const vault = createTempVault({ "my-note.md": "body\n" });
   try {
     await loadVault(page, vault);
-    await page.getByRole("treeitem", { name: /내노트/ }).click();
+    await page.getByRole("treeitem", { name: /my-note/ }).click();
     await expect(page.locator(".cm-content")).toBeVisible();
 
     await page.locator(".cm-content").click();
     await page.keyboard.press("Control+Home");
-    await page.locator(".cm-content").pressSequentially("# 강제제목\n");
+    await page.locator(".cm-content").pressSequentially("# forced-title\n");
     await page.getByRole("button", { name: "New note" }).click(); // blur the editor
 
-    expect(exists(vault, "내노트.md")).toBe(true);
-    expect(exists(vault, "강제제목.md")).toBe(false);
+    expect(exists(vault, "my-note.md")).toBe(true);
+    expect(exists(vault, "forced-title.md")).toBe(false);
   } finally {
     removeTempVault(vault);
   }
 });
 
 test("first H1 with reserved characters is sanitized into the filename", async () => {
-  const vault = createTempVault({ "기존.md": "x\n" });
+  const vault = createTempVault({ "existing.md": "x\n" });
   try {
     await loadVault(page, vault);
     await page.getByRole("button", { name: "New note" }).click();
@@ -117,7 +117,7 @@ test("first H1 with reserved characters is sanitized into the filename", async (
 
     await page.locator(".cm-content").click();
     await page.locator(".cm-content").pressSequentially("# Plan: A/B");
-    await page.getByRole("treeitem", { name: /기존/ }).click();
+    await page.getByRole("treeitem", { name: /existing/ }).click();
 
     // ":" and "/" are replaced with spaces → "Plan A B".
     await expect.poll(() => exists(vault, "Plan A B.md"), { timeout: 5000 }).toBe(true);
@@ -128,42 +128,42 @@ test("first H1 with reserved characters is sanitized into the filename", async (
 });
 
 test("＋folder → create directory on disk", async () => {
-  const vault = createTempVault({ "기존.md": "x\n" });
+  const vault = createTempVault({ "existing.md": "x\n" });
   try {
     await loadVault(page, vault);
     await page.getByRole("button", { name: "New folder" }).click();
-    await page.locator(".name-input").fill("새폴더");
+    await page.locator(".name-input").fill("new-folder");
     await page.locator(".name-input").press("Enter");
 
-    await expect(page.getByRole("treeitem", { name: /새폴더/ })).toBeVisible();
-    expect(exists(vault, "새폴더")).toBe(true);
+    await expect(page.getByRole("treeitem", { name: /new-folder/ })).toBeVisible();
+    expect(exists(vault, "new-folder")).toBe(true);
   } finally {
     removeTempVault(vault);
   }
 });
 
 test("rename → inline rename file on disk", async () => {
-  const vault = createTempVault({ "옛이름.md": "내용\n" });
+  const vault = createTempVault({ "old-name.md": "content\n" });
   try {
     await loadVault(page, vault);
-    await page.getByRole("treeitem", { name: /옛이름/ }).click();
+    await page.getByRole("treeitem", { name: /old-name/ }).click();
     await page.getByRole("button", { name: "Rename", exact: true }).click();
-    await page.locator(".tree-rename-input").fill("새이름");
+    await page.locator(".tree-rename-input").fill("new-name");
     await page.locator(".tree-rename-input").press("Enter");
 
-    await expect(page.getByRole("treeitem", { name: /새이름/ })).toBeVisible();
-    expect(exists(vault, "새이름.md")).toBe(true);
-    expect(exists(vault, "옛이름.md")).toBe(false);
+    await expect(page.getByRole("treeitem", { name: /new-name/ })).toBeVisible();
+    expect(exists(vault, "new-name.md")).toBe(true);
+    expect(exists(vault, "old-name.md")).toBe(false);
   } finally {
     removeTempVault(vault);
   }
 });
 
 test("rename → illegal name keeps the input open with an inline error", async () => {
-  const vault = createTempVault({ "정상.md": "내용\n" });
+  const vault = createTempVault({ "normal.md": "content\n" });
   try {
     await loadVault(page, vault);
-    await page.getByRole("treeitem", { name: /정상/ }).click();
+    await page.getByRole("treeitem", { name: /normal/ }).click();
     await page.getByRole("button", { name: "Rename", exact: true }).click();
     // A name containing a path separator is rejected by is_valid_name.
     await page.locator(".tree-rename-input").fill("a/b");
@@ -172,24 +172,24 @@ test("rename → illegal name keeps the input open with an inline error", async 
     // Input stays open, an inline error shows, and the file is NOT renamed.
     await expect(page.locator(".tree-rename-input")).toBeVisible();
     await expect(page.locator(".tree-rename-error")).toBeVisible();
-    expect(exists(vault, "정상.md")).toBe(true);
+    expect(exists(vault, "normal.md")).toBe(true);
   } finally {
     removeTempVault(vault);
   }
 });
 
 test("rename → inline rename folder (directory + folder note on disk)", async () => {
-  const vault = createTempVault({ "옛폴더/옛폴더.md": "노트\n" });
+  const vault = createTempVault({ "old-folder/old-folder.md": "note\n" });
   try {
     await loadVault(page, vault);
-    await page.getByRole("treeitem", { name: /옛폴더/ }).click();
+    await page.getByRole("treeitem", { name: /old-folder/ }).click();
     await page.getByRole("button", { name: "Rename", exact: true }).click();
-    await page.locator(".tree-rename-input").fill("새폴더");
+    await page.locator(".tree-rename-input").fill("new-folder");
     await page.locator(".tree-rename-input").press("Enter");
 
-    await expect(page.getByRole("treeitem", { name: /새폴더/ })).toBeVisible();
-    expect(exists(vault, "새폴더")).toBe(true);
-    expect(exists(vault, "옛폴더")).toBe(false);
+    await expect(page.getByRole("treeitem", { name: /new-folder/ })).toBeVisible();
+    expect(exists(vault, "new-folder")).toBe(true);
+    expect(exists(vault, "old-folder")).toBe(false);
   } finally {
     removeTempVault(vault);
   }
@@ -199,40 +199,40 @@ test("rename → inline rename folder (directory + folder note on disk)", async 
 // (no Enter) arms the guard but fires no unmount-blur to consume it; if the next rename
 // session does not start clean, its first commit is silently swallowed.
 test("rename → blur-away commit, then a second rename both land (guard reset)", async () => {
-  const vault = createTempVault({ "에이.md": "a\n", "비.md": "b\n" });
+  const vault = createTempVault({ "alpha.md": "a\n", "beta.md": "b\n" });
   try {
     await loadVault(page, vault);
 
-    // Rename 에이 by clicking another node (commit via blur, not Enter).
-    await page.getByRole("treeitem", { name: /에이/ }).click();
+    // Rename alpha by clicking another node (commit via blur, not Enter).
+    await page.getByRole("treeitem", { name: /alpha/ }).click();
     await page.getByRole("button", { name: "Rename", exact: true }).click();
-    await page.locator(".tree-rename-input").fill("에이2");
-    await page.getByRole("treeitem", { name: /비/ }).click();
-    await expect(page.getByRole("treeitem", { name: /에이2/ })).toBeVisible();
-    expect(exists(vault, "에이2.md")).toBe(true);
+    await page.locator(".tree-rename-input").fill("alpha2");
+    await page.getByRole("treeitem", { name: /beta/ }).click();
+    await expect(page.getByRole("treeitem", { name: /alpha2/ })).toBeVisible();
+    expect(exists(vault, "alpha2.md")).toBe(true);
 
     // The next rename must land on its FIRST commit (a leaked guard would swallow it).
-    await page.getByRole("treeitem", { name: /비/ }).click();
+    await page.getByRole("treeitem", { name: /beta/ }).click();
     await page.getByRole("button", { name: "Rename", exact: true }).click();
-    await page.locator(".tree-rename-input").fill("비2");
+    await page.locator(".tree-rename-input").fill("beta2");
     await page.locator(".tree-rename-input").press("Enter");
-    await expect(page.getByRole("treeitem", { name: /비2/ })).toBeVisible();
-    expect(exists(vault, "비2.md")).toBe(true);
-    expect(exists(vault, "비.md")).toBe(false);
+    await expect(page.getByRole("treeitem", { name: /beta2/ })).toBeVisible();
+    expect(exists(vault, "beta2.md")).toBe(true);
+    expect(exists(vault, "beta.md")).toBe(false);
   } finally {
     removeTempVault(vault);
   }
 });
 
 test("delete → move to trash (original disappears)", async () => {
-  const vault = createTempVault({ "삭제할노트.md": "내용\n" });
+  const vault = createTempVault({ "delete-target-note.md": "content\n" });
   try {
     await loadVault(page, vault);
-    await page.getByRole("treeitem", { name: /삭제할노트/ }).click();
+    await page.getByRole("treeitem", { name: /delete-target-note/ }).click();
     await page.getByRole("button", { name: "Delete", exact: true }).click();
 
-    await expect(page.getByRole("treeitem", { name: /삭제할노트/ })).toHaveCount(0);
-    expect(exists(vault, "삭제할노트.md")).toBe(false);
+    await expect(page.getByRole("treeitem", { name: /delete-target-note/ })).toHaveCount(0);
+    expect(exists(vault, "delete-target-note.md")).toBe(false);
   } finally {
     removeTempVault(vault);
   }
@@ -241,22 +241,22 @@ test("delete → move to trash (original disappears)", async () => {
 test("create after vault switch targets new vault — stale selection isolation (regression)", async () => {
   // Regression: if loadVault does not clear the previous vault's selectedNode,
   // ＋note's targetParent points at the previous vault path and creates in the wrong place.
-  const v1 = createTempVault({ "v1노트.md": "1\n" });
-  const v2 = createTempVault({ "v2노트.md": "2\n" });
+  const v1 = createTempVault({ "v1note.md": "1\n" });
+  const v2 = createTempVault({ "v2note.md": "2\n" });
   try {
     await loadVault(page, v1);
-    await page.getByRole("treeitem", { name: /v1노트/ }).click(); // set selectedNode
+    await page.getByRole("treeitem", { name: /v1note/ }).click(); // set selectedNode
     await expect(page.locator(".cm-content")).toBeVisible();
 
     await loadVault(page, v2); // vault switch — previous selection must be invalidated
     await page.getByRole("button", { name: "New note" }).click();
     // dialog-free: an Untitled note is created in v2; header title input is focused.
     await expect(page.locator(".title-input")).toBeFocused();
-    await page.locator(".title-input").pressSequentially("새것");
+    await page.locator(".title-input").pressSequentially("newer");
     await page.locator(".title-input").press("Enter");
 
-    await expect.poll(() => exists(v2, "새것.md"), { timeout: 5000 }).toBe(true);
-    expect(exists(v1, "새것.md")).toBe(false);
+    await expect.poll(() => exists(v2, "newer.md"), { timeout: 5000 }).toBe(true);
+    expect(exists(v1, "newer.md")).toBe(false);
   } finally {
     removeTempVault(v1);
     removeTempVault(v2);
@@ -265,38 +265,38 @@ test("create after vault switch targets new vault — stale selection isolation 
 
 test("DnD note → move into folder", async () => {
   const vault = createTempVault({
-    "이동노트.md": "옮길 내용\n",
-    "대상폴더/대상폴더.md": "폴더 본문\n",
+    "move-note.md": "content to move\n",
+    "target-folder/target-folder.md": "folder body\n",
   });
   try {
     await loadVault(page, vault);
-    const src = page.getByRole("treeitem", { name: /이동노트/ });
-    const dst = page.getByRole("treeitem", { name: /대상폴더/ });
+    const src = page.getByRole("treeitem", { name: /move-note/ });
+    const dst = page.getByRole("treeitem", { name: /target-folder/ });
     await expect(src).toBeVisible();
     await dragNodeOnto(page, src, dst);
 
-    await expect.poll(() => exists(vault, "대상폴더/이동노트.md"), { timeout: 5000 }).toBe(true);
-    expect(exists(vault, "이동노트.md")).toBe(false);
+    await expect.poll(() => exists(vault, "target-folder/move-note.md"), { timeout: 5000 }).toBe(true);
+    expect(exists(vault, "move-note.md")).toBe(false);
   } finally {
     removeTempVault(vault);
   }
 });
 
 test("＋child → promote leaf then create child note", async () => {
-  const vault = createTempVault({ "부모.md": "부모 본문\n" });
+  const vault = createTempVault({ "parent.md": "parent body\n" });
   try {
     await loadVault(page, vault);
-    await page.getByRole("treeitem", { name: /부모/ }).click();
+    await page.getByRole("treeitem", { name: /parent/ }).click();
     await page.getByRole("button", { name: "Add child note" }).click();
     // dialog-free: leaf is promoted, an Untitled child note is created + header focused.
     await expect(page.locator(".title-input")).toBeFocused();
-    await page.locator(".title-input").pressSequentially("자식");
+    await page.locator(".title-input").pressSequentially("child");
     await page.locator(".title-input").press("Enter");
 
-    // Promote: 부모.md → 부모/부모.md, and create 부모/자식.md.
-    await expect.poll(() => exists(vault, "부모/부모.md"), { timeout: 5000 }).toBe(true);
-    expect(exists(vault, "부모/자식.md")).toBe(true);
-    expect(exists(vault, "부모.md")).toBe(false);
+    // Promote: parent.md → parent/parent.md, and create parent/child.md.
+    await expect.poll(() => exists(vault, "parent/parent.md"), { timeout: 5000 }).toBe(true);
+    expect(exists(vault, "parent/child.md")).toBe(true);
+    expect(exists(vault, "parent.md")).toBe(false);
   } finally {
     removeTempVault(vault);
   }
@@ -304,20 +304,20 @@ test("＋child → promote leaf then create child note", async () => {
 
 test("DnD drop onto leaf → adopt (promote then child)", async () => {
   const vault = createTempVault({
-    "드롭소스.md": "소스 내용\n",
-    "드롭대상.md": "대상 내용\n",
+    "drop-source.md": "source content\n",
+    "drop-target.md": "target content\n",
   });
   try {
     await loadVault(page, vault);
-    const src = page.getByRole("treeitem", { name: /드롭소스/ });
-    const dst = page.getByRole("treeitem", { name: /드롭대상/ });
+    const src = page.getByRole("treeitem", { name: /drop-source/ });
+    const dst = page.getByRole("treeitem", { name: /drop-target/ });
     await expect(src).toBeVisible();
     await dragNodeOnto(page, src, dst);
 
-    // 드롭대상 is promoted to a container and 드롭소스 becomes its child.
-    await expect.poll(() => exists(vault, "드롭대상/드롭대상.md"), { timeout: 5000 }).toBe(true);
-    expect(exists(vault, "드롭대상/드롭소스.md")).toBe(true);
-    expect(exists(vault, "드롭소스.md")).toBe(false);
+    // drop-target is promoted to a container and drop-source becomes its child.
+    await expect.poll(() => exists(vault, "drop-target/drop-target.md"), { timeout: 5000 }).toBe(true);
+    expect(exists(vault, "drop-target/drop-source.md")).toBe(true);
+    expect(exists(vault, "drop-source.md")).toBe(false);
   } finally {
     removeTempVault(vault);
   }

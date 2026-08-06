@@ -13,9 +13,29 @@
  */
 
 import { spawn } from "node:child_process";
-import { rmSync, mkdirSync } from "node:fs";
+import { rmSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const REPO = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+
+/**
+ * Contents of the shared read-only vault the specs open with `sampleVaultPath()`.
+ *
+ * It is seeded here rather than kept in the repository because several specs assert against these
+ * exact names: a fixture that has to exist but is not created by anything is a precondition in
+ * name only, and a fresh clone would fail on it. Regenerating also means a spec run cannot inherit
+ * edits a previous manual session left behind.
+ */
+const SAMPLE_VAULT = {
+  "project.md":
+    "---\ntitle: project\nicon: \u{1F4C1}\n---\n\n# project\n\n" +
+    "A sample note. Follow [[journal]], or see [[library/memo]].\n",
+  "journal/journal.md": "# journal\n\nA folder note. Dated notes live underneath it.\n",
+  "journal/2026-06-13.md": "# 2026-06-13\n\nToday's entry.\n",
+  "library/memo.md": "# memo\n\nA note in the library folder.\n",
+};
 
 /**
  * Base directory the app is forced to resolve its default vault under.
@@ -31,7 +51,16 @@ if (resolve(DEFAULT_VAULT_BASE) !== resolve(join(tmpdir(), "textree-e2e-default-
 rmSync(DEFAULT_VAULT_BASE, { recursive: true, force: true });
 mkdirSync(DEFAULT_VAULT_BASE, { recursive: true });
 
+const sampleVault = join(REPO, "sample-vault");
+rmSync(sampleVault, { recursive: true, force: true });
+for (const [rel, content] of Object.entries(SAMPLE_VAULT)) {
+  const target = join(sampleVault, rel);
+  mkdirSync(dirname(target), { recursive: true });
+  writeFileSync(target, content, "utf8");
+}
+
 console.log(`[dev:e2e] default vault base: ${DEFAULT_VAULT_BASE}`);
+console.log(`[dev:e2e] sample vault seeded: ${sampleVault}`);
 
 const child = spawn("tauri", ["dev", "--config", "src-tauri/tauri.e2e.conf.json"], {
   stdio: "inherit",

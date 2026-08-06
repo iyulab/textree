@@ -1,6 +1,6 @@
 import { chromium, type Browser, type Page, type Locator } from "@playwright/test";
 import { resolve, join } from "node:path";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, readdirSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, readdirSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 
 // 9222 by default, matching the port injected in tauri.e2e.conf.json. Overridable because that
@@ -18,9 +18,20 @@ const APP_URL_FRAGMENT = "localhost:1420";
  */
 export const E2E_DEFAULT_VAULT_BASE = join(tmpdir(), "textree-e2e-default-vault");
 
-/** Absolute path to sample-vault (slash-normalized — the Tauri backend accepts both separators). */
+/**
+ * Absolute path to sample-vault (slash-normalized — the Tauri backend accepts both separators).
+ * The launcher seeds it; failing here names that, instead of letting every dependent spec fail on
+ * a missing tree item.
+ */
 export function sampleVaultPath(): string {
-  return resolve(process.cwd(), "sample-vault").replace(/\\/g, "/");
+  const path = resolve(process.cwd(), "sample-vault");
+  if (!existsSync(path)) {
+    throw new Error(
+      `sample-vault is missing at ${path}. Start the app with \`npm run dev:e2e\`; ` +
+        "scripts/dev-e2e.mjs seeds it.",
+    );
+  }
+  return path.replace(/\\/g, "/");
 }
 
 /**

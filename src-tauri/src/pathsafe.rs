@@ -57,7 +57,9 @@ mod tests {
 
     #[test]
     fn valid_name_rejects_dangerous_inputs() {
-        assert!(is_valid_name("프로젝트"));
+        // Non-ASCII names are ordinary note titles, not dangerous input. Keep a non-ASCII
+        // fixture here: flattening it to ASCII would leave that case untested.
+        assert!(is_valid_name("café-notes"));
         assert!(is_valid_name("2026-06-13"));
         assert!(!is_valid_name(""));
         assert!(!is_valid_name("."));
@@ -77,7 +79,7 @@ mod tests {
         assert!(!is_valid_name("CON.md")); // regardless of extension
         // Normal names that merely contain a reserved name are allowed.
         assert!(is_valid_name("CONTROL"));
-        assert!(is_valid_name("회의록-CON"));
+        assert!(is_valid_name("réunion-CON"));
     }
 
     #[test]

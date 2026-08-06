@@ -6,7 +6,7 @@ describe("extractFirstH1", () => {
     expect(extractFirstH1("# Meeting notes\n\nbody")).toBe("Meeting notes");
   });
   it("skips frontmatter before the heading", () => {
-    expect(extractFirstH1("---\ntitle: x\n---\n# 회의록\n")).toBe("회의록");
+    expect(extractFirstH1("---\ntitle: x\n---\n# Weekly review\n")).toBe("Weekly review");
   });
   it("ignores headings inside fenced code blocks", () => {
     expect(extractFirstH1("```\n# not a title\n```\n# Real title\n")).toBe("Real title");

@@ -72,10 +72,10 @@ test("manual ordering: 'move down' → visual order swap + order.json persists",
 });
 
 test("favorite toggle → favorites.json add/remove persists", async () => {
-  const vault = createTempVault({ "찜노트.md": "x\n" });
+  const vault = createTempVault({ "pinned-note.md": "x\n" });
   try {
     await loadVault(page, vault);
-    const node = page.getByRole("treeitem", { name: /찜노트/ });
+    const node = page.getByRole("treeitem", { name: /pinned-note/ });
 
     // Toggle ON → 1 entry in favorites.json.
     await node.click();

@@ -60,9 +60,9 @@ public class TelemetryPayloadTests
     public void BuildErrorProperties_sanitizes_freetext_exception_type()
     {
         var props = TelemetryPayload.BuildErrorProperties(
-            "embedder", ModelPhase.Error, "No such file: /Users/alice/일기.md", Env);
+            "embedder", ModelPhase.Error, "No such file: /Users/alice/café.md", Env);
         Assert.DoesNotContain(' ', props["exception_type"]);
         Assert.DoesNotContain("alice", props["exception_type"]);
-        Assert.DoesNotContain("일기", props["exception_type"]);
+        Assert.DoesNotContain("café", props["exception_type"]);
     }
 }

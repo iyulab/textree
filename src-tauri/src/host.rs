@@ -611,7 +611,7 @@ pub fn prepare_ai_model(
 /// stops the current host and spawns a fresh one — needed when Settings ▸Advanced changes the
 /// BYO config for a host that's already running (prepare_ai_model's "already up -> no-op" guard
 /// would otherwise strand the old config in place). `preset=None` switches back to the bundled
-/// local model ("번들 로컬 모델로 전환").
+/// local model.
 #[tauri::command]
 pub fn restart_ai_host(
     app: AppHandle,

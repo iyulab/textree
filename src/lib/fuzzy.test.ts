@@ -30,6 +30,6 @@ test("consecutive matches collapse into a single range", () => {
 });
 
 test("Korean candidate matching", () => {
-  const r = fuzzyMatch("회의", ["회의록", "일정표"], (s) => s);
-  expect(r.map((m) => m.item)).toEqual(["회의록"]);
+  const r = fuzzyMatch("meet", ["meeting-notes", "schedule"], (s) => s);
+  expect(r.map((m) => m.item)).toEqual(["meeting-notes"]);
 });

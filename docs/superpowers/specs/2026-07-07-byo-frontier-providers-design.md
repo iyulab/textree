@@ -22,7 +22,7 @@ selection/gateway builder … inert for a single always-on provider."
 That was fine for two OpenAI-shaped providers. Adding frontier vendors (Anthropic
 is a native Messages API, not OpenAI-compatible) would mean piling more
 provider-construction knowledge into the consumer app — a substrate violation
-("RAG·임베딩·MCP·런타임은 filer-host 차용, 재발명 금지").
+(reuse the existing RAG, embedding, MCP and runtime layers rather than reimplementing them).
 
 **The key finding:** that provider-construction knowledge already lives in iron-prow.
 `IronProw.IronHive` (0.2.2) exposes a per-vendor factory for every provider we need:

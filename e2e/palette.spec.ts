@@ -8,7 +8,7 @@ import { connectToApp, loadVault, sampleVaultPath } from "./helpers";
  * File mode: default, when the query does not start with '>'.
  * Command mode: when the query starts with '>'. The actual search term is after '>'.
  *
- * sample-vault top-level file: 프로젝트 (leaf).
+ * sample-vault top-level file: project (leaf).
  * Command title: "Toggle theme (light/dark)" → fuzzy matched by '>theme'.
  */
 
@@ -33,8 +33,8 @@ test("palette file mode: Ctrl+P → file search → Enter → note loads", async
   await expect(page.getByTestId("palette-overlay")).toBeVisible();
   await expect(page.getByTestId("palette-input")).toBeVisible();
 
-  // Type part of a file name — the real file "프로젝트" in sample-vault.
-  await page.getByTestId("palette-input").type("프로젝트");
+  // Type part of a file name — the real file "project" in sample-vault.
+  await page.getByTestId("palette-input").type("project");
 
   // At least one matching result is shown.
   await expect(page.getByTestId("palette-item").first()).toBeVisible();
@@ -44,7 +44,7 @@ test("palette file mode: Ctrl+P → file search → Enter → note loads", async
   await expect(page.getByTestId("palette-overlay")).toHaveCount(0);
 
   // Reuse the editor verification selectors from smoke.spec.ts.
-  await expect(page.locator(".title")).toContainText("프로젝트");
+  await expect(page.locator(".title")).toContainText("project");
   await expect(page.locator(".cm-content")).toBeVisible();
 });
 
@@ -55,7 +55,7 @@ test("palette Ctrl+P moves focus into the search input even when the editor was 
   // Open a note, then focus the CodeMirror editable so it holds focus before the palette opens.
   await page.keyboard.press("Control+p");
   await expect(page.getByTestId("palette-input")).toBeVisible();
-  await page.getByTestId("palette-input").fill("프로젝트");
+  await page.getByTestId("palette-input").fill("project");
   await expect(page.getByTestId("palette-item").first()).toBeVisible();
   await page.keyboard.press("Enter");
   await expect(page.getByTestId("palette-overlay")).toHaveCount(0);
@@ -75,7 +75,7 @@ test("palette Ctrl+P moves focus into the search input even when the editor was 
   expect(focusedTestId).toBe("palette-input");
 
   // Drive keys globally (no locator focus) — reaches the input only if focus actually moved.
-  await page.keyboard.type("프로젝트");
+  await page.keyboard.type("project");
   await expect(page.getByTestId("palette-item").first()).toBeVisible();
 
   await page.keyboard.press("Escape");

@@ -19,7 +19,7 @@ test.afterAll(async () => {
 });
 
 // Line 1 = plain text (default cursor position) -> line 2 heading and line 3 emphasis/code are inactive lines so markers are hidden.
-const NOTE = "본문 시작\n# 큰제목\n**굵게** 그리고 `코드` 그리고 ~~삭제~~\n";
+const NOTE = "body start\n# Big title\n**bold** and `code` and ~~deleted~~\n";
 
 test("heading/emphasis/code inline render + marker hidden", async () => {
   const vault = createTempVault({ "lp.md": NOTE });
@@ -29,12 +29,12 @@ test("heading/emphasis/code inline render + marker hidden", async () => {
 
     // Decoration DOM present.
     await expect(page.locator(".cm-lp-h1")).toBeVisible();
-    await expect(page.locator(".cm-lp-strong")).toHaveText("굵게");
-    await expect(page.locator(".cm-lp-code")).toHaveText("코드");
-    await expect(page.locator(".cm-lp-strike")).toHaveText("삭제");
+    await expect(page.locator(".cm-lp-strong")).toHaveText("bold");
+    await expect(page.locator(".cm-lp-code")).toHaveText("code");
+    await expect(page.locator(".cm-lp-strike")).toHaveText("deleted");
 
-    // Inactive line: heading marker (#) hidden -> line text is "큰제목" (no #).
-    await expect(page.locator(".cm-lp-h1")).toHaveText("큰제목");
+    // Inactive line: heading marker (#) hidden -> line text is "Big title" (no #).
+    await expect(page.locator(".cm-lp-h1")).toHaveText("Big title");
   } finally {
     removeTempVault(vault);
   }
@@ -42,7 +42,7 @@ test("heading/emphasis/code inline render + marker hidden", async () => {
 
 // Line 1 = plain text (active) -> line 2 onward LP render.
 const RICH =
-  "본문\n[링크텍스트](https://example.com)\n- [ ] 할일\n> 인용문\n---\n끝\n";
+  "body\n[link-text](https://example.com)\n- [ ] todo\n> quotation\n---\nend\n";
 
 test("link / checkbox / quote / divider render", async () => {
   const vault = createTempVault({ "rich.md": RICH });
@@ -51,7 +51,7 @@ test("link / checkbox / quote / divider render", async () => {
     await page.getByRole("treeitem", { name: /rich/ }).click();
 
     // Link: only text shown (URL hidden).
-    await expect(page.locator(".cm-lp-link")).toHaveText("링크텍스트");
+    await expect(page.locator(".cm-lp-link")).toHaveText("link-text");
 
     // Quote/divider decorations.
     await expect(page.locator(".cm-lp-quote")).toBeVisible();
@@ -82,7 +82,7 @@ test("line with cursor exposes markers (source)", async () => {
 });
 
 // A ```js fence lazy-loads its grammar; highlighted tokens carry >1 distinct color.
-const CODE = "본문\n```js\nconst x = 42; // hi\n```\n";
+const CODE = "body\n```js\nconst x = 42; // hi\n```\n";
 
 test("fenced code block gets language syntax highlighting", async () => {
   const vault = createTempVault({ "code.md": CODE });
@@ -113,7 +113,7 @@ test("fenced code block gets language syntax highlighting", async () => {
 });
 
 // A fence with no language has no nested grammar -> no per-token colors (fallback).
-const PLAIN_FENCE = "본문\n```\nconst x = 42;\n```\n";
+const PLAIN_FENCE = "body\n```\nconst x = 42;\n```\n";
 
 test("language-less fence is not syntax-highlighted (fallback)", async () => {
   const vault = createTempVault({ "plain.md": PLAIN_FENCE });
@@ -137,7 +137,7 @@ test("language-less fence is not syntax-highlighted (fallback)", async () => {
 
 // Regression: a ```md fence must NOT get live-preview decorations (markers stay raw, no bold styling).
 // Guards the IterMode.IgnoreMounts fix — nested markdown grammar mounts must not leak into the editor.
-const MD_FENCE = "본문\n```md\n**bold** and # heading\n```\n";
+const MD_FENCE = "body\n```md\n**bold** and # heading\n```\n";
 
 test("markdown fence keeps raw markers (no live-preview leak)", async () => {
   const vault = createTempVault({ "mdfence.md": MD_FENCE });

@@ -36,7 +36,7 @@ test("palette shows the Ctrl+N hint next to New note", async () => {
 test("Ctrl+N creates an Untitled note and focuses the header title (no dialog)", async () => {
   // Isolated temp vault: a fresh vault guarantees the first new note is exactly "Untitled"
   // (sample-vault would accumulate Untitled litter across runs → "Untitled (1)").
-  const vault = createTempVault({ "기존.md": "x\n" });
+  const vault = createTempVault({ "existing.md": "x\n" });
   try {
     await loadVault(page, vault);
 
@@ -60,11 +60,11 @@ test("Ctrl+N is suppressed while typing in a form input (no clobbering)", async 
   // Enter new-FOLDER mode (still a dialog) and start typing a name.
   await page.keyboard.press("Control+Shift+n");
   await expect(page.locator(".name-input")).toBeVisible();
-  await page.locator(".name-input").fill("진행중");
+  await page.locator(".name-input").fill("in-progress");
 
   // Ctrl+N while focused in the form input must NOT trigger a new note.
   await page.keyboard.press("Control+n");
-  await expect(page.locator(".name-input")).toHaveValue("진행중");
+  await expect(page.locator(".name-input")).toHaveValue("in-progress");
   await expect(page.locator(".name-input")).toBeVisible();
 
   await page.locator(".name-input").press("Escape");

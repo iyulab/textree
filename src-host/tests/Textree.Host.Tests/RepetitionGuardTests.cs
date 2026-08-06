@@ -33,7 +33,7 @@ public sealed class RepetitionGuardTests
     public void Flags_a_cjk_word_loop()
     {
         // char.IsLetter is true for CJK, so a CJK loop is caught the same way.
-        Assert.True(RepetitionGuard.IsDegenerate(Repeat("네 ", 20)));
+        Assert.True(RepetitionGuard.IsDegenerate(Repeat("はい ", 20)));
     }
 
     [Fact]

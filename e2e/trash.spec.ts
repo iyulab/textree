@@ -29,22 +29,22 @@ test.afterAll(async () => {
 test("trash: delete note → appears in trash panel → restore returns it to tree", async () => {
   // Isolated vault: two notes so we can assert the other is unaffected.
   const vault = createTempVault({
-    "지울노트.md": "content to delete\n",
-    "남길노트.md": "keep this\n",
+    "doomed-note.md": "content to delete\n",
+    "keep-note.md": "keep this\n",
   });
 
   try {
     await loadVault(page, vault);
 
     // ── Step 1: Select the note and Delete it. ──────────────────────────────
-    const target = page.getByRole("treeitem", { name: /지울노트/ });
+    const target = page.getByRole("treeitem", { name: /doomed-note/ });
     await expect(target).toBeVisible();
     await target.focus();
     await page.keyboard.press("Delete");
 
     // The deleted note disappears from the tree; the other note stays.
-    await expect(page.getByRole("treeitem", { name: /지울노트/ })).toHaveCount(0);
-    await expect(page.getByRole("treeitem", { name: /남길노트/ })).toBeVisible();
+    await expect(page.getByRole("treeitem", { name: /doomed-note/ })).toHaveCount(0);
+    await expect(page.getByRole("treeitem", { name: /keep-note/ })).toBeVisible();
 
     // ── Step 2: Open palette → command mode → run "Trash…" ─────────────────
     await page.keyboard.press("Control+p");
@@ -63,7 +63,7 @@ test("trash: delete note → appears in trash panel → restore returns it to tr
     const trashItems = page.getByTestId("trash-item");
     await expect(trashItems).toHaveCount(1);
     // The item's visible name contains the note's stem.
-    await expect(trashItems.first()).toContainText("지울노트");
+    await expect(trashItems.first()).toContainText("doomed-note");
 
     // ── Step 3: Restore → panel updates + note reappears in tree ───────────
     await page.getByTestId("trash-restore").click();
@@ -72,9 +72,9 @@ test("trash: delete note → appears in trash panel → restore returns it to tr
     await expect(page.getByTestId("trash-item")).toHaveCount(0);
 
     // The tree reflects the restored note (refreshTree convergence).
-    await expect(page.getByRole("treeitem", { name: /지울노트/ })).toBeVisible();
+    await expect(page.getByRole("treeitem", { name: /doomed-note/ })).toBeVisible();
     // Sanity: the sibling is still present.
-    await expect(page.getByRole("treeitem", { name: /남길노트/ })).toBeVisible();
+    await expect(page.getByRole("treeitem", { name: /keep-note/ })).toBeVisible();
   } finally {
     removeTempVault(vault);
   }

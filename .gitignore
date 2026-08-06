@@ -11,10 +11,10 @@ vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 /dist
 
-# 로컬 수동 테스트용 샘플 볼트
+# Sample vault for local manual testing
 sample-vault/
 
-# Playwright E2E 산출물
+# Playwright E2E output
 /test-results
 /playwright-report
 /blob-report

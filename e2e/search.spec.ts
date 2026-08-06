@@ -19,7 +19,7 @@ let browser: Browser;
 let page: Page;
 
 // Unique token that appears only in the body (not in filename/title -> only body index matches).
-const TOKEN = "전문검색고유토큰";
+const TOKEN = "uniquesearchtoken";
 
 test.beforeAll(async () => {
   ({ browser, page } = await connectToApp());
@@ -31,8 +31,8 @@ test.afterAll(async () => {
 
 test("body full-text search: '/' mode body match + snippet", async () => {
   const vault = createTempVault({
-    "메모.md": `# 메모\n\n오늘 ${TOKEN} 기능을 설계했다.\n`,
-    "딴노트.md": "# 딴노트\n\n관계없는 본문.\n",
+    "memo.md": `# memo\n\ntoday ${TOKEN} designed the feature.\n`,
+    "other-note.md": "# other-note\n\nunrelated body.\n",
   });
   try {
     await loadVault(page, vault);
@@ -49,14 +49,14 @@ test("body full-text search: '/' mode body match + snippet", async () => {
     const items = page.getByTestId("palette-item");
     await expect(items.first()).toBeVisible({ timeout: 10_000 });
 
-    // Only 1 body match (메모.md), snippet contains the query token.
+    // Only 1 body match (memo.md), snippet contains the query token.
     await expect(items).toHaveCount(1);
     await expect(items.first()).toContainText(TOKEN);
 
     // Enter -> palette closes and the note loads in the editor.
     await page.keyboard.press("Enter");
     await expect(page.getByTestId("palette-overlay")).toHaveCount(0);
-    await expect(page.locator(".title")).toContainText("메모");
+    await expect(page.locator(".title")).toContainText("memo");
   } finally {
     removeTempVault(vault);
   }

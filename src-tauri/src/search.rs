@@ -280,16 +280,16 @@ mod tests {
     fn upsert_then_delete_roundtrips() {
         let (index, f) = open_mem();
         let mut w: IndexWriter = index.writer(WRITER_HEAP).unwrap();
-        upsert(&w, &f, "일기/2026.md", "2026", "오늘 전문검색을 붙였다").unwrap();
+        upsert(&w, &f, "journal/2026.md", "2026", "attached full-text search today").unwrap();
         w.commit().unwrap();
         assert_eq!(num_docs(&index), 1);
 
         // Same path upsert = replace (not a duplicate).
-        upsert(&w, &f, "일기/2026.md", "2026", "수정된 본문").unwrap();
+        upsert(&w, &f, "journal/2026.md", "2026", "revised body").unwrap();
         w.commit().unwrap();
         assert_eq!(num_docs(&index), 1, "same path is replaced, stays at 1 doc");
 
-        delete(&w, &f, "일기/2026.md");
+        delete(&w, &f, "journal/2026.md");
         w.commit().unwrap();
         assert_eq!(num_docs(&index), 0);
     }
@@ -298,12 +298,12 @@ mod tests {
     fn build_all_indexes_md_bodies_with_relative_posix_path() {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
-        std::fs::create_dir_all(root.join("일기")).unwrap();
-        std::fs::write(root.join("노트.md"), "루트 본문").unwrap();
-        std::fs::write(root.join("일기/2026.md"), "일기 본문").unwrap();
-        std::fs::write(root.join("그림.png"), b"binary").unwrap(); // exclude non-md
+        std::fs::create_dir_all(root.join("journal")).unwrap();
+        std::fs::write(root.join("note.md"), "root body").unwrap();
+        std::fs::write(root.join("journal/2026.md"), "journal body").unwrap();
+        std::fs::write(root.join("drawing.png"), b"binary").unwrap(); // exclude non-md
         std::fs::create_dir_all(root.join(".textree")).unwrap();
-        std::fs::write(root.join(".textree/cache.md"), "캐시 본문").unwrap(); // dot directory → excluded from index
+        std::fs::write(root.join(".textree/cache.md"), "cache body").unwrap(); // dot directory → excluded from index
 
         let (index, f) = open_mem();
         let mut w = index.writer(WRITER_HEAP).unwrap();
@@ -312,23 +312,23 @@ mod tests {
         assert_eq!(num_docs(&index), 2, ".md under a dot directory is excluded, still 2 docs");
 
         // Whether the relative path is stored with POSIX separators — checked indirectly via delete.
-        delete(&w, &f, "일기/2026.md");
+        delete(&w, &f, "journal/2026.md");
         w.commit().unwrap();
         assert_eq!(num_docs(&index), 1);
     }
 
     #[test]
-    fn query_matches_korean_substring_with_snippet() {
+    fn query_matches_a_substring_of_text_without_word_breaks() {
         let (index, f) = open_mem();
         let mut w = index.writer(WRITER_HEAP).unwrap();
-        upsert(&w, &f, "a.md", "노트A", "오늘 전문검색 기능을 설계했다").unwrap();
-        upsert(&w, &f, "b.md", "노트B", "고양이 사진을 붙였다").unwrap();
+        upsert(&w, &f, "a.md", "Note A", "全文検索の設計を今日おこなった").unwrap();
+        upsert(&w, &f, "b.md", "Note B", "猫の写真を貼り付けた").unwrap();
         w.commit().unwrap();
 
-        let hits = search(&index, &f, "검색", 10).unwrap();
-        assert_eq!(hits.len(), 1, "'검색' matches only a.md");
+        let hits = search(&index, &f, "検索", 10).unwrap();
+        assert_eq!(hits.len(), 1, "the query matches only a.md");
         assert_eq!(hits[0].path, "a.md");
-        assert!(hits[0].snippet.contains("검색"), "snippet contains the matched term");
+        assert!(hits[0].snippet.contains("検索"), "snippet contains the matched term");
         let ranges = &hits[0].ranges;
         assert!(!ranges.is_empty(), "highlight ranges exist");
         // Consumers (front highlight) rely on sorted·non-overlapping ranges — if the ngram
@@ -346,7 +346,7 @@ mod tests {
     fn empty_query_returns_no_hits() {
         let (index, f) = open_mem();
         let mut w = index.writer(WRITER_HEAP).unwrap();
-        upsert(&w, &f, "a.md", "A", "본문").unwrap();
+        upsert(&w, &f, "a.md", "A", "body").unwrap();
         w.commit().unwrap();
         assert!(search(&index, &f, "   ", 10).unwrap().is_empty());
     }
@@ -354,16 +354,16 @@ mod tests {
     #[test]
     fn open_or_create_then_rebuild_finds_doc_end_to_end() {
         let vault = TempDir::new().unwrap();
-        std::fs::write(vault.path().join("메모.md"), "전문검색 통합 테스트").unwrap();
+        std::fs::write(vault.path().join("memo.md"), "全文検索の統合テスト").unwrap();
         let idx = TempDir::new().unwrap(); // index directory (simulates app data)
 
         let mut state = IndexState::open_or_create(idx.path()).unwrap();
         // A new index is empty → full build.
         state.rebuild(vault.path()).unwrap();
 
-        let hits = state.search("검색", 10).unwrap();
+        let hits = state.search("検索", 10).unwrap();
         assert_eq!(hits.len(), 1);
-        assert_eq!(hits[0].path, "메모.md");
+        assert_eq!(hits[0].path, "memo.md");
     }
 
     #[test]
@@ -378,14 +378,14 @@ mod tests {
         // In-app edit path regression guard: the in-memory body is indexed without re-reading from disk.
         let vault = TempDir::new().unwrap();
         let idx = TempDir::new().unwrap();
-        let abs = vault.path().join("일기/오늘.md");
+        let abs = vault.path().join("journal/today.md");
 
         let mut state = IndexState::open_or_create(idx.path()).unwrap();
-        state.index_note(vault.path(), &abs, "한글 본문 토큰").unwrap();
+        state.index_note(vault.path(), &abs, "本文のトークン").unwrap();
 
-        let hits = state.search("토큰", 10).unwrap();
+        let hits = state.search("トークン", 10).unwrap();
         assert_eq!(hits.len(), 1, "in-memory body is found by search");
-        assert_eq!(hits[0].path, "일기/오늘.md", "relative path (POSIX) identifier matches");
+        assert_eq!(hits[0].path, "journal/today.md", "relative path (POSIX) identifier matches");
     }
 
     #[test]
