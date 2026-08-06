@@ -1,19 +1,30 @@
 import { test, expect, type Browser, type Page } from "@playwright/test";
-import { connectToApp } from "./helpers";
+import { connectToApp, E2E_DEFAULT_VAULT_BASE } from "./helpers";
 
 /**
  * Onboarding E2E — first-run default vault auto-open.
  *
- * This spec exercises the app's own onMount auto-flow, NOT the loadVault dev-bridge.
- * Required: the app must be launched with TEXTREE_DEFAULT_VAULT_BASE set to an isolated
- * temp directory so the real Documents folder is not touched.
- *
- * Setup (PowerShell):
- *   $env:TEXTREE_DEFAULT_VAULT_BASE = (New-Item -ItemType Directory -Force -Path "$env:TEMP\textree-e2e-onboarding").FullName
- *   npm run dev:e2e
+ * This spec exercises the app's own onMount auto-flow, NOT the loadVault dev-bridge. It therefore
+ * opens whatever folder the app resolves as its default home, which must be an isolated one:
+ * against a real notes folder these assertions describe personal content rather than the seeded
+ * vault. `npm run dev:e2e` establishes that isolation; expectIsolatedDefaultVault below fails by
+ * name if the app was started some other way.
  */
 
 const LAST_VAULT_KEY = "textree-last-vault";
+
+/** Fail with the cause, not with a downstream assertion, when the app is not isolated. */
+async function expectIsolatedDefaultVault(page: Page): Promise<void> {
+  await expect
+    .poll(() => page.evaluate((key) => localStorage.getItem(key), LAST_VAULT_KEY), {
+      timeout: 30_000,
+      message:
+        `The default vault must live under ${E2E_DEFAULT_VAULT_BASE}. ` +
+        "Start the app with `npm run dev:e2e` (scripts/dev-e2e.mjs forces TEXTREE_DEFAULT_VAULT_BASE); " +
+        "a plain `tauri dev` resolves the real Documents folder instead.",
+    })
+    .toContain(E2E_DEFAULT_VAULT_BASE);
+}
 
 let browser: Browser;
 let page: Page;
@@ -61,6 +72,7 @@ test("restore failure: offers a calm recovery prompt when the last vault cannot 
   // The recovery must actually recover, not just prompt: "Start with a default vault" creates and
   // opens the default vault (seeded welcome.md), landing the user on content instead of a dead-end.
   await page.getByRole("button", { name: /start with a default vault/i }).click();
+  await expectIsolatedDefaultVault(page);
   await expect(
     page.getByRole("treeitem", { name: /welcome/i }),
   ).toBeVisible({ timeout: 30_000 });
@@ -74,6 +86,7 @@ test("first run: onMount auto-opens default vault and seeds welcome.md", async (
   // onMount will see no stored path → call ensureDefaultVault() automatically.
   await page.evaluate((key) => localStorage.removeItem(key), LAST_VAULT_KEY);
   await page.reload();
+  await expectIsolatedDefaultVault(page);
 
   // The seeded welcome note must appear as a treeitem (unique role, extension stripped).
   // Generous timeout: ensureDefaultVault() creates the directory + seeds the file before

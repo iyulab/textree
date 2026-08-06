@@ -10,6 +10,14 @@ import { tmpdir } from "node:os";
 const CDP_ENDPOINT = process.env.TEXTREE_E2E_CDP ?? "http://localhost:9222";
 const APP_URL_FRAGMENT = "localhost:1420";
 
+/**
+ * Base directory the launcher forces the app to resolve its default vault under.
+ * Keep in sync with DEFAULT_VAULT_BASE in scripts/dev-e2e.mjs. Specs that exercise the default-vault
+ * flow assert the opened vault sits under this path, so they fail by name when the app was started
+ * some other way instead of silently asserting against the developer's real notes.
+ */
+export const E2E_DEFAULT_VAULT_BASE = join(tmpdir(), "textree-e2e-default-vault");
+
 /** Absolute path to sample-vault (slash-normalized — the Tauri backend accepts both separators). */
 export function sampleVaultPath(): string {
   return resolve(process.cwd(), "sample-vault").replace(/\\/g, "/");

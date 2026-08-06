@@ -20,9 +20,15 @@ to `node` as-is, and under `tauri dev` the app process's working directory is `s
 path relative to this folder silently fails to spawn and publish reports
 "The publishing tool couldn't finish".
 
-`dev:e2e` is `tauri dev --config src-tauri/tauri.e2e.conf.json`: the overlay injects
-`--remote-debugging-port=9222` via the window's `additionalBrowserArgs` (the programmatic
-`CoreWebView2EnvironmentOptions` path).
+`dev:e2e` runs `scripts/dev-e2e.mjs`, which starts `tauri dev --config
+src-tauri/tauri.e2e.conf.json`: the overlay injects `--remote-debugging-port=9222` via the window's
+`additionalBrowserArgs` (the programmatic `CoreWebView2EnvironmentOptions` path).
+
+The launcher also points `TEXTREE_DEFAULT_VAULT_BASE` at a temp directory it recreates on every
+start. Specs that exercise the first-run flow open whatever folder the app resolves as its default
+home; without that isolation it is the developer's real Documents folder, and those specs end up
+asserting against personal notes. Start the app any other way and they fail by name (see
+`expectIsolatedDefaultVault` in `onboarding.spec.ts`) rather than as a puzzling mismatch.
 
 > ⚠️ The old `$env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS` route no longer works — WebView2
 > Runtime 150+ ignores the loader environment variable, so the CDP port silently never opens.
