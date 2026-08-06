@@ -101,6 +101,9 @@ pub enum RepoState {
     AtRoot,
     /// The folder sits inside a repository whose working directory is the given path.
     NestedIn(PathBuf),
+    /// A bare repository was found at the given git directory. It has no working tree, so
+    /// there is nothing for the folder to be the root of.
+    Bare(PathBuf),
     /// No repository governs this folder.
     None,
 }
@@ -111,8 +114,7 @@ pub fn probe(root: &Path) -> RepoState {
         return RepoState::None;
     };
     let Some(workdir) = repo.workdir().and_then(|w| std::fs::canonicalize(w).ok()) else {
-        // A bare repository has no working directory to compare against.
-        return RepoState::NestedIn(repo.path().to_path_buf());
+        return RepoState::Bare(repo.path().to_path_buf());
     };
     // Both sides are canonicalised so they carry the same path prefix form; comparing a
     // canonical path against a raw one mismatches on Windows extended-length prefixes.
@@ -197,8 +199,9 @@ mod tests {
 
     #[test]
     fn committing_to_the_checked_out_branch_still_leaves_the_index_untouched() {
-        // The case the application actually runs: the target reference is the branch HEAD
-        // points at, and the user has unrelated work staged on it.
+        // Pins the hardest case for the no-side-effects property: the target reference is the
+        // branch HEAD points at, and the user has unrelated work staged on it. This fixes the
+        // safety guarantee, not a policy about which reference a caller should target.
         let dir = TempDir::new().unwrap();
         let repo = Repository::init(dir.path()).unwrap();
 
@@ -346,6 +349,20 @@ mod tests {
         let dir = TempDir::new().unwrap();
         Repository::init(dir.path()).unwrap();
         assert_eq!(probe(dir.path()), RepoState::AtRoot);
+    }
+
+    #[test]
+    fn a_bare_repository_is_reported_as_bare_rather_than_as_a_root() {
+        let dir = TempDir::new().unwrap();
+        let repo = Repository::init_bare(dir.path()).unwrap();
+        assert!(repo.workdir().is_none());
+
+        match probe(dir.path()) {
+            RepoState::Bare(gitdir) => {
+                assert!(gitdir.exists(), "the reported git directory must exist");
+            }
+            other => panic!("expected a bare repository, got {other:?}"),
+        }
     }
 
     #[test]
