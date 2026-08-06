@@ -2,6 +2,10 @@
 //!
 //! Everything here addresses objects directly, so a write can target one path inside a
 //! repository without disturbing what the user has staged or checked out.
+//!
+//! These primitives are covered by their own tests but have no caller yet; the command layer
+//! starts using them when commits are wired up.
+#![allow(dead_code)]
 
 use git2::{Oid, Repository, Signature, Tree};
 use std::path::{Component, Path, PathBuf};
