@@ -51,10 +51,16 @@ fn clear_temp_dir(root: &Path) {
 /// Atomic file write: write to a temp file under `<root>/.textree/tmp/`, then rename to the target.
 /// Even if a crash/power loss happens mid-write, the target file is not truncated ("the FS is the truth").
 fn atomic_write(root: &Path, path: &Path, content: &str) -> io::Result<()> {
+    atomic_write_bytes(root, path, content.as_bytes())
+}
+
+/// The same guarantee for content that is not necessarily text — a restored file can be
+/// anything that was kept alongside the notes.
+fn atomic_write_bytes(root: &Path, path: &Path, content: &[u8]) -> io::Result<()> {
     let dir = temp_dir(root);
     std::fs::create_dir_all(&dir)?;
     let mut tmp = NamedTempFile::new_in(&dir)?;
-    tmp.write_all(content.as_bytes())?;
+    tmp.write_all(content)?;
     // Flush down to physical storage, not just the OS buffer (fsync). Only then is the
     // content guaranteed after the rename even under power loss — persist alone has no durability.
     tmp.as_file().sync_all()?;
@@ -546,7 +552,7 @@ pub fn delete_node(root: String, path: String) -> Result<(), String> {
 
 /// Re-validates a vault-relative path from the (user-editable) manifest: every component must be
 /// Normal and a valid name. "Security at the boundary" — the manifest is not trusted input.
-fn validate_trash_rel(rel: &str) -> Result<(), String> {
+fn validate_vault_rel(rel: &str) -> Result<(), String> {
     let p = Path::new(rel);
     let mut any = false;
     for comp in p.components() {
@@ -582,7 +588,7 @@ pub fn restore_node(root: String, trash_name: String) -> Result<String, String> 
     let original_rel = match idx {
         Some(i) => {
             let rel = items[i].original_rel.clone();
-            validate_trash_rel(&rel)?; // boundary recheck on untrusted manifest
+            validate_vault_rel(&rel)?; // boundary recheck on untrusted manifest
             rel
         }
         None => trash_name.clone(), // unknown origin → restore to vault root (§3 fallback)
@@ -848,6 +854,147 @@ pub fn commit_notes(root: String, paths: Vec<String>, message: String) -> Result
     Ok(oid.to_string())
 }
 
+/// One recorded state of a note, as the interface presents it.
+#[derive(Serialize, Debug, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct NoteVersion {
+    /// Opaque handle; hand it back to `note_version_text`.
+    pub id: String,
+    pub message: String,
+    /// Unix epoch seconds.
+    pub seconds: i64,
+    pub author: String,
+}
+
+/// A note that history holds but the folder no longer does.
+#[derive(Serialize, Debug, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DeletedNote {
+    /// Vault-root-relative, `/`-separated.
+    pub rel: String,
+    /// Unix epoch seconds of the last time it was written to history.
+    pub seconds: i64,
+    /// Whether it was ever recorded deliberately, as opposed to only kept when deleted.
+    pub recorded: bool,
+}
+
+/// Every recorded state of one note, newest first.
+#[tauri::command]
+pub fn note_versions(root: String, path: String) -> Result<Vec<NoteVersion>, String> {
+    let root_p = Path::new(&root);
+    let target = Path::new(&path);
+    if !is_within(root_p, target) {
+        return Err("path is outside the vault".into());
+    }
+    let rel = rel_to_root(root_p, target)?;
+    let prepared = crate::git_engine::prepare(root_p).map_err(|e| e.message().to_string())?;
+    let in_repo = prepared.path_in_repo(Path::new(&rel));
+    let found =
+        crate::git_engine::history(prepared.repo(), crate::git_engine::NOTES_REF, &in_repo)
+            .map_err(|e| e.message().to_string())?;
+    Ok(found
+        .into_iter()
+        .map(|v| NoteVersion {
+            id: v.id,
+            message: v.message,
+            seconds: v.seconds,
+            author: v.author,
+        })
+        .collect())
+}
+
+/// What a note held at one recorded state. Reads objects only — the file on disk is not touched.
+#[tauri::command]
+pub fn note_version_text(root: String, path: String, id: String) -> Result<String, String> {
+    let root_p = Path::new(&root);
+    let target = Path::new(&path);
+    if !is_within(root_p, target) {
+        return Err("path is outside the vault".into());
+    }
+    let rel = rel_to_root(root_p, target)?;
+    let prepared = crate::git_engine::prepare(root_p).map_err(|e| e.message().to_string())?;
+    let in_repo = prepared.path_in_repo(Path::new(&rel));
+    let content = crate::git_engine::content_at(prepared.repo(), &id, &in_repo)
+        .map_err(|e| e.message().to_string())?
+        .ok_or_else(|| format!("'{rel}' is not part of that recorded state"))?;
+    String::from_utf8(content).map_err(|_| "this state is not text".to_string())
+}
+
+/// Everything history holds that is no longer in the folder.
+///
+/// Two things end up here and the difference does not matter to whoever is looking for what
+/// they deleted: notes that were recorded and later removed, and notes that were never recorded
+/// but whose contents were kept when they were deleted.
+#[tauri::command]
+pub fn deleted_notes(root: String) -> Result<Vec<DeletedNote>, String> {
+    let root_p = Path::new(&root);
+    let prepared = crate::git_engine::prepare(root_p).map_err(|e| e.message().to_string())?;
+    let repo = prepared.repo();
+
+    let mut seen: std::collections::HashMap<String, DeletedNote> = std::collections::HashMap::new();
+    for (reference, recorded) in [
+        (crate::git_engine::NOTES_REF, true),
+        (crate::git_engine::SNAPSHOT_REF, false),
+    ] {
+        let times = crate::git_engine::last_changed(repo, reference)
+            .map_err(|e| e.message().to_string())?;
+        for in_repo in
+            crate::git_engine::tip_paths(repo, reference).map_err(|e| e.message().to_string())?
+        {
+            let Some(rel) = prepared.path_in_vault(Path::new(&in_repo)) else {
+                // Something the enclosing repository holds outside this folder.
+                continue;
+            };
+            if root_p.join(&rel).exists() {
+                continue;
+            }
+            let rel = rel.to_string_lossy().replace('\\', "/");
+            let seconds = times.get(&in_repo).copied().unwrap_or(0);
+            seen.entry(rel.clone())
+                .and_modify(|existing| {
+                    // Recorded wins: it is the state the person chose to keep, and it is the one
+                    // restoring should bring back.
+                    if recorded || seconds > existing.seconds {
+                        existing.recorded = existing.recorded || recorded;
+                        existing.seconds = existing.seconds.max(seconds);
+                    }
+                })
+                .or_insert(DeletedNote { rel, seconds, recorded });
+        }
+    }
+
+    let mut out: Vec<DeletedNote> = seen.into_values().collect();
+    // Newest first, then by name so equal timestamps do not shuffle between calls.
+    out.sort_by(|a, b| b.seconds.cmp(&a.seconds).then_with(|| a.rel.cmp(&b.rel)));
+    Ok(out)
+}
+
+/// Brings a deleted note back into the folder.
+///
+/// An existing file of the same name is never overwritten: the restored copy is numbered
+/// alongside it, and the path it actually landed at is returned so the caller can say where.
+#[tauri::command]
+pub fn restore_deleted(root: String, rel: String) -> Result<String, String> {
+    let root_p = Path::new(&root);
+    validate_vault_rel(&rel)?;
+    let prepared = crate::git_engine::prepare(root_p).map_err(|e| e.message().to_string())?;
+    let in_repo = prepared.path_in_repo(Path::new(&rel));
+
+    let content = [crate::git_engine::NOTES_REF, crate::git_engine::SNAPSHOT_REF]
+        .into_iter()
+        .find_map(|reference| {
+            crate::git_engine::content_at_tip(prepared.repo(), reference, &in_repo)
+                .ok()
+                .flatten()
+        })
+        .ok_or_else(|| format!("'{rel}' is not in this folder's history"))?;
+
+    let dest = crate::fs_ops::place_restored(root_p, &rel).map_err(|e| e.to_string())?;
+    atomic_write_bytes(root_p, &dest, &content).map_err(|e| e.to_string())?;
+    log::info!("restore_deleted: {}", dest.display());
+    rel_to_root(root_p, &dest)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -860,6 +1007,151 @@ mod tests {
         }
         std::fs::write(&target, body).unwrap();
         target.to_string_lossy().to_string()
+    }
+
+    /// Records `rel` under `root` and returns its absolute path.
+    fn record_note(root: &Path, rel: &str, body: &str) -> String {
+        let path = seed_note(root, rel, body);
+        commit_notes(
+            root.to_string_lossy().to_string(),
+            vec![path.clone()],
+            format!("recorded {rel}"),
+        )
+        .unwrap();
+        path
+    }
+
+    #[test]
+    fn a_notes_recorded_states_come_back_in_order_without_touching_the_file() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        git2::Repository::init(root).unwrap();
+
+        let a = record_note(root, "sub/a.md", "first");
+        std::fs::write(&a, "second").unwrap();
+        commit_notes(
+            root.to_string_lossy().to_string(),
+            vec![a.clone()],
+            "second".into(),
+        )
+        .unwrap();
+        // A different note's revision must not show up in this note's list.
+        record_note(root, "b.md", "unrelated");
+
+        let versions = note_versions(root.to_string_lossy().to_string(), a.clone()).unwrap();
+        assert_eq!(versions.len(), 2);
+        assert_eq!(versions[0].message, "second");
+
+        let earlier = note_version_text(
+            root.to_string_lossy().to_string(),
+            a.clone(),
+            versions[1].id.clone(),
+        )
+        .unwrap();
+        assert_eq!(earlier, "first");
+        assert_eq!(
+            std::fs::read_to_string(&a).unwrap(),
+            "second",
+            "reading an earlier state must leave the file as it is"
+        );
+    }
+
+    #[test]
+    fn deleted_notes_gathers_both_the_recorded_and_the_never_recorded() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        git2::Repository::init(root).unwrap();
+        let root_s = root.to_string_lossy().to_string();
+
+        let recorded = record_note(root, "kept.md", "recorded body");
+        let never = seed_note(root, "sub/scratch.md", "never recorded");
+        record_note(root, "staying.md", "still here");
+
+        delete_node(root_s.clone(), recorded).unwrap();
+        delete_node(root_s.clone(), never).unwrap();
+
+        let deleted = deleted_notes(root_s.clone()).unwrap();
+        let names: Vec<&str> = deleted.iter().map(|d| d.rel.as_str()).collect();
+        assert!(names.contains(&"kept.md"), "a recorded note that was deleted");
+        assert!(
+            names.contains(&"sub/scratch.md"),
+            "and one that was only ever kept when it went"
+        );
+        assert!(
+            !names.contains(&"staying.md"),
+            "a note still in the folder is not deleted"
+        );
+        assert!(deleted.iter().find(|d| d.rel == "kept.md").unwrap().recorded);
+        assert!(!deleted
+            .iter()
+            .find(|d| d.rel == "sub/scratch.md")
+            .unwrap()
+            .recorded);
+
+        // Trash holds the moved files, so nothing above depended on them still being in place.
+        assert!(!root.join("kept.md").exists());
+    }
+
+    #[test]
+    fn restoring_brings_a_note_back_and_takes_it_off_the_list() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        git2::Repository::init(root).unwrap();
+        let root_s = root.to_string_lossy().to_string();
+
+        let never = seed_note(root, "sub/scratch.md", "never recorded");
+        delete_node(root_s.clone(), never).unwrap();
+
+        let landed = restore_deleted(root_s.clone(), "sub/scratch.md".into()).unwrap();
+        assert_eq!(landed, "sub/scratch.md");
+        assert_eq!(
+            std::fs::read_to_string(root.join("sub").join("scratch.md")).unwrap(),
+            "never recorded"
+        );
+        assert!(
+            deleted_notes(root_s.clone()).unwrap().is_empty(),
+            "what is back in the folder is no longer missing from it"
+        );
+    }
+
+    #[test]
+    fn restoring_over_an_existing_name_keeps_both() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        git2::Repository::init(root).unwrap();
+        let root_s = root.to_string_lossy().to_string();
+
+        let note = seed_note(root, "a.md", "the deleted one");
+        delete_node(root_s.clone(), note).unwrap();
+        seed_note(root, "a.md", "a different note with the same name");
+
+        let landed = restore_deleted(root_s.clone(), "a.md".into()).unwrap();
+        assert_eq!(landed, "a (1).md");
+        assert_eq!(
+            std::fs::read_to_string(root.join("a.md")).unwrap(),
+            "a different note with the same name",
+            "what was already there must survive"
+        );
+        assert_eq!(
+            std::fs::read_to_string(root.join("a (1).md")).unwrap(),
+            "the deleted one"
+        );
+    }
+
+    #[test]
+    fn restoring_refuses_a_path_that_climbs_out_of_the_vault() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        git2::Repository::init(root).unwrap();
+        let root_s = root.to_string_lossy().to_string();
+
+        for attempt in ["../escape.md", "sub/../../escape.md", ""] {
+            assert!(restore_deleted(root_s.clone(), attempt.into()).is_err());
+        }
+        assert!(
+            !root.parent().unwrap().join("escape.md").exists(),
+            "nothing may be written outside the vault"
+        );
     }
 
     #[test]

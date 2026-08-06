@@ -62,6 +62,52 @@ export async function commitNotes(
   return invoke<string>("commit_notes", { root, paths, message });
 }
 
+/** One recorded state of a note. `id` is opaque — hand it back to `noteVersionText`. */
+export type NoteVersion = {
+  id: string;
+  message: string;
+  /** Unix epoch seconds. */
+  seconds: number;
+  author: string;
+};
+
+/** A note the history holds but the folder no longer does. */
+export type DeletedNote = {
+  /** Vault-root-relative, `/`-separated. */
+  rel: string;
+  /** Unix epoch seconds of the last time it was written to history. */
+  seconds: number;
+  /** Whether it was ever recorded deliberately, as opposed to only kept when deleted. */
+  recorded: boolean;
+};
+
+/** Every recorded state of one note, newest first. */
+export async function noteVersions(root: string, path: string): Promise<NoteVersion[]> {
+  return invoke<NoteVersion[]>("note_versions", { root, path });
+}
+
+/** What a note held at one recorded state. The file on disk is not touched. */
+export async function noteVersionText(
+  root: string,
+  path: string,
+  id: string,
+): Promise<string> {
+  return invoke<string>("note_version_text", { root, path, id });
+}
+
+/** Everything the history holds that is no longer in the folder, newest first. */
+export async function deletedNotes(root: string): Promise<DeletedNote[]> {
+  return invoke<DeletedNote[]>("deleted_notes", { root });
+}
+
+/**
+ * Brings a deleted note back. Never overwrites: if the name is in use the copy is numbered
+ * alongside it. Returns the path it actually landed at, relative to the vault root.
+ */
+export async function restoreDeleted(root: string, rel: string): Promise<string> {
+  return invoke<string>("restore_deleted", { root, rel });
+}
+
 // ── Structure edits (M4) ────────────────────────────────────────────────
 
 export async function createNote(

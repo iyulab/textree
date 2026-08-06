@@ -6,7 +6,7 @@
 
 use crate::pathsafe::{is_valid_name, is_within};
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Supported image extensions (lowercase). Other formats are rejected.
@@ -358,10 +358,65 @@ pub(crate) fn restore_from_trash(root: &Path, trash_path: &Path, original_rel: &
     Ok(final_dest)
 }
 
+/// Decides where a file coming back from history should land, creating the folders it needs.
+///
+/// Nothing is written here and nothing existing is replaced: a name already in use is numbered
+/// alongside rather than overwritten, so bringing something back can never cost what is there.
+///
+/// SECURITY precondition: callers MUST pre-validate every component of `rel`
+/// (Component::Normal + is_valid_name) — this function trusts it for the destination.
+pub(crate) fn place_restored(root: &Path, rel: &str) -> io::Result<PathBuf> {
+    // Checked before anything is created: the folders on the way would otherwise be made for a
+    // path that has not been vouched for. Containment cannot be confirmed against the filesystem
+    // here because the destination does not exist yet, which is the whole point.
+    let relative = Path::new(rel);
+    let mut any = false;
+    for comp in relative.components() {
+        match comp {
+            Component::Normal(_) => any = true,
+            _ => return Err(err("path is outside the vault")),
+        }
+    }
+    if !any {
+        return Err(err("empty path"));
+    }
+    let dest = root.join(relative);
+    let parent = dest.parent().ok_or_else(|| err("no parent directory"))?;
+    std::fs::create_dir_all(parent)?;
+    if !is_within(root, parent) {
+        return Err(err("path is outside the vault"));
+    }
+    let file_name = dest
+        .file_name()
+        .and_then(|s| s.to_str())
+        .ok_or_else(|| err("cannot read name"))?;
+    Ok(unique_in(parent, file_name, false))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use tempfile::TempDir;
+
+    #[test]
+    fn place_restored_never_points_at_something_that_exists() {
+        let tmp = TempDir::new().unwrap();
+        std::fs::create_dir_all(tmp.path().join("notes")).unwrap();
+        std::fs::write(tmp.path().join("notes/a.md"), "current").unwrap();
+
+        let dest = place_restored(tmp.path(), "notes/a.md").unwrap();
+        assert_eq!(dest, tmp.path().join("notes").join("a (1).md"));
+        assert_eq!(
+            std::fs::read_to_string(tmp.path().join("notes/a.md")).unwrap(),
+            "current",
+            "what is already there must be left alone"
+        );
+
+        // A name not in use is taken as-is, and its folder is created on the way.
+        let fresh = place_restored(tmp.path(), "made/up/b.md").unwrap();
+        assert_eq!(fresh, tmp.path().join("made").join("up").join("b.md"));
+        assert!(tmp.path().join("made").join("up").is_dir());
+    }
 
     #[test]
     fn create_note_makes_md_file() {

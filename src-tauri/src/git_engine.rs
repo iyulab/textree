@@ -3,8 +3,8 @@
 //! Everything here addresses objects directly, so a write can target one path inside a
 //! repository without disturbing what the user has staged or checked out.
 //!
-//! These primitives are covered by their own tests but have no caller yet; the command layer
-//! starts using them when commits are wired up.
+//! Reads here are equally hands-off: looking at an earlier state addresses objects and never
+//! materialises anything, so history can be browsed while the folder stays exactly as it is.
 #![allow(dead_code)]
 
 use git2::{Oid, Repository, RepositoryState, Signature, Tree};
@@ -28,13 +28,209 @@ pub const NOTES_REF: &str = "refs/textree/notes";
 /// exists only so a deletion can be undone.
 pub const SNAPSHOT_REF: &str = "refs/textree/snapshots";
 
-/// Whether `reference` already holds something at `rel`.
-pub fn is_recorded(repo: &Repository, reference: &str, rel: &Path) -> bool {
+/// A path as git spells it: plain name components joined by forward slashes.
+///
+/// Paths arriving from the rest of the application carry whatever separator the platform uses,
+/// while everything stored in a tree is separated by `/`. Comparing the two forms directly
+/// matches at the top level and silently fails one level down.
+fn slashed(rel: &Path) -> String {
+    rel.components()
+        .filter_map(|c| match c {
+            Component::Normal(s) => s.to_str(),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+/// Looks up a blob by walking `rel` one name at a time.
+///
+/// Resolving the whole path in one call would hand the platform's separator to a lookup that
+/// only understands `/`; descending name by name sidesteps the question entirely, the same way
+/// the tree builder does.
+fn blob_in_tree(repo: &Repository, tree: &Tree<'_>, rel: &Path) -> Option<Oid> {
+    let names: Vec<&str> = rel
+        .components()
+        .filter_map(|c| match c {
+            Component::Normal(s) => s.to_str(),
+            _ => None,
+        })
+        .collect();
+    let (last, dirs) = names.split_last()?;
+    let mut current = tree.clone();
+    for name in dirs {
+        let next = current.get_name(name)?.to_object(repo).ok()?.into_tree().ok()?;
+        current = next;
+    }
+    let entry = current.get_name(last)?;
+    (entry.kind() == Some(git2::ObjectType::Blob)).then(|| entry.id())
+}
+
+/// The tree of the newest revision on `reference`, or `None` when the reference does not exist.
+fn tip_tree<'r>(repo: &'r Repository, reference: &str) -> Option<Tree<'r>> {
     repo.find_reference(reference)
         .and_then(|r| r.peel_to_commit())
         .and_then(|c| c.tree())
-        .map(|t| t.get_path(rel).is_ok())
-        .unwrap_or(false)
+        .ok()
+}
+
+/// Whether `reference` already holds something at `rel`.
+pub fn is_recorded(repo: &Repository, reference: &str, rel: &Path) -> bool {
+    tip_tree(repo, reference)
+        .and_then(|t| blob_in_tree(repo, &t, rel))
+        .is_some()
+}
+
+/// One recorded state of a note.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecordedVersion {
+    /// Identifies the revision. Opaque to callers; hand it back to [`content_at`].
+    pub id: String,
+    /// What the person recording it called this state.
+    pub message: String,
+    /// When it was recorded, in seconds since the epoch.
+    pub seconds: i64,
+    /// Who it is recorded as being written by.
+    pub author: String,
+}
+
+/// Every path the newest revision on `reference` holds, separated by `/`.
+///
+/// Returns nothing when the reference does not exist, which is the ordinary state of a folder
+/// where nothing has been recorded yet rather than a failure.
+pub fn tip_paths(repo: &Repository, reference: &str) -> Result<Vec<String>, git2::Error> {
+    let Some(tree) = tip_tree(repo, reference) else {
+        return Ok(Vec::new());
+    };
+    let mut out = Vec::new();
+    tree.walk(git2::TreeWalkMode::PreOrder, |dir, entry| {
+        if entry.kind() == Some(git2::ObjectType::Blob) {
+            if let Ok(name) = entry.name() {
+                out.push(format!("{dir}{name}"));
+            }
+        }
+        git2::TreeWalkResult::Ok
+    })?;
+    Ok(out)
+}
+
+/// The paths a revision changed relative to its first parent.
+fn changed_paths(repo: &Repository, commit: &git2::Commit<'_>) -> Result<Vec<String>, git2::Error> {
+    let tree = commit.tree()?;
+    let parent = match commit.parent(0) {
+        Ok(p) => Some(p.tree()?),
+        Err(_) => None,
+    };
+    let diff = repo.diff_tree_to_tree(parent.as_ref(), Some(&tree), None)?;
+    let mut out: Vec<String> = Vec::new();
+    for delta in diff.deltas() {
+        for path in [delta.new_file().path(), delta.old_file().path()]
+            .into_iter()
+            .flatten()
+        {
+            let s = slashed(path);
+            if !s.is_empty() && !out.contains(&s) {
+                out.push(s);
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// Every revision on `reference` that changed `rel`, newest first.
+///
+/// Revisions that left `rel` alone are skipped: recording several notes at once would otherwise
+/// make each of them appear to have changed whenever any of the others did.
+pub fn history(
+    repo: &Repository,
+    reference: &str,
+    rel: &Path,
+) -> Result<Vec<RecordedVersion>, git2::Error> {
+    let target = slashed(rel);
+    let mut out = Vec::new();
+    if repo.find_reference(reference).is_err() {
+        return Ok(out);
+    }
+    let mut walk = repo.revwalk()?;
+    // Topological as well as by time: several notes recorded in the same second carry
+    // identical timestamps, and time alone leaves their order to chance. Topological order puts
+    // a revision before the one it was built on regardless.
+    walk.set_sorting(git2::Sort::TIME | git2::Sort::TOPOLOGICAL)?;
+    walk.push_ref(reference)?;
+    for id in walk {
+        let commit = repo.find_commit(id?)?;
+        if !changed_paths(repo, &commit)?.contains(&target) {
+            continue;
+        }
+        out.push(RecordedVersion {
+            id: commit.id().to_string(),
+            message: commit.summary().ok().flatten().unwrap_or("").to_string(),
+            seconds: commit.time().seconds(),
+            author: commit.author().name().unwrap_or("").to_string(),
+        });
+    }
+    Ok(out)
+}
+
+/// When each path on `reference` was last changed, in seconds since the epoch.
+///
+/// Answered for every path at once because asking per path would re-read the whole history once
+/// per note.
+pub fn last_changed(
+    repo: &Repository,
+    reference: &str,
+) -> Result<std::collections::HashMap<String, i64>, git2::Error> {
+    let mut out = std::collections::HashMap::new();
+    if repo.find_reference(reference).is_err() {
+        return Ok(out);
+    }
+    let mut walk = repo.revwalk()?;
+    // Topological as well as by time: several notes recorded in the same second carry
+    // identical timestamps, and time alone leaves their order to chance. Topological order puts
+    // a revision before the one it was built on regardless.
+    walk.set_sorting(git2::Sort::TIME | git2::Sort::TOPOLOGICAL)?;
+    walk.push_ref(reference)?;
+    for id in walk {
+        let commit = repo.find_commit(id?)?;
+        let seconds = commit.time().seconds();
+        for path in changed_paths(repo, &commit)? {
+            // Newest first, so the first sighting of a path is its latest change.
+            out.entry(path).or_insert(seconds);
+        }
+    }
+    Ok(out)
+}
+
+/// What `rel` held at the given revision, if it held anything.
+///
+/// Reads objects only: nothing is written to the working tree, so looking at an earlier state
+/// cannot disturb what is currently on disk.
+pub fn content_at(
+    repo: &Repository,
+    id: &str,
+    rel: &Path,
+) -> Result<Option<Vec<u8>>, git2::Error> {
+    let commit = repo.find_commit(Oid::from_str(id)?)?;
+    let tree = commit.tree()?;
+    let Some(blob) = blob_in_tree(repo, &tree, rel) else {
+        return Ok(None);
+    };
+    Ok(Some(repo.find_blob(blob)?.content().to_vec()))
+}
+
+/// What `rel` holds in the newest revision on `reference`, if anything.
+pub fn content_at_tip(
+    repo: &Repository,
+    reference: &str,
+    rel: &Path,
+) -> Result<Option<Vec<u8>>, git2::Error> {
+    let Some(tree) = tip_tree(repo, reference) else {
+        return Ok(None);
+    };
+    let Some(blob) = blob_in_tree(repo, &tree, rel) else {
+        return Ok(None);
+    };
+    Ok(Some(repo.find_blob(blob)?.content().to_vec()))
 }
 
 /// Reports an operation the repository is in the middle of, if any.
@@ -130,6 +326,14 @@ pub fn commit_paths(
         tree = Some(repo.find_tree(oid)?);
     }
     let tree = tree.expect("entries is non-empty, so a tree was built");
+
+    // Recording a state identical to the one already held would add a revision that changed
+    // nothing — history would fill with entries a reader cannot tell apart.
+    if let Some(commit) = parent.as_ref() {
+        if commit.tree_id() == tree.id() {
+            return Ok(commit.id());
+        }
+    }
 
     let parents: Vec<&git2::Commit<'_>> = parent.iter().collect();
     // Passing `None` as the update target keeps libgit2 from moving any reference on our
@@ -243,6 +447,17 @@ impl VaultRepo {
         } else {
             self.prefix.join(rel)
         }
+    }
+
+    /// The reverse: a repository-relative path expressed relative to the vault folder.
+    ///
+    /// `None` when the path lies outside the folder, which is the ordinary case for everything
+    /// else an enclosing repository holds.
+    pub fn path_in_vault(&self, in_repo: &Path) -> Option<PathBuf> {
+        if self.prefix.as_os_str().is_empty() {
+            return Some(in_repo.to_path_buf());
+        }
+        in_repo.strip_prefix(&self.prefix).ok().map(Path::to_path_buf)
     }
 }
 
@@ -916,5 +1131,145 @@ mod tests {
 
         let expected = std::fs::canonicalize(dir.path()).unwrap();
         assert_eq!(probe(&inner), RepoState::NestedIn(expected));
+    }
+
+    /// Records `rel` with the given body and returns the revision it produced.
+    fn record(repo: &Repository, rel: &Path, body: &str) -> Oid {
+        commit_file(repo, NOTES_REF, rel, body.as_bytes(), "recorded", &author()).unwrap()
+    }
+
+    #[test]
+    fn a_nested_path_is_recognised_as_recorded() {
+        let dir = TempDir::new().unwrap();
+        let repo = Repository::init(dir.path()).unwrap();
+        // Built the way the rest of the application builds paths, so it carries the platform's
+        // separator rather than the one trees are written with.
+        let nested = Path::new("docs").join("guide.md");
+
+        record(&repo, &nested, "body");
+
+        assert!(
+            is_recorded(&repo, NOTES_REF, &nested),
+            "a path one level down must be found"
+        );
+        assert!(
+            !is_recorded(&repo, NOTES_REF, Path::new("docs/missing.md")),
+            "and one that was never recorded must not be"
+        );
+    }
+
+    #[test]
+    fn history_lists_only_the_revisions_that_changed_that_path() {
+        let dir = TempDir::new().unwrap();
+        let repo = Repository::init(dir.path()).unwrap();
+        let a = Path::new("a.md");
+        let b = Path::new("notes").join("b.md");
+
+        record(&repo, a, "one");
+        record(&repo, a, "two");
+        record(&repo, &b, "other");
+        record(&repo, a, "three");
+
+        let for_a = history(&repo, NOTES_REF, a).unwrap();
+        assert_eq!(for_a.len(), 3, "the other note's revisions must not appear");
+        let for_b = history(&repo, NOTES_REF, &b).unwrap();
+        assert_eq!(for_b.len(), 1);
+
+        assert!(
+            for_a[0].seconds >= for_a[for_a.len() - 1].seconds,
+            "newest first"
+        );
+        assert_eq!(for_a[0].author, "Test");
+    }
+
+    #[test]
+    fn history_of_a_reference_that_does_not_exist_is_empty() {
+        let dir = TempDir::new().unwrap();
+        let repo = Repository::init(dir.path()).unwrap();
+        assert!(history(&repo, NOTES_REF, Path::new("a.md"))
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn negative_control_the_checked_out_branch_holds_none_of_this() {
+        let dir = TempDir::new().unwrap();
+        let repo = Repository::init(dir.path()).unwrap();
+        let a = Path::new("a.md");
+        record(&repo, a, "one");
+        record(&repo, a, "two");
+
+        // Reading the branch a person checks out finds nothing, which is what makes the note
+        // history invisible to their own work — and proves the reads above are aimed elsewhere.
+        for candidate in ["refs/heads/main", "refs/heads/master"] {
+            assert!(history(&repo, candidate, a).unwrap().is_empty());
+            assert!(tip_paths(&repo, candidate).unwrap().is_empty());
+        }
+    }
+
+    #[test]
+    fn recording_the_same_content_again_adds_nothing() {
+        let dir = TempDir::new().unwrap();
+        let repo = Repository::init(dir.path()).unwrap();
+        let a = Path::new("a.md");
+
+        let first = record(&repo, a, "same");
+        let second = record(&repo, a, "same");
+
+        assert_eq!(first, second, "an unchanged state is not a new revision");
+        assert_eq!(history(&repo, NOTES_REF, a).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn an_earlier_state_can_be_read_back_without_touching_the_disk() {
+        let dir = TempDir::new().unwrap();
+        let repo = Repository::init(dir.path()).unwrap();
+        let nested = Path::new("docs").join("guide.md");
+
+        record(&repo, &nested, "first");
+        record(&repo, &nested, "second");
+
+        let entries = history(&repo, NOTES_REF, &nested).unwrap();
+        let earliest = &entries[entries.len() - 1];
+        assert_eq!(
+            content_at(&repo, &earliest.id, &nested).unwrap().unwrap(),
+            b"first"
+        );
+        assert_eq!(
+            content_at_tip(&repo, NOTES_REF, &nested).unwrap().unwrap(),
+            b"second"
+        );
+        assert!(
+            content_at(&repo, &earliest.id, Path::new("absent.md"))
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            !dir.path().join("docs").exists(),
+            "reading history must not materialise anything"
+        );
+    }
+
+    #[test]
+    fn every_recorded_path_is_listed_with_when_it_last_changed() {
+        let dir = TempDir::new().unwrap();
+        let repo = Repository::init(dir.path()).unwrap();
+        let a = Path::new("a.md");
+        let b = Path::new("notes").join("b.md");
+
+        record(&repo, a, "one");
+        record(&repo, &b, "other");
+        record(&repo, a, "two");
+
+        let mut paths = tip_paths(&repo, NOTES_REF).unwrap();
+        paths.sort();
+        assert_eq!(paths, vec!["a.md".to_string(), "notes/b.md".to_string()]);
+
+        let times = last_changed(&repo, NOTES_REF).unwrap();
+        assert!(times.contains_key("a.md") && times.contains_key("notes/b.md"));
+        assert!(
+            times["a.md"] >= times["notes/b.md"],
+            "the later change must not be reported as older"
+        );
     }
 }
