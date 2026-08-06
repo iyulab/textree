@@ -778,7 +778,7 @@
     removed = false; // return to normal state if re-created after external deletion
   }
 
-  /** Conflict banner: overwrite with the disk version, discarding my edits. */
+  /** Conflict banner: overwrite with the copy on disk, discarding my edits. */
   function resolveTakeDisk() {
     if (conflictDisk !== null) applyReload(conflictDisk);
     conflictDisk = null;
@@ -1545,7 +1545,7 @@
         <div class="banner" role="alert">
           <span>This note changed on disk while you have unsaved edits.</span>
           <span class="banner-actions">
-            <button onclick={resolveTakeDisk}>Load disk version</button>
+            <button onclick={resolveTakeDisk}>Load the copy on disk</button>
             <button onclick={resolveKeepMine}>Keep my edits</button>
           </span>
         </div>

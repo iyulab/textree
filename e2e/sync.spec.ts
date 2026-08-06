@@ -96,18 +96,18 @@ test("external modify during unsaved edit → conflict banner + resolution butto
   try {
     await triggerConflict(vault);
     await expect(page.locator(".banner")).toContainText("changed on disk");
-    await expect(page.getByRole("button", { name: "Load disk version" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Load the copy on disk" })).toBeVisible();
     await expect(page.getByRole("button", { name: "Keep my edits" })).toBeVisible();
   } finally {
     removeTempVault(vault);
   }
 });
 
-test("conflict resolution: load disk version → editor replaced with disk content", async () => {
+test("conflict resolution: load the copy on disk → editor replaced with disk content", async () => {
   const vault = createTempVault({ "clash.md": "initial\n" });
   try {
     const external = await triggerConflict(vault);
-    await page.getByRole("button", { name: "Load disk version" }).click();
+    await page.getByRole("button", { name: "Load the copy on disk" }).click();
 
     await expect(page.locator(".banner")).toHaveCount(0);
     await expect(page.locator(".cm-content")).toContainText(external);
