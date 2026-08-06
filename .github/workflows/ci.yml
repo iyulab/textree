@@ -46,6 +46,12 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # Third-party notices are generated from the shipped dependency graphs, so they
+      # go stale the moment a dependency is added or bumped. This reads metadata only
+      # (no build), which is why it can run first and fail fast.
+      - name: Third-party notices match the dependency graph
+        run: npm run notices:check
+
       - name: Type check (svelte-check, 0 errors / 0 warnings)
         run: npm run check
 
