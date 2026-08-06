@@ -4,6 +4,7 @@ pub(crate) mod cloud_publish;
 pub(crate) mod commands;
 pub(crate) mod host;
 pub(crate) mod fs_ops;
+pub(crate) mod git_engine;
 pub(crate) mod pathsafe;
 pub(crate) mod process_ext;
 pub(crate) mod publish;

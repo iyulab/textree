@@ -56,6 +56,11 @@ tauri-plugin-log = "2"
 # Deflate-only: we just Deflate-compress the bundle, so drop the default features (bzip2/lzma/zstd/aes,
 # some needing a native toolchain) to keep the supply-chain/attack surface minimal (constitution: minimal deps).
 zip = { version = "2", default-features = false, features = ["deflate"] }
+# Embedded git engine. The C library is vendored and statically linked into the executable;
+# it is never shipped as a separate artifact. The feature set is deliberately minimal — no
+# `https` and no `ssh` — so no TLS or SSH native libraries enter the binary. The
+# `dependency_policy` test enforces that. See THIRD-PARTY-NOTICES.md.
+git2 = { version = "0.21", features = ["vendored-libgit2"] }
 
 [target."cfg(windows)".dependencies]
 tauri-plugin-updater = "2.10.1"
