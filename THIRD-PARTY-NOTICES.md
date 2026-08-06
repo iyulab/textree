@@ -1,8 +1,16 @@
 # Third-Party Notices
 
 Textree is distributed under the GPL-3.0-only license (see `LICENSE`). The binary
-distribution additionally contains the components listed below, each under its own license.
-Every component is listed with the exact version compiled into the release.
+distribution also contains third-party components, each under its own license.
+
+**This file is incomplete.** It currently covers the embedded git engine and the native
+libraries compiled into it, because those carry terms that constrain how the whole
+distribution may be combined and shipped. The remaining dependency tree — the Rust crates
+this application is built from, and their transitive dependencies — is predominantly
+MIT and Apache-2.0 and is not yet enumerated here. Those licenses do require their
+copyright notices to accompany a binary distribution, so this file will be completed.
+
+Every component below is listed with the exact version compiled into the release.
 
 ## libgit2
 
@@ -32,11 +40,11 @@ libssh2 code is present in this distribution.
 | llhttp | MIT | https://github.com/nodejs/llhttp |
 | PCRE2 | BSD-3-Clause | https://github.com/PCRE2Project/pcre2 |
 
-## Rust crates
+## Rust crates wrapping the git engine
 
 | Crate | License | Upstream |
 | --- | --- | --- |
 | `git2`, `libgit2-sys` | MIT OR Apache-2.0 | https://github.com/rust-lang/git2-rs |
-| zlib (via `libz-sys`) | zlib | https://zlib.net |
+| `libz-sys` (zlib) | zlib | https://zlib.net |
 
 The full license text for each component is available at the upstream location listed above.
