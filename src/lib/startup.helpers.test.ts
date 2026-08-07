@@ -3,6 +3,7 @@ import { decideStartup, LAST_VAULT_KEY } from "./startup.helpers";
 
 describe("decideStartup", () => {
   it("restores a stored vault path", () => {
+    // forbidden-tokens: allow absolute-path - a stand-in path, not anyone's home
     expect(decideStartup("/home/me/Notes")).toEqual({ action: "restore", path: "/home/me/Notes" });
   });
 

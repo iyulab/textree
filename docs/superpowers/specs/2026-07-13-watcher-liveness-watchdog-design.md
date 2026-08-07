@@ -20,7 +20,7 @@ reaches either the `Ok` or `Err` debounce callback arm** — the app cannot know
 
 Consequence: the tree, tantivy index, and open note silently go stale with no
 user-visible signal. This directly violates the data-safety / graceful-degradation
-value (Constitution D19), and it is exactly the condition reproduced by the S2
+value, and it is exactly the condition reproduced by the S2
 dogfooding scenario ① (a OneDrive-hosted vault under active sync).
 
 A prior slice (2026-07-05, watcher fix A+B, textree `8d9bc86`) handled the
@@ -30,10 +30,9 @@ no callback arm at all**, so an Ok-arm consumer cannot see it.
 
 ### Decision context
 
-The gap was originally slated for an upstream `notify-rs` issue (a submission-ready
-draft exists at `claudedocs/upstream-issues/notify-upstream-issue-submit-2026-07-12.md`
-in the umbrella). Owner decided 2026-07-12 to **not submit** — `notify-rs` is not an
-iyulab-ecosystem upstream — and instead pursue an **app-side workaround**. This is
+The gap was originally slated for an upstream `notify-rs` issue, and a submission-ready
+draft was written. The decision on 2026-07-12 was to **not submit** — `notify-rs` is not
+one of the libraries this project maintains — and to pursue an **app-side workaround**. This is
 that workaround.
 
 ## 2. Strategy

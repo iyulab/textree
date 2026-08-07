@@ -14,6 +14,7 @@
     "dev:e2e": "node scripts/dev-e2e.mjs",
     "notices": "node scripts/generate-third-party-notices.mjs",
     "notices:check": "node scripts/generate-third-party-notices.mjs --check",
+    "tokens:check": "node scripts/check-forbidden-tokens.mjs",
     "tauri": "tauri"
   },
   "license": "GPL-3.0-only",

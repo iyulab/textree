@@ -7,7 +7,7 @@
  * the data, the view is derived config). The on-disk shape is a fixed contract (a future-locking
  * fork once written), so the schema is pinned HERE rather than drifting in across the UI/store.
  *
- * Ratified top-level contract (HANDOFF §3, ROADMAP §3): `{version, name, folder, columns, sort,
+ * Ratified top-level contract: `{version, name, folder, columns, sort,
  * filters}` — exactly these six fields. Adding a top-level field (e.g. groupBy) is a schema change
  * that needs approval, not a silent extension. The INTERNAL shape of each field
  * is free to design.

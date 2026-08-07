@@ -22,7 +22,9 @@ describe("noteName", () => {
   it("keeps names that are not written in the Latin alphabet", () => {
     // A note title is whatever its author wrote. Reducing this fixture to ASCII would leave the
     // case it exists to cover untested.
-    expect(noteName("sub/회의록 0731.md")).toBe("회의록 0731");
+    // A name outside the Latin alphabet, so that the slice is by character and not by byte.
+    // forbidden-tokens: allow non-latin - the multi-byte name is what this case is about
+    expect(noteName("sub/메모.md")).toBe("메모");
   });
 });
 

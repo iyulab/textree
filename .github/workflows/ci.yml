@@ -4,7 +4,7 @@ name: CI
 # Verify-only: no artifacts are uploaded here (release/bindings pipelines own that).
 #
 # Runs on windows-latest because Textree is Windows-first (Tauri + WebView2) today.
-# Multi-OS CI is deferred until the cross-platform debt is addressed (see ROADMAP §3 / D6).
+# Multi-OS CI is deferred until the cross-platform debt is addressed.
 #
 # The Playwright E2E suite is intentionally NOT run in CI: it attaches over CDP to a
 # live WebView2 of the running Tauri app, which needs a GUI session. E2E stays a
@@ -51,6 +51,12 @@ jobs:
       # (no build), which is why it can run first and fail fast.
       - name: Third-party notices match the dependency graph
         run: npm run notices:check
+
+      # Nothing that only means something in the workspace this was written from should reach a
+      # public repository. Reads tracked files only, so it is as fast as the notices check and
+      # fails for the same reason: a sweep nobody runs is a sweep that has already rotted.
+      - name: No workspace-only text in tracked files
+        run: npm run tokens:check
 
       - name: Type check (svelte-check, 0 errors / 0 warnings)
         run: npm run check
