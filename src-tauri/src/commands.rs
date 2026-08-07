@@ -446,10 +446,8 @@ fn rel_to_root(root: &Path, target: &Path) -> Result<String, String> {
         .ok_or_else(|| "target is not within the vault".to_string())
 }
 
-/// Every file at or under `target` whose contents history does not already hold.
-///
-/// Returned as (path on disk, path within the repository) pairs.
-fn unrecorded_under(
+/// Every file at or under `target`, as (path on disk, path within the repository) pairs.
+fn files_under(
     prepared: &crate::git_engine::VaultRepo,
     root: &Path,
     target: &Path,
@@ -468,33 +466,39 @@ fn unrecorded_under(
         let Ok(rel) = rel_to_root(root, &current) else {
             continue;
         };
-        let in_repo = prepared.path_in_repo(Path::new(&rel));
-        if !crate::git_engine::is_recorded(prepared.repo(), crate::git_engine::NOTES_REF, &in_repo)
-        {
-            found.push((current, in_repo));
-        }
+        found.push((current, prepared.path_in_repo(Path::new(&rel))));
     }
     found
 }
 
-/// Keeps the contents of anything about to be deleted that history does not already hold.
+/// Keeps the state of everything about to be deleted, and records that it happened.
 ///
-/// Deleting something that was recorded needs no safety net — history has it. Deleting
-/// something that never was is otherwise final, so its contents are put somewhere recoverable
-/// first. Nothing here is part of the history anyone reads.
-fn snapshot_unrecorded(root: &Path, target: &Path) -> Result<(), String> {
+/// Everything is kept, not only what history lacks. Two reasons, and each alone is enough:
+///
+/// - Being recorded once says nothing about the state on disk now. A note recorded, then edited
+///   without being recorded again, then deleted, has its newer state nowhere else — skipping it
+///   because the path appears in history loses exactly the work that was never saved.
+/// - The revision is also the only record of *when* something left the folder. A deletion that
+///   writes nothing leaves no answer to that question, and there is no other place holding it.
+///
+/// Contents that history already holds cost nothing to keep again: identical contents are one
+/// object either way. Nothing written here is part of the history anyone reads.
+fn keep_before_deleting(root: &Path, target: &Path) -> Result<(), String> {
     let prepared = match crate::git_engine::prepare(root) {
         Ok(p) => p,
-        // Without a repository there is nothing to snapshot into. Deleting still works; this
+        // Without a repository there is nowhere to keep anything. Deleting still works; this
         // is a safety net, not a precondition.
         Err(e) => {
-            log::warn!("snapshot_unrecorded: no repository available: {}", e.message());
+            log::warn!(
+                "keep_before_deleting: no repository available: {}",
+                e.message()
+            );
             return Ok(());
         }
     };
 
     let mut entries: Vec<(PathBuf, Vec<u8>)> = Vec::new();
-    for (on_disk, in_repo) in unrecorded_under(&prepared, root, target) {
+    for (on_disk, in_repo) in files_under(&prepared, root, target) {
         match std::fs::read(&on_disk) {
             Ok(content) => entries.push((in_repo, content)),
             Err(e) => {
@@ -517,9 +521,12 @@ fn snapshot_unrecorded(root: &Path, target: &Path) -> Result<(), String> {
         "keep deleted content",
         &author,
         &committer,
+        // Deleting the same contents twice is two events, not one. Skipping the second would
+        // leave the list showing the first deletion's moment for something deleted later.
+        crate::git_engine::WhenUnchanged::Record,
     )
     .map_err(|e| e.message().to_string())?;
-    log::info!("snapshot_unrecorded: kept {} file(s)", entries.len());
+    log::info!("keep_before_deleting: kept {} file(s)", entries.len());
     Ok(())
 }
 
@@ -529,9 +536,9 @@ pub fn delete_node(root: String, path: String) -> Result<(), String> {
     let target = Path::new(&path);
     // Capture provenance before the move (canonicalize needs the path to still exist).
     let original_rel = rel_to_root(root_p, target)?;
-    // Anything history does not already hold is kept first: once the delete goes through,
-    // there is nowhere else for it to come back from.
-    snapshot_unrecorded(root_p, target)?;
+    // The state on disk is kept first: once the delete goes through, there is nowhere else for
+    // it to come back from.
+    keep_before_deleting(root_p, target)?;
     let is_dir = target.is_dir();
     // Move first (fs_ops validates is_within / root / .textree). Manifest after — a mid-crash
     // leaves an "unknown-origin" trash file (recoverable) rather than a dangling manifest entry.
@@ -794,11 +801,19 @@ pub fn open_log_dir(app: tauri::AppHandle) -> Result<(), String> {
 /// staged, which branch they have checked out, and what is in their working tree are all left
 /// exactly as they were.
 ///
+/// Returns `None` when the notes are already in the state history holds: nothing was added, and
+/// saying so is the honest answer. Handing back the previous revision instead would read as a
+/// new one that the history it belongs to does not list.
+///
 /// Refused rather than half-done when: the repository is in the middle of another operation,
 /// a path lies outside the vault, or a path is covered by an ignore rule (in which case the
 /// history would silently not contain what was asked for).
 #[tauri::command]
-pub fn commit_notes(root: String, paths: Vec<String>, message: String) -> Result<String, String> {
+pub fn commit_notes(
+    root: String,
+    paths: Vec<String>,
+    message: String,
+) -> Result<Option<String>, String> {
     let root_p = Path::new(&root);
     if paths.is_empty() {
         return Err("nothing was selected".into());
@@ -847,11 +862,20 @@ pub fn commit_notes(root: String, paths: Vec<String>, message: String) -> Result
         &message,
         &author,
         &committer,
+        crate::git_engine::WhenUnchanged::Skip,
     )
     .map_err(|e| e.message().to_string())?;
 
-    log::info!("commit_notes: {} path(s) as {}", entries.len(), oid);
-    Ok(oid.to_string())
+    match oid {
+        Some(id) => {
+            log::info!("commit_notes: {} path(s) as {}", entries.len(), id);
+            Ok(Some(id.to_string()))
+        }
+        None => {
+            log::info!("commit_notes: {} path(s) already held", entries.len());
+            Ok(None)
+        }
+    }
 }
 
 /// One recorded state of a note, as the interface presents it.
@@ -872,10 +896,29 @@ pub struct NoteVersion {
 pub struct DeletedNote {
     /// Vault-root-relative, `/`-separated.
     pub rel: String,
-    /// Unix epoch seconds of the last time it was written to history.
+    /// Unix epoch seconds of when it left the folder.
+    ///
+    /// Taken from what was kept on the way out, which is written at that moment. For a note
+    /// that left some other way — removed outside the application, or before its contents were
+    /// being kept — nothing recorded the moment, and the last time it was written to history
+    /// stands in as the closest thing known.
     pub seconds: i64,
     /// Whether it was ever recorded deliberately, as opposed to only kept when deleted.
     pub recorded: bool,
+}
+
+/// Where a restored note's contents came from.
+#[derive(Serialize, Debug, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RestoredNote {
+    /// Vault-root-relative, `/`-separated path the note actually landed at.
+    pub rel: String,
+    /// True when the contents are the ones the note held at the moment it left the folder,
+    /// false when they come from the last state recorded before that.
+    ///
+    /// The two differ whenever a note was edited without being recorded again, which is the
+    /// case where saying which one came back matters most.
+    pub as_deleted: bool,
 }
 
 /// Every recorded state of one note, newest first.
@@ -931,36 +974,40 @@ pub fn deleted_notes(root: String) -> Result<Vec<DeletedNote>, String> {
     let prepared = crate::git_engine::prepare(root_p).map_err(|e| e.message().to_string())?;
     let repo = prepared.repo();
 
+    let kept_times = crate::git_engine::last_changed(repo, crate::git_engine::SNAPSHOT_REF)
+        .map_err(|e| e.message().to_string())?;
+    let recorded_times = crate::git_engine::last_changed(repo, crate::git_engine::NOTES_REF)
+        .map_err(|e| e.message().to_string())?;
+    let recorded_paths: std::collections::HashSet<String> =
+        crate::git_engine::tip_paths(repo, crate::git_engine::NOTES_REF)
+            .map_err(|e| e.message().to_string())?
+            .into_iter()
+            .collect();
+
     let mut seen: std::collections::HashMap<String, DeletedNote> = std::collections::HashMap::new();
-    for (reference, recorded) in [
-        (crate::git_engine::NOTES_REF, true),
-        (crate::git_engine::SNAPSHOT_REF, false),
-    ] {
-        let times = crate::git_engine::last_changed(repo, reference)
-            .map_err(|e| e.message().to_string())?;
-        for in_repo in
-            crate::git_engine::tip_paths(repo, reference).map_err(|e| e.message().to_string())?
-        {
-            let Some(rel) = prepared.path_in_vault(Path::new(&in_repo)) else {
-                // Something the enclosing repository holds outside this folder.
-                continue;
-            };
-            if root_p.join(&rel).exists() {
-                continue;
-            }
-            let rel = rel.to_string_lossy().replace('\\', "/");
-            let seconds = times.get(&in_repo).copied().unwrap_or(0);
-            seen.entry(rel.clone())
-                .and_modify(|existing| {
-                    // Recorded wins: it is the state the person chose to keep, and it is the one
-                    // restoring should bring back.
-                    if recorded || seconds > existing.seconds {
-                        existing.recorded = existing.recorded || recorded;
-                        existing.seconds = existing.seconds.max(seconds);
-                    }
-                })
-                .or_insert(DeletedNote { rel, seconds, recorded });
+    for in_repo in recorded_paths.iter().cloned().chain(
+        crate::git_engine::tip_paths(repo, crate::git_engine::SNAPSHOT_REF)
+            .map_err(|e| e.message().to_string())?,
+    ) {
+        let Some(rel) = prepared.path_in_vault(Path::new(&in_repo)) else {
+            // Something the enclosing repository holds outside this folder.
+            continue;
+        };
+        if root_p.join(&rel).exists() {
+            continue;
         }
+        let rel = rel.to_string_lossy().replace('\\', "/");
+        // When it left, not when it was last saved. Only the first of those answers the
+        // question the list is sorted by.
+        let seconds = kept_times
+            .get(&in_repo)
+            .or_else(|| recorded_times.get(&in_repo))
+            .copied()
+            .unwrap_or(0);
+        seen.insert(
+            rel.clone(),
+            DeletedNote { rel, seconds, recorded: recorded_paths.contains(&in_repo) },
+        );
     }
 
     let mut out: Vec<DeletedNote> = seen.into_values().collect();
@@ -969,30 +1016,59 @@ pub fn deleted_notes(root: String) -> Result<Vec<DeletedNote>, String> {
     Ok(out)
 }
 
+/// When `reference` last wrote `rel`, in seconds since the epoch.
+fn last_written(
+    repo: &git2::Repository,
+    reference: &str,
+    in_repo: &Path,
+) -> Result<Option<i64>, String> {
+    Ok(crate::git_engine::history(repo, reference, in_repo)
+        .map_err(|e| e.message().to_string())?
+        .first()
+        .map(|v| v.seconds))
+}
+
 /// Brings a deleted note back into the folder.
+///
+/// Two places may hold it — what was kept when it left, and the last state recorded before
+/// that — and **the newer of the two is the one brought back**. Preferring either place by rule
+/// gets it wrong in one direction or the other: reading history first loses edits that were
+/// never recorded, and reading what was kept first hands back a stale copy to a note that was
+/// deleted, restored, saved, and then removed some other way.
 ///
 /// An existing file of the same name is never overwritten: the restored copy is numbered
 /// alongside it, and the path it actually landed at is returned so the caller can say where.
 #[tauri::command]
-pub fn restore_deleted(root: String, rel: String) -> Result<String, String> {
+pub fn restore_deleted(root: String, rel: String) -> Result<RestoredNote, String> {
     let root_p = Path::new(&root);
     validate_vault_rel(&rel)?;
     let prepared = crate::git_engine::prepare(root_p).map_err(|e| e.message().to_string())?;
+    let repo = prepared.repo();
     let in_repo = prepared.path_in_repo(Path::new(&rel));
 
-    let content = [crate::git_engine::NOTES_REF, crate::git_engine::SNAPSHOT_REF]
-        .into_iter()
-        .find_map(|reference| {
-            crate::git_engine::content_at_tip(prepared.repo(), reference, &in_repo)
-                .ok()
-                .flatten()
-        })
+    let kept = last_written(repo, crate::git_engine::SNAPSHOT_REF, &in_repo)?;
+    let recorded = last_written(repo, crate::git_engine::NOTES_REF, &in_repo)?;
+    // A tie goes to what was kept: it is written as the note leaves, so it is at or after
+    // whatever was recorded in the same second.
+    let as_deleted = match (kept, recorded) {
+        (Some(k), Some(r)) => k >= r,
+        (Some(_), None) => true,
+        _ => false,
+    };
+    let reference = if as_deleted {
+        crate::git_engine::SNAPSHOT_REF
+    } else {
+        crate::git_engine::NOTES_REF
+    };
+
+    let content = crate::git_engine::content_at_tip(repo, reference, &in_repo)
+        .map_err(|e| e.message().to_string())?
         .ok_or_else(|| format!("'{rel}' is not in this folder's history"))?;
 
     let dest = crate::fs_ops::place_restored(root_p, &rel).map_err(|e| e.to_string())?;
     atomic_write_bytes(root_p, &dest, &content).map_err(|e| e.to_string())?;
-    log::info!("restore_deleted: {}", dest.display());
-    rel_to_root(root_p, &dest)
+    log::info!("restore_deleted: {} (as deleted: {as_deleted})", dest.display());
+    Ok(RestoredNote { rel: rel_to_root(root_p, &dest)?, as_deleted })
 }
 
 #[cfg(test)]
@@ -1103,7 +1179,7 @@ mod tests {
         delete_node(root_s.clone(), never).unwrap();
 
         let landed = restore_deleted(root_s.clone(), "sub/scratch.md".into()).unwrap();
-        assert_eq!(landed, "sub/scratch.md");
+        assert_eq!(landed.rel, "sub/scratch.md");
         assert_eq!(
             std::fs::read_to_string(root.join("sub").join("scratch.md")).unwrap(),
             "never recorded"
@@ -1111,6 +1187,123 @@ mod tests {
         assert!(
             deleted_notes(root_s.clone()).unwrap().is_empty(),
             "what is back in the folder is no longer missing from it"
+        );
+    }
+
+    #[test]
+    fn restoring_brings_back_edits_that_were_never_recorded() {
+        // The note was saved once, worked on afterwards without being saved again, then
+        // deleted. Only the second state answers "give me back what I deleted"; handing over
+        // the recorded one throws away the work and says nothing about having done so.
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        git2::Repository::init(root).unwrap();
+        let root_s = root.to_string_lossy().to_string();
+
+        let note = record_note(root, "a.md", "as recorded");
+        std::fs::write(&note, "worked on since, never recorded").unwrap();
+        delete_node(root_s.clone(), note).unwrap();
+
+        let landed = restore_deleted(root_s.clone(), "a.md".into()).unwrap();
+        assert!(landed.as_deleted, "it came back as it was when it went");
+        assert_eq!(
+            std::fs::read_to_string(root.join("a.md")).unwrap(),
+            "worked on since, never recorded"
+        );
+    }
+
+    #[test]
+    fn restoring_a_note_removed_outside_the_application_uses_what_was_recorded() {
+        // Nothing was kept on the way out, because the application was not the one that took
+        // it. History is all there is, and the answer says so.
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        git2::Repository::init(root).unwrap();
+        let root_s = root.to_string_lossy().to_string();
+
+        let note = record_note(root, "a.md", "as recorded");
+        std::fs::remove_file(&note).unwrap();
+
+        let landed = restore_deleted(root_s.clone(), "a.md".into()).unwrap();
+        assert!(!landed.as_deleted, "there was no kept state to prefer");
+        assert_eq!(
+            std::fs::read_to_string(root.join("a.md")).unwrap(),
+            "as recorded"
+        );
+    }
+
+    #[test]
+    fn restoring_prefers_a_version_saved_after_the_note_was_last_kept() {
+        // Deleted, brought back, saved, then removed some other way. What was kept is now the
+        // older of the two, and preferring it by rule would hand back a stale copy.
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        git2::Repository::init(root).unwrap();
+        let root_s = root.to_string_lossy().to_string();
+
+        let note = seed_note(root, "a.md", "first pass");
+        delete_node(root_s.clone(), note).unwrap();
+        restore_deleted(root_s.clone(), "a.md".into()).unwrap();
+
+        // A revision has to land in a later second than the kept one for "newer" to mean
+        // anything at all — timestamps here have one-second resolution.
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        let note = record_note(root, "a.md", "second pass, recorded");
+        std::fs::remove_file(&note).unwrap();
+
+        let landed = restore_deleted(root_s.clone(), "a.md".into()).unwrap();
+        assert!(!landed.as_deleted);
+        assert_eq!(
+            std::fs::read_to_string(root.join("a.md")).unwrap(),
+            "second pass, recorded"
+        );
+    }
+
+    #[test]
+    fn the_deleted_list_is_ordered_by_when_notes_left_the_folder() {
+        // An old note deleted just now belongs above a recent one deleted before it. Ordering
+        // by when each was last saved gets that backwards.
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        git2::Repository::init(root).unwrap();
+        let root_s = root.to_string_lossy().to_string();
+
+        let long_ago = record_note(root, "long-ago.md", "written first");
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        let recent = record_note(root, "recent.md", "written later");
+
+        // The one saved first is the one deleted last.
+        delete_node(root_s.clone(), recent).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        delete_node(root_s.clone(), long_ago).unwrap();
+
+        let deleted = deleted_notes(root_s.clone()).unwrap();
+        let names: Vec<&str> = deleted.iter().map(|d| d.rel.as_str()).collect();
+        assert_eq!(
+            names,
+            vec!["long-ago.md", "recent.md"],
+            "newest first means most recently deleted, not most recently saved"
+        );
+    }
+
+    #[test]
+    fn recording_a_note_that_has_not_changed_reports_that_nothing_was_added() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        git2::Repository::init(root).unwrap();
+        let root_s = root.to_string_lossy().to_string();
+
+        let note = record_note(root, "a.md", "unchanged");
+        let again = commit_notes(root_s.clone(), vec![note.clone()], "again".into()).unwrap();
+
+        assert!(
+            again.is_none(),
+            "nothing was written, so there is no revision to point at"
+        );
+        assert_eq!(
+            note_versions(root_s, note).unwrap().len(),
+            1,
+            "and the history it would have been part of is unchanged"
         );
     }
 
@@ -1126,7 +1319,7 @@ mod tests {
         seed_note(root, "a.md", "a different note with the same name");
 
         let landed = restore_deleted(root_s.clone(), "a.md".into()).unwrap();
-        assert_eq!(landed, "a (1).md");
+        assert_eq!(landed.rel, "a (1).md");
         assert_eq!(
             std::fs::read_to_string(root.join("a.md")).unwrap(),
             "a different note with the same name",
@@ -1176,7 +1369,11 @@ mod tests {
             "record two notes".into(),
         )
         .unwrap();
-        assert_eq!(oid.len(), 40, "a revision identifier is returned");
+        assert_eq!(
+            oid.expect("something was written").len(),
+            40,
+            "a revision identifier is returned"
+        );
 
         let tree = repo
             .find_reference(crate::git_engine::NOTES_REF)

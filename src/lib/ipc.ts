@@ -49,7 +49,8 @@ export async function writeNote(
 }
 
 /**
- * Records the given notes as one revision of the vault. Returns the revision identifier.
+ * Records the given notes as one revision of the vault. Returns the revision identifier, or
+ * `null` when the notes are already in the state the history holds and nothing was written.
  *
  * Rejects rather than partially applying: an ignored path, a path outside the vault, or a
  * repository busy with another operation all leave the history untouched.
@@ -58,8 +59,8 @@ export async function commitNotes(
   root: string,
   paths: string[],
   message: string,
-): Promise<string> {
-  return invoke<string>("commit_notes", { root, paths, message });
+): Promise<string | null> {
+  return invoke<string | null>("commit_notes", { root, paths, message });
 }
 
 /** One recorded state of a note. `id` is opaque — hand it back to `noteVersionText`. */
@@ -75,10 +76,24 @@ export type NoteVersion = {
 export type DeletedNote = {
   /** Vault-root-relative, `/`-separated. */
   rel: string;
-  /** Unix epoch seconds of the last time it was written to history. */
+  /**
+   * Unix epoch seconds of when it left the folder. For a note removed outside the application
+   * nothing recorded that moment, and the last time it was written to history stands in.
+   */
   seconds: number;
   /** Whether it was ever recorded deliberately, as opposed to only kept when deleted. */
   recorded: boolean;
+};
+
+/** Where a restored note's contents came from. */
+export type RestoredNote = {
+  /** Vault-root-relative, `/`-separated path it actually landed at. */
+  rel: string;
+  /**
+   * True when the contents are the ones it held at the moment it left the folder, false when
+   * they come from the last state recorded before that.
+   */
+  asDeleted: boolean;
 };
 
 /** Every recorded state of one note, newest first. */
@@ -101,11 +116,13 @@ export async function deletedNotes(root: string): Promise<DeletedNote[]> {
 }
 
 /**
- * Brings a deleted note back. Never overwrites: if the name is in use the copy is numbered
- * alongside it. Returns the path it actually landed at, relative to the vault root.
+ * Brings a deleted note back, in whichever of its two possible states is the newer: what it
+ * held when it left the folder, or the last state recorded before that.
+ *
+ * Never overwrites: if the name is in use the copy is numbered alongside it.
  */
-export async function restoreDeleted(root: string, rel: string): Promise<string> {
-  return invoke<string>("restore_deleted", { root, rel });
+export async function restoreDeleted(root: string, rel: string): Promise<RestoredNote> {
+  return invoke<RestoredNote>("restore_deleted", { root, rel });
 }
 
 // ── Structure edits (M4) ────────────────────────────────────────────────

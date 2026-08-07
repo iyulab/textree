@@ -81,6 +81,17 @@ pub fn is_recorded(repo: &Repository, reference: &str, rel: &Path) -> bool {
         .is_some()
 }
 
+/// What to do when the state being committed is the one a reference already holds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WhenUnchanged {
+    /// Write nothing. A revision that changed nothing fills a history someone reads with
+    /// entries they cannot tell apart.
+    Skip,
+    /// Write a revision anyway. Where the revision is the record that something happened at
+    /// this moment, leaving it out drops the event rather than a duplicate.
+    Record,
+}
+
 /// One recorded state of a note.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RecordedVersion {
@@ -299,6 +310,10 @@ pub fn tree_with_file(
 /// them one at a time publishes intermediate states in which links between them are broken.
 ///
 /// `reference` is a full name such as `refs/heads/main`, and is created when absent.
+///
+/// Returns `None` when `unchanged` is [`WhenUnchanged::Skip`] and the state is already the one
+/// held: nothing was written, and the caller is told so rather than being handed an earlier
+/// revision that it would mistake for the one it just made.
 pub fn commit_paths(
     repo: &Repository,
     reference: &str,
@@ -306,7 +321,8 @@ pub fn commit_paths(
     message: &str,
     author: &Signature<'_>,
     committer: &Signature<'_>,
-) -> Result<Oid, git2::Error> {
+    unchanged: WhenUnchanged,
+) -> Result<Option<Oid>, git2::Error> {
     if entries.is_empty() {
         return Err(git2::Error::from_str("nothing to commit"));
     }
@@ -327,11 +343,11 @@ pub fn commit_paths(
     }
     let tree = tree.expect("entries is non-empty, so a tree was built");
 
-    // Recording a state identical to the one already held would add a revision that changed
-    // nothing — history would fill with entries a reader cannot tell apart.
-    if let Some(commit) = parent.as_ref() {
-        if commit.tree_id() == tree.id() {
-            return Ok(commit.id());
+    if unchanged == WhenUnchanged::Skip {
+        if let Some(commit) = parent.as_ref() {
+            if commit.tree_id() == tree.id() {
+                return Ok(None);
+            }
         }
     }
 
@@ -340,7 +356,7 @@ pub fn commit_paths(
     // behalf: only the reference named by the caller is advanced, below.
     let commit = repo.commit(None, author, committer, message, &tree, &parents)?;
     repo.reference(reference, commit, true, message)?;
-    Ok(commit)
+    Ok(Some(commit))
 }
 
 /// Commits a single path. Convenience over [`commit_paths`] for callers with one file and no
@@ -352,9 +368,17 @@ pub fn commit_file(
     content: &[u8],
     message: &str,
     author: &Signature<'_>,
-) -> Result<Oid, git2::Error> {
+) -> Result<Option<Oid>, git2::Error> {
     let entries = [(rel.to_path_buf(), content.to_vec())];
-    commit_paths(repo, reference, &entries, message, author, author)
+    commit_paths(
+        repo,
+        reference,
+        &entries,
+        message,
+        author,
+        author,
+        WhenUnchanged::Skip,
+    )
 }
 
 /// The name recorded as the committer of everything this application writes.
@@ -915,6 +939,7 @@ mod tests {
             "move a section out",
             &author(),
             &author(),
+            WhenUnchanged::Skip,
         )
         .unwrap();
 
@@ -933,7 +958,16 @@ mod tests {
     fn committing_nothing_is_refused() {
         let dir = TempDir::new().unwrap();
         let repo = Repository::init(dir.path()).unwrap();
-        assert!(commit_paths(&repo, NOTES_REF, &[], "empty", &author(), &author()).is_err());
+        assert!(commit_paths(
+            &repo,
+            NOTES_REF,
+            &[],
+            "empty",
+            &author(),
+            &author(),
+            WhenUnchanged::Skip
+        )
+        .is_err());
         assert!(repo.find_reference(NOTES_REF).is_err(), "no reference is created");
     }
 
@@ -978,6 +1012,7 @@ mod tests {
             "add a note",
             &author,
             &committer,
+            WhenUnchanged::Skip,
         )
         .expect("committing must not depend on a configured identity");
     }
@@ -1134,7 +1169,7 @@ mod tests {
     }
 
     /// Records `rel` with the given body and returns the revision it produced.
-    fn record(repo: &Repository, rel: &Path, body: &str) -> Oid {
+    fn record(repo: &Repository, rel: &Path, body: &str) -> Option<Oid> {
         commit_file(repo, NOTES_REF, rel, body.as_bytes(), "recorded", &author()).unwrap()
     }
 
@@ -1216,8 +1251,39 @@ mod tests {
         let first = record(&repo, a, "same");
         let second = record(&repo, a, "same");
 
-        assert_eq!(first, second, "an unchanged state is not a new revision");
+        assert!(first.is_some());
+        assert_eq!(
+            second, None,
+            "nothing was written, and saying so is not the same as naming the revision before it"
+        );
         assert_eq!(history(&repo, NOTES_REF, a).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn a_reference_that_records_events_keeps_an_unchanged_state() {
+        // Where each revision is the record that something happened at a moment, two identical
+        // states are two events. Dropping the second would date the later one to the earlier.
+        let dir = TempDir::new().unwrap();
+        let repo = Repository::init(dir.path()).unwrap();
+        let entries = [(PathBuf::from("a.md"), b"same".to_vec())];
+
+        for _ in 0..2 {
+            commit_paths(
+                &repo,
+                SNAPSHOT_REF,
+                &entries,
+                "keep",
+                &author(),
+                &author(),
+                WhenUnchanged::Record,
+            )
+            .unwrap()
+            .expect("recording an event writes a revision even when nothing changed");
+        }
+
+        let mut walk = repo.revwalk().unwrap();
+        walk.push_ref(SNAPSHOT_REF).unwrap();
+        assert_eq!(walk.count(), 2);
     }
 
     #[test]

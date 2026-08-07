@@ -1,26 +1,34 @@
-//! Gate: deleting something that was never recorded always leaves a way back.
+//! Gate: deleting anything always leaves a way back to the state it was deleted in.
 //!
-//! Recorded notes need no safety net — history holds them. Notes that were never recorded
-//! have nothing behind them, so the deletion is the end of them unless their contents are kept
-//! first. The invariant is *every* such file, not most of them, so this is stated over a table
-//! of shapes rather than a single case.
+//! An earlier reading of this invariant exempted notes that had been recorded, on the grounds
+//! that history already held them. That reading is wrong, and the shape named "a note edited
+//! since it was recorded" below is why: being in history says the *path* was written once, not
+//! that the state on disk now is the state history holds. Skipping those loses precisely the
+//! work that was never saved — the case where losing it hurts most.
+//!
+//! So the invariant is stated over the state at the moment of deletion, for *every* file, and
+//! over a table of shapes rather than a single case.
 //!
 //! A negative control at the bottom shows the check is falsifiable.
 
 #![cfg(test)]
 
 use crate::commands::delete_node;
-use crate::git_engine::{commit_identities, commit_paths, NOTES_REF, SNAPSHOT_REF};
+use crate::git_engine::{
+    commit_identities, commit_paths, WhenUnchanged, NOTES_REF, SNAPSHOT_REF,
+};
 use git2::Repository;
 use std::path::{Path, PathBuf};
 use tempfile::TempDir;
 
-/// One vault shape to delete something from: files to create, what to record first, and what
-/// to delete.
+/// One vault shape to delete something from: files to create, what to record first, what to
+/// change on disk after recording, and what to delete.
 struct Shape {
     name: &'static str,
     files: &'static [(&'static str, &'static str)],
     recorded: &'static [&'static str],
+    /// Written over the file after recording, so disk and history disagree.
+    edited_after: &'static [(&'static str, &'static str)],
     delete: &'static str,
 }
 
@@ -29,29 +37,56 @@ const SHAPES: &[Shape] = &[
         name: "a note that was never recorded",
         files: &[("a.md", "# a")],
         recorded: &[],
+        edited_after: &[],
         delete: "a.md",
     },
     Shape {
         name: "a note inside a folder",
         files: &[("sub/a.md", "# a")],
         recorded: &[],
+        edited_after: &[],
         delete: "sub/a.md",
     },
     Shape {
         name: "a whole folder of notes",
         files: &[("sub/a.md", "# a"), ("sub/b.md", "# b"), ("sub/deep/c.md", "# c")],
         recorded: &[],
+        edited_after: &[],
         delete: "sub",
     },
     Shape {
         name: "a folder where only some notes were recorded",
         files: &[("sub/a.md", "# a"), ("sub/b.md", "# b")],
         recorded: &["sub/a.md"],
+        edited_after: &[],
+        delete: "sub",
+    },
+    Shape {
+        name: "a note that was recorded and never touched again",
+        files: &[("a.md", "# a")],
+        recorded: &["a.md"],
+        edited_after: &[],
+        delete: "a.md",
+    },
+    Shape {
+        name: "a note edited since it was recorded",
+        files: &[("a.md", "# first")],
+        recorded: &["a.md"],
+        edited_after: &[("a.md", "# second, never recorded")],
+        delete: "a.md",
+    },
+    Shape {
+        name: "a folder holding one edited note among untouched ones",
+        files: &[("sub/a.md", "# a"), ("sub/b.md", "# b")],
+        recorded: &["sub/a.md", "sub/b.md"],
+        edited_after: &[("sub/b.md", "# b, moved on")],
         delete: "sub",
     },
 ];
 
-fn build(shape: &Shape) -> (TempDir, Repository) {
+/// Builds the shape and returns the vault, its repository, and what each file held on disk at
+/// the moment of deletion.
+fn build(shape: &Shape) -> (TempDir, Repository, Vec<(String, Vec<u8>)>) {
     let tmp = TempDir::new().unwrap();
     let root = tmp.path();
     let repo = Repository::init(root).unwrap();
@@ -66,18 +101,32 @@ fn build(shape: &Shape) -> (TempDir, Repository) {
         let entries: Vec<(PathBuf, Vec<u8>)> = shape
             .recorded
             .iter()
-            .map(|rel| {
-                (
-                    PathBuf::from(rel),
-                    std::fs::read(root.join(rel)).unwrap(),
-                )
-            })
+            .map(|rel| (PathBuf::from(rel), std::fs::read(root.join(rel)).unwrap()))
             .collect();
         let (author, committer) = commit_identities(&repo).unwrap();
-        commit_paths(&repo, NOTES_REF, &entries, "record", &author, &committer).unwrap();
+        commit_paths(
+            &repo,
+            NOTES_REF,
+            &entries,
+            "record",
+            &author,
+            &committer,
+            WhenUnchanged::Skip,
+        )
+        .unwrap();
     }
 
-    (tmp, repo)
+    for (rel, body) in shape.edited_after {
+        std::fs::write(root.join(rel), body).unwrap();
+    }
+
+    let at_deletion = shape
+        .files
+        .iter()
+        .map(|(rel, _)| ((*rel).to_string(), std::fs::read(root.join(rel)).unwrap()))
+        .collect();
+
+    (tmp, repo, at_deletion)
 }
 
 /// Contents kept for `rel`, if any.
@@ -94,9 +143,9 @@ fn kept(repo: &Repository, rel: &str) -> Option<Vec<u8>> {
 }
 
 #[test]
-fn every_unrecorded_file_deleted_is_still_recoverable() {
+fn everything_deleted_is_recoverable_as_it_was_when_it_was_deleted() {
     for shape in SHAPES {
-        let (tmp, repo) = build(shape);
+        let (tmp, repo, at_deletion) = build(shape);
         let root = tmp.path();
 
         delete_node(
@@ -105,20 +154,16 @@ fn every_unrecorded_file_deleted_is_still_recoverable() {
         )
         .unwrap_or_else(|e| panic!("{}: deleting failed: {e}", shape.name));
 
-        for (rel, body) in shape.files {
+        for (rel, body) in &at_deletion {
             let was_under_delete =
-                *rel == shape.delete || rel.starts_with(&format!("{}/", shape.delete));
+                rel == shape.delete || rel.starts_with(&format!("{}/", shape.delete));
             if !was_under_delete {
-                continue;
-            }
-            if shape.recorded.contains(rel) {
-                // History already holds it; a second copy would be noise.
                 continue;
             }
             assert_eq!(
                 kept(&repo, rel).as_deref(),
-                Some(body.as_bytes()),
-                "{}: '{rel}' was deleted with nothing behind it",
+                Some(body.as_slice()),
+                "{}: '{rel}' was deleted without its state being kept",
                 shape.name
             );
         }
@@ -126,32 +171,37 @@ fn every_unrecorded_file_deleted_is_still_recoverable() {
 }
 
 #[test]
-fn deleting_something_already_recorded_keeps_no_second_copy() {
+fn deleting_the_same_contents_twice_records_two_moments() {
+    // The kept revision is also the only record of *when* something left the folder. Treating
+    // a second deletion of identical contents as a duplicate would date it to the first one.
     let tmp = TempDir::new().unwrap();
     let root = tmp.path();
     let repo = Repository::init(root).unwrap();
+
+    let count_kept_revisions = || {
+        let mut walk = repo.revwalk().unwrap();
+        walk.push_ref(SNAPSHOT_REF).unwrap();
+        walk.count()
+    };
+
     std::fs::write(root.join("a.md"), "# a").unwrap();
-
-    let (author, committer) = commit_identities(&repo).unwrap();
-    commit_paths(
-        &repo,
-        NOTES_REF,
-        &[(PathBuf::from("a.md"), b"# a".to_vec())],
-        "record",
-        &author,
-        &committer,
-    )
-    .unwrap();
-
     delete_node(
         root.to_string_lossy().to_string(),
         root.join("a.md").to_string_lossy().to_string(),
     )
     .unwrap();
+    assert_eq!(count_kept_revisions(), 1);
 
-    assert!(
-        repo.find_reference(SNAPSHOT_REF).is_err(),
-        "history already holds it, so nothing needs keeping"
+    std::fs::write(root.join("a.md"), "# a").unwrap();
+    delete_node(
+        root.to_string_lossy().to_string(),
+        root.join("a.md").to_string_lossy().to_string(),
+    )
+    .unwrap();
+    assert_eq!(
+        count_kept_revisions(),
+        2,
+        "two deletions are two events, whatever the contents were"
     );
 }
 
