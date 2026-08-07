@@ -51,6 +51,7 @@
   import Trash from "$lib/Trash.svelte";
   import AddVersion from "$lib/AddVersion.svelte";
   import VersionHistory from "$lib/VersionHistory.svelte";
+  import DeletedNotes from "$lib/DeletedNotes.svelte";
   import Settings from "$lib/Settings.svelte";
   import PageHeader from "$lib/PageHeader.svelte";
   import { parseFrontmatter, getField } from "$lib/frontmatter.helpers";
@@ -106,6 +107,7 @@
   let showTrash = $state(false);
   let showAddVersion = $state(false);
   let showVersionHistory = $state(false);
+  let showDeletedNotes = $state(false);
   /** What the last attempt to add a version came to. Not an error — it can also say nothing changed. */
   let versionNotice = $state<string | null>(null);
   let showSettings = $state(false);
@@ -1018,6 +1020,7 @@
     publishSite: () => { void choosePublishTarget(); },
     publishToWeb: () => { void publishToWeb(); },
     openTrash: () => { showTrash = true; },
+    openDeletedNotes: () => { showDeletedNotes = true; },
     hasOpenNote: () => root !== null && activePath !== null,
     addVersion: () => { void startAddVersion(); },
     openVersionHistory: () => { showVersionHistory = true; },
@@ -1639,6 +1642,13 @@
         {dirty}
         onclose={() => { showVersionHistory = false; }}
         onrestored={() => { if (activePath) void openSavedNote(activePath); }}
+      />
+    {/if}
+    {#if showDeletedNotes && root}
+      <DeletedNotes
+        {root}
+        onclose={() => { showDeletedNotes = false; }}
+        onrestored={refreshTree}
       />
     {/if}
     {#if showTrash && root}

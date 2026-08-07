@@ -8,7 +8,7 @@ function stubActions(over: Partial<PaletteActions> = {}): PaletteActions {
     "newNoteAtRoot", "newFolderAtRoot", "hasSelection", "renameSelected",
     "deleteSelected", "promoteSelected", "toggleFavoriteSelected", "moveSelectedUp",
     "moveSelectedDown", "rebuildIndex", "hasVault", "hasOpenNote", "addVersion", "openVersionHistory",
-    "publishSite", "publishToWeb", "openTrash",
+    "publishSite", "publishToWeb", "openTrash", "openDeletedNotes",
     "openLogDir", "openSettings",
   ];
   const base = Object.fromEntries(keys.map((k) => [k, () => {}]));
@@ -81,6 +81,16 @@ describe("buildCommands — Version history", () => {
       (c) => c.id === "note.versionHistory",
     );
     expect(cmd?.title).toBe("Version history…");
+    expect(cmd?.when?.()).toBe(true);
+  });
+});
+
+describe("buildCommands — Deleted notes", () => {
+  it("is offered whenever a vault is open, with the agreed wording", () => {
+    const cmd = buildCommands(stubActions({ hasVault: () => true })).find(
+      (c) => c.id === "vault.deleted",
+    );
+    expect(cmd?.title).toBe("Deleted notes…");
     expect(cmd?.when?.()).toBe(true);
   });
 });

@@ -41,6 +41,7 @@ export interface PaletteActions {
   publishSite: () => void;
   publishToWeb: () => void;
   openTrash: () => void;
+  openDeletedNotes: () => void;
   openLogDir: () => void;
   openSettings: () => void;
 }
@@ -77,6 +78,7 @@ export function buildCommands(a: PaletteActions): Command[] {
     { id: "search.rebuild", title: "Rebuild content index", category: "Search", run: a.rebuildIndex },
     { id: "vault.publish", title: "Publish site…", category: "Vault", run: a.publishSite, when: a.hasVault },
     { id: "vault.publishWeb", title: "Publish to web", category: "Vault", run: a.publishToWeb, when: a.hasVault },
+    { id: "vault.deleted", title: "Deleted notes…", category: "Vault", run: a.openDeletedNotes, when: a.hasVault },
     { id: "vault.trash", title: "Trash…", category: "Vault", run: a.openTrash, when: a.hasVault },
     { id: "log.openDir", title: "Open log folder", category: "Help", run: a.openLogDir },
   ];
