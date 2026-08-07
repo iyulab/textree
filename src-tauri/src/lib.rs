@@ -95,6 +95,7 @@ pub fn run() {
             commands::deleted_notes,
             commands::restore_deleted,
             commands::restore_version,
+            commands::move_state_out_of_vault,
             commands::create_note,
             commands::create_untitled_note,
             commands::create_note_with_content,

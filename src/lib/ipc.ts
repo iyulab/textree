@@ -123,6 +123,23 @@ export async function restoreVersion(
   return invoke<void>("restore_version", { root, path, id });
 }
 
+/** What a folder gave up when the app stopped keeping things inside it. */
+export type MoveOut = {
+  /** Whether settings were carried over to where they live now. */
+  settings: boolean;
+  /** How many notes the set-aside copies held, now reachable as deleted notes. */
+  notes: number;
+};
+
+/**
+ * Moves everything the app keeps out of the notes folder, keeping every file.
+ *
+ * Safe to call on every open: a folder with nothing left inside it reports that nothing moved.
+ */
+export async function moveStateOutOfVault(root: string): Promise<MoveOut> {
+  return invoke<MoveOut>("move_state_out_of_vault", { root });
+}
+
 /** Everything the history holds that is no longer in the folder, newest first. */
 export async function deletedNotes(root: string): Promise<DeletedNote[]> {
   return invoke<DeletedNote[]>("deleted_notes", { root });

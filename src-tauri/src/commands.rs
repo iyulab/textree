@@ -48,6 +48,21 @@ fn clear_temp_dir(root: &Path) {
     }
 }
 
+/// Atomic write for a file that is not inside the vault, so the temp file goes beside the
+/// destination. A rename is only atomic within one volume, and settings live wherever the
+/// person's home is — which is often not the volume the notes are on.
+fn atomic_write_beside(path: &Path, content: &str) -> io::Result<()> {
+    let dir = path
+        .parent()
+        .ok_or_else(|| io::Error::other("no parent directory"))?;
+    std::fs::create_dir_all(dir)?;
+    let mut tmp = NamedTempFile::new_in(dir)?;
+    tmp.write_all(content.as_bytes())?;
+    tmp.as_file().sync_all()?;
+    tmp.persist(path).map_err(|e| e.error)?;
+    Ok(())
+}
+
 /// Atomic file write: write to a temp file under `<root>/.textree/tmp/`, then rename to the target.
 /// Even if a crash/power loss happens mid-write, the target file is not truncated ("the FS is the truth").
 fn atomic_write(root: &Path, path: &Path, content: &str) -> io::Result<()> {
@@ -173,8 +188,68 @@ pub fn ensure_default_vault(app: AppHandle) -> Result<DefaultVault, String> {
     }
 }
 
-/// Builds the `.textree/<rel>` sidecar path. `rel` is confined under `.textree/`, and
-/// anything other than `Component::Normal` (parent refs, absolute paths, `.`) is rejected → no traversal.
+/// A short, stable label for a folder, used to give each one its own place to keep settings.
+///
+/// The readable part is there so the directory can be recognised by eye; the digest is what
+/// makes it unambiguous when two folders end with the same name.
+fn folder_key(root: &Path) -> String {
+    let resolved = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+    let mut digest: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in resolved.to_string_lossy().to_lowercase().bytes() {
+        digest ^= u64::from(byte);
+        digest = digest.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    let readable: String = resolved
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_default()
+        .chars()
+        .filter(|c| c.is_alphanumeric() || *c == '-' || *c == '_')
+        .take(24)
+        .collect();
+    if readable.is_empty() {
+        format!("{digest:016x}")
+    } else {
+        format!("{readable}-{digest:016x}")
+    }
+}
+
+/// Where settings that belong to the person rather than to the notes are kept.
+///
+/// Outside the notes folder on purpose: a preference is not a note, it is not something anyone
+/// wants to see in their folder, and it should not travel when the notes do. Keyed per folder,
+/// because "which notes are favourites" only means anything about one set of notes.
+fn personal_dir(root: &Path) -> Result<PathBuf, String> {
+    let base = std::env::var_os("TEXTREE_PERSONAL_BASE")
+        .map(PathBuf::from)
+        .or_else(personal_base)
+        .ok_or_else(|| "cannot find a place to keep settings".to_string())?;
+    Ok(base.join(".textree").join("vaults").join(folder_key(root)))
+}
+
+#[cfg(not(test))]
+fn personal_base() -> Option<PathBuf> {
+    std::env::var_os("USERPROFILE")
+        .or_else(|| std::env::var_os("HOME"))
+        .map(PathBuf::from)
+}
+
+/// Under test, somewhere of this run's own — writing settings must never reach the home
+/// directory of whoever is running the suite.
+#[cfg(test)]
+fn personal_base() -> Option<PathBuf> {
+    use std::sync::OnceLock;
+    static ELSEWHERE: OnceLock<tempfile::TempDir> = OnceLock::new();
+    Some(
+        ELSEWHERE
+            .get_or_init(|| tempfile::TempDir::new().expect("a place to keep test settings"))
+            .path()
+            .to_path_buf(),
+    )
+}
+
+/// Builds the path of one settings file. Anything other than a plain name component is rejected,
+/// so nothing can address a location outside the directory it is confined to.
 fn sidecar_path(root: &Path, rel: &str) -> Result<PathBuf, String> {
     if rel.is_empty() {
         return Err("sidecar path is empty".into());
@@ -182,10 +257,15 @@ fn sidecar_path(root: &Path, rel: &str) -> Result<PathBuf, String> {
     let rel_path = Path::new(rel);
     for comp in rel_path.components() {
         if !matches!(comp, Component::Normal(_)) {
-            return Err("invalid sidecar path (outside .textree)".into());
+            return Err("invalid settings path".into());
         }
     }
-    Ok(root.join(".textree").join(rel_path))
+    Ok(personal_dir(root)?.join(rel_path))
+}
+
+/// The same file as it was kept before settings moved out of the notes folder.
+fn legacy_sidecar_path(root: &Path, rel: &str) -> PathBuf {
+    root.join(".textree").join(rel)
 }
 
 const TRASH_MANIFEST: &str = "trash.json";
@@ -206,10 +286,9 @@ pub struct TrashItem {
 
 /// Reads `.textree/trash.json`. Absent or corrupt → empty (graceful; trash files are the truth).
 fn read_trash_manifest(root: &Path) -> Vec<TrashItem> {
-    let path = match sidecar_path(root, TRASH_MANIFEST) {
-        Ok(p) => p,
-        Err(_) => return Vec::new(),
-    };
+    // Stays beside the trash it describes: the two are one thing, and the whole thing is
+    // carried over at once rather than half of it at a time.
+    let path = legacy_sidecar_path(root, TRASH_MANIFEST);
     match std::fs::read_to_string(&path) {
         Ok(s) => serde_json::from_str(&s).unwrap_or_default(),
         Err(_) => Vec::new(),
@@ -218,7 +297,7 @@ fn read_trash_manifest(root: &Path) -> Vec<TrashItem> {
 
 /// Atomically rewrites the manifest (temp→fsync→rename via atomic_write).
 fn write_trash_manifest(root: &Path, items: &[TrashItem]) -> Result<(), String> {
-    let path = sidecar_path(root, TRASH_MANIFEST)?;
+    let path = legacy_sidecar_path(root, TRASH_MANIFEST);
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
@@ -230,7 +309,7 @@ fn now_secs() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
 }
 
-/// Reads the `.textree/<rel>` sidecar. Returns `None` if absent (normal flow).
+/// Reads one of this folder's settings. `None` when it has never been written.
 #[tauri::command]
 pub fn read_sidecar(root: String, rel: String) -> Result<Option<String>, String> {
     let path = sidecar_path(Path::new(&root), &rel)?;
@@ -241,16 +320,11 @@ pub fn read_sidecar(root: String, rel: String) -> Result<Option<String>, String>
     }
 }
 
-/// Atomically writes the `.textree/<rel>` sidecar (auto-creates the parent directory).
-/// `.textree/` is ignored by the watcher (watcher::is_ignored), so self-write registration is unnecessary.
+/// Writes one of this folder's settings, leaving the folder itself untouched.
 #[tauri::command]
 pub fn write_sidecar(root: String, rel: String, content: String) -> Result<(), String> {
-    let root_p = Path::new(&root);
-    let path = sidecar_path(root_p, &rel)?;
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    }
-    atomic_write(root_p, &path, &content).map_err(|e| e.to_string())
+    let path = sidecar_path(Path::new(&root), &rel)?;
+    atomic_write_beside(&path, &content).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -1159,6 +1233,176 @@ fn last_written_at(
         .next())
 }
 
+/// What a folder gave up when the application stopped keeping things inside it.
+#[derive(Serialize, Debug, Clone, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct MoveOut {
+    /// Whether settings — favourites, ordering — were carried over to where they live now.
+    pub settings: bool,
+    /// How many notes the set-aside copies held, now reachable as deleted notes.
+    pub notes: usize,
+}
+
+impl MoveOut {
+    fn happened(&self) -> bool {
+        self.settings || self.notes > 0
+    }
+}
+
+/// Every file under `dir`, paired with its path relative to `dir`.
+fn files_beneath(dir: &Path) -> Vec<(PathBuf, PathBuf)> {
+    let mut found = Vec::new();
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(current) = stack.pop() {
+        if current.is_dir() {
+            if let Ok(entries) = std::fs::read_dir(&current) {
+                for entry in entries.flatten() {
+                    stack.push(entry.path());
+                }
+            }
+            continue;
+        }
+        if let Ok(rel) = current.strip_prefix(dir) {
+            found.push((current.clone(), rel.to_path_buf()));
+        }
+    }
+    found
+}
+
+/// Carries the copies an earlier version set aside into the history, dated as they were.
+///
+/// The date matters as much as the contents: the list of deleted notes is ordered by when each
+/// one left, and the copies are the only place that answer exists for anything deleted before
+/// the history started keeping it. Losing it here would silently reorder someone's list.
+fn carry_over_set_aside(root: &Path, prepared: &crate::git_engine::VaultRepo) -> usize {
+    let dir = root.join(".textree").join("trash");
+    if !dir.exists() {
+        return 0;
+    }
+    let manifest = read_trash_manifest(root);
+    let repo = prepared.repo();
+    let Ok((author, committer)) = crate::git_engine::commit_identities(repo) else {
+        log::warn!("carry_over_set_aside: no identity available");
+        return 0;
+    };
+
+    // Oldest first, so the newest write for any one path is also the latest deletion of it.
+    let mut items = manifest.clone();
+    items.sort_by_key(|item| item.deleted_at);
+
+    let mut carried = 0usize;
+    for item in &items {
+        let put_aside = dir.join(&item.trash_name);
+        if !put_aside.exists() || validate_vault_rel(&item.original_rel).is_err() {
+            continue;
+        }
+        let sources = if item.is_dir {
+            files_beneath(&put_aside)
+        } else {
+            vec![(put_aside.clone(), PathBuf::new())]
+        };
+        let mut entries: Vec<(PathBuf, Vec<u8>)> = Vec::new();
+        for (on_disk, below) in sources {
+            let Ok(content) = std::fs::read(&on_disk) else {
+                continue;
+            };
+            let mut target = PathBuf::from(&item.original_rel);
+            if !below.as_os_str().is_empty() {
+                target = target.join(&below);
+            }
+            entries.push((prepared.path_in_repo(&target), content));
+        }
+        if entries.is_empty() {
+            continue;
+        }
+        let when = git2::Time::new(item.deleted_at as i64, 0);
+        let dated = |who: &git2::Signature<'_>| {
+            git2::Signature::new(
+                who.name().unwrap_or("Textree"),
+                who.email().unwrap_or("noreply@textree.me"),
+                &when,
+            )
+        };
+        let (Ok(author_then), Ok(committer_then)) = (dated(&author), dated(&committer)) else {
+            continue;
+        };
+        match crate::git_engine::commit_paths(
+            repo,
+            crate::git_engine::SNAPSHOT_REF,
+            &entries,
+            "keep deleted content",
+            &author_then,
+            &committer_then,
+            crate::git_engine::WhenUnchanged::Record,
+        ) {
+            Ok(_) => carried += entries.len(),
+            Err(e) => log::warn!("carry_over_set_aside: {} not carried: {}", item.original_rel, e.message()),
+        }
+    }
+    carried
+}
+
+/// Moves everything the application keeps out of the notes folder, keeping every file.
+///
+/// Run when a folder is opened, and safe to run again: a folder that has nothing left inside it
+/// reports that nothing happened.
+///
+/// The copies set aside for deleted notes go into the history rather than being thrown away —
+/// they are still the only copy of anything deleted before the history started keeping them.
+/// Settings go where settings live now. Only then is the empty directory removed.
+#[tauri::command]
+pub fn move_state_out_of_vault(root: String) -> Result<MoveOut, String> {
+    let root_p = Path::new(&root);
+    let inside = root_p.join(".textree");
+    if !inside.exists() {
+        return Ok(MoveOut::default());
+    }
+    let mut moved = MoveOut::default();
+
+    // Settings first: cheap, and it cannot fail in a way that costs anything.
+    // Every settings file the application has ever kept in there. A name missing from this list
+    // is a file left behind in a folder the notice claims is clean.
+    for rel in ["favorites.json", "order.json", "views.json"] {
+        let from = legacy_sidecar_path(root_p, rel);
+        if !from.is_file() {
+            continue;
+        }
+        let to = sidecar_path(root_p, rel)?;
+        if to.exists() {
+            // Already carried over on an earlier run; the copy left behind is the stale one.
+            let _ = std::fs::remove_file(&from);
+            continue;
+        }
+        let content = std::fs::read_to_string(&from).map_err(|e| e.to_string())?;
+        atomic_write_beside(&to, &content).map_err(|e| e.to_string())?;
+        std::fs::remove_file(&from).map_err(|e| e.to_string())?;
+        moved.settings = true;
+    }
+
+    // The copies set aside need somewhere to go before they can be removed from the folder.
+    if root_p.join(".textree").join("trash").exists() {
+        let prepared = crate::git_engine::prepare(root_p).map_err(|e| e.message().to_string())?;
+        moved.notes = carry_over_set_aside(root_p, &prepared);
+        std::fs::remove_dir_all(root_p.join(".textree").join("trash"))
+            .map_err(|e| e.to_string())?;
+        let _ = std::fs::remove_file(legacy_sidecar_path(root_p, TRASH_MANIFEST));
+    }
+
+    // Anything else in there is the application's too — temp files it wrote, and nothing a
+    // person put there — so the directory goes once it holds nothing.
+    let _ = std::fs::remove_dir_all(root_p.join(LEGACY_TEMP_DIR[0]).join(LEGACY_TEMP_DIR[1]));
+    let _ = std::fs::remove_dir(&inside);
+
+    if moved.happened() {
+        log::info!(
+            "move_state_out_of_vault: settings={} notes={}",
+            moved.settings,
+            moved.notes
+        );
+    }
+    Ok(moved)
+}
+
 /// Puts a note back to one of its recorded states.
 ///
 /// What is on disk right now is kept first. Going back is the one action here that overwrites
@@ -1510,6 +1754,108 @@ mod tests {
             "nothing else holds it, so it stays"
         );
         assert!(trash.join("a.md").exists());
+    }
+
+    /// Puts a folder into the shape an earlier version of the application left behind.
+    fn as_an_earlier_version_left_it(root: &Path, deleted: &[(&str, &str, u64)]) {
+        let trash = root.join(".textree").join("trash");
+        std::fs::create_dir_all(&trash).unwrap();
+        std::fs::write(root.join(".textree").join("favorites.json"), "[\"a.md\"]").unwrap();
+        let items: Vec<TrashItem> = deleted
+            .iter()
+            .map(|(name, body, when)| {
+                std::fs::write(trash.join(name), body).unwrap();
+                TrashItem {
+                    trash_name: (*name).to_string(),
+                    original_rel: (*name).to_string(),
+                    deleted_at: *when,
+                    is_dir: false,
+                }
+            })
+            .collect();
+        std::fs::write(
+            root.join(".textree").join(TRASH_MANIFEST),
+            serde_json::to_string(&items).unwrap(),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn moving_state_out_keeps_every_file_and_leaves_the_folder_clean() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        git2::Repository::init(root).unwrap();
+        let root_s = root.to_string_lossy().to_string();
+        as_an_earlier_version_left_it(root, &[("one.md", "first", 1_700_000_000), ("two.md", "second", 1_700_000_500)]);
+
+        let moved = move_state_out_of_vault(root_s.clone()).unwrap();
+
+        assert_eq!(moved.notes, 2, "every set-aside file is accounted for");
+        assert!(moved.settings);
+        assert!(
+            !root.join(".textree").exists(),
+            "the notes folder holds only notes afterwards"
+        );
+
+        // The count is the point: nothing was thrown away, it was carried.
+        let deleted = deleted_notes(root_s.clone()).unwrap();
+        assert_eq!(deleted.len(), 2);
+        assert_eq!(
+            read_sidecar(root_s.clone(), "favorites.json".into()).unwrap(),
+            Some("[\"a.md\"]".to_string()),
+            "settings are readable from where they live now"
+        );
+
+        // And the contents came with them.
+        restore_deleted(root_s, "one.md".into()).unwrap();
+        assert_eq!(std::fs::read_to_string(root.join("one.md")).unwrap(), "first");
+    }
+
+    #[test]
+    fn moving_state_out_keeps_when_each_note_left() {
+        // The set-aside copies are the only record of that, for anything deleted before the
+        // history started keeping it. Dating them all "now" would silently reorder the list.
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        git2::Repository::init(root).unwrap();
+        let root_s = root.to_string_lossy().to_string();
+        as_an_earlier_version_left_it(
+            root,
+            &[("older.md", "a", 1_600_000_000), ("newer.md", "b", 1_700_000_000)],
+        );
+
+        move_state_out_of_vault(root_s.clone()).unwrap();
+
+        let listed = deleted_notes(root_s).unwrap();
+        assert_eq!(
+            listed.iter().map(|d| d.rel.as_str()).collect::<Vec<_>>(),
+            vec!["newer.md", "older.md"]
+        );
+        assert_eq!(listed[1].seconds, 1_600_000_000);
+    }
+
+    #[test]
+    fn moving_state_out_a_second_time_reports_that_nothing_happened() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        git2::Repository::init(root).unwrap();
+        let root_s = root.to_string_lossy().to_string();
+        as_an_earlier_version_left_it(root, &[("one.md", "first", 1_700_000_000)]);
+
+        assert!(move_state_out_of_vault(root_s.clone()).unwrap().happened());
+        let again = move_state_out_of_vault(root_s.clone()).unwrap();
+        assert_eq!(again, MoveOut::default(), "there is nothing left to move");
+        assert_eq!(deleted_notes(root_s).unwrap().len(), 1, "and nothing was doubled");
+    }
+
+    #[test]
+    fn a_folder_that_never_held_anything_of_ours_is_left_alone() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        seed_note(root, "a.md", "body");
+        let moved = move_state_out_of_vault(root.to_string_lossy().to_string()).unwrap();
+        assert_eq!(moved, MoveOut::default());
+        assert!(!root.join(".git").exists(), "and no repository is made for it");
     }
 
     #[test]
@@ -2043,16 +2389,27 @@ mod tests {
     }
 
     #[test]
-    fn sidecar_path_confines_to_dot_textree() {
-        let root = Path::new("/vault");
-        assert_eq!(
-            sidecar_path(root, "favorites.json").unwrap(),
-            Path::new("/vault/.textree/favorites.json")
+    fn settings_live_outside_the_notes_folder_and_stay_confined() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        let settings = sidecar_path(root, "favorites.json").unwrap();
+        assert!(
+            !settings.starts_with(root),
+            "a preference is not a note and does not belong in the notes folder"
         );
-        assert_eq!(
-            sidecar_path(root, "views/board.json").unwrap(),
-            Path::new("/vault/.textree/views/board.json")
+        assert!(settings.ends_with("favorites.json"));
+        assert!(sidecar_path(root, "views/board.json").unwrap().ends_with("board.json"));
+
+        // Two folders that end with the same name still get their own place.
+        let same_name = TempDir::new().unwrap();
+        std::fs::create_dir(same_name.path().join("notes")).unwrap();
+        std::fs::create_dir(root.join("notes")).unwrap();
+        assert_ne!(
+            sidecar_path(&root.join("notes"), "favorites.json").unwrap(),
+            sidecar_path(&same_name.path().join("notes"), "favorites.json").unwrap()
         );
+
         assert!(sidecar_path(root, "../secret").is_err());
         assert!(sidecar_path(root, "a/../../b").is_err());
         assert!(sidecar_path(root, "/etc/passwd").is_err());

@@ -25,9 +25,12 @@
     connectPublish,
     prepareAiModel,
     openLogDir,
+    moveStateOutOfVault,
     type TreeNode,
     type SearchHit,
+    type MoveOut,
   } from "$lib/ipc";
+  import { worthShowing } from "$lib/migrationNotice.helpers";
   import { getAiConsent } from "$lib/aiConsent";
   import { getByoConfig } from "$lib/byoConfig";
   import { decideStartup, LAST_VAULT_KEY } from "$lib/startup.helpers";
@@ -52,6 +55,7 @@
   import AddVersion from "$lib/AddVersion.svelte";
   import VersionHistory from "$lib/VersionHistory.svelte";
   import DeletedNotes from "$lib/DeletedNotes.svelte";
+  import MigrationNotice from "$lib/MigrationNotice.svelte";
   import Settings from "$lib/Settings.svelte";
   import PageHeader from "$lib/PageHeader.svelte";
   import { parseFrontmatter, getField } from "$lib/frontmatter.helpers";
@@ -108,6 +112,8 @@
   let showAddVersion = $state(false);
   let showVersionHistory = $state(false);
   let showDeletedNotes = $state(false);
+  /** What the folder gave up on this open, when it gave up anything. */
+  let movedOut = $state<MoveOut | null>(null);
   /** What the last attempt to add a version came to. Not an error — it can also say nothing changed. */
   let versionNotice = $state<string | null>(null);
   let showSettings = $state(false);
@@ -205,7 +211,16 @@
     layout.setMode("note");
     backlinks.clear(); // drop the previous vault's index (the $effect below rebuilds it)
     relatedNotes.clear(); // drop the previous vault's related panel
-    await nav.load(path); // load favorites/order sidecar
+    // Before anything reads settings: they may still be inside the folder from an earlier
+    // version, and this is what carries them out. Keeping every file is its own guarantee.
+    try {
+      const moved = await moveStateOutOfVault(path);
+      movedOut = worthShowing(moved) ? moved : null;
+    } catch (e) {
+      // A folder that could not be tidied still opens; the notes are what matter.
+      opError = friendlyError(e);
+    }
+    await nav.load(path); // load favorites/order settings
     await views.load(path); // load saved folder views (.textree/views.json)
     dismissedForeignViews = false; // re-evaluate the foreign-views notice for the new vault
   }
@@ -1643,6 +1658,9 @@
         onclose={() => { showVersionHistory = false; }}
         onrestored={() => { if (activePath) void openSavedNote(activePath); }}
       />
+    {/if}
+    {#if movedOut}
+      <MigrationNotice moved={movedOut} onclose={() => { movedOut = null; }} />
     {/if}
     {#if showDeletedNotes && root}
       <DeletedNotes
