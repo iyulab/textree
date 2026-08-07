@@ -74,13 +74,6 @@ fn tip_tree<'r>(repo: &'r Repository, reference: &str) -> Option<Tree<'r>> {
         .ok()
 }
 
-/// Whether `reference` already holds something at `rel`.
-pub fn is_recorded(repo: &Repository, reference: &str, rel: &Path) -> bool {
-    tip_tree(repo, reference)
-        .and_then(|t| blob_in_tree(repo, &t, rel))
-        .is_some()
-}
-
 /// What to do when the state being committed is the one a reference already holds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WhenUnchanged {
@@ -1378,12 +1371,14 @@ mod tests {
 
         record(&repo, &nested, "body");
 
-        assert!(
-            is_recorded(&repo, NOTES_REF, &nested),
+        assert_eq!(
+            content_at_tip(&repo, NOTES_REF, &nested).unwrap().as_deref(),
+            Some(b"body".as_slice()),
             "a path one level down must be found"
         );
-        assert!(
-            !is_recorded(&repo, NOTES_REF, Path::new("docs/missing.md")),
+        assert_eq!(
+            content_at_tip(&repo, NOTES_REF, Path::new("docs/missing.md")).unwrap(),
+            None,
             "and one that was never recorded must not be"
         );
     }

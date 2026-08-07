@@ -1023,16 +1023,26 @@ pub struct RestoredNote {
     pub as_deleted: bool,
 }
 
+/// The repository a folder's history lives in, without making one.
+///
+/// `Ok(None)` is the ordinary answer for a folder nothing has been recorded in. Looking at what
+/// was recorded is not recording, and it must not turn a plain folder into a repository.
+fn history_repo(root: &Path) -> Result<Option<crate::git_engine::VaultRepo>, String> {
+    crate::git_engine::open_existing(root).map_err(|e| e.message().to_string())
+}
+
 /// Every recorded state of one note, newest first.
+///
+/// The note does not have to still be in the folder: this is how a deleted one is looked at
+/// before deciding whether to bring it back.
 #[tauri::command]
 pub fn note_versions(root: String, path: String) -> Result<Vec<NoteVersion>, String> {
     let root_p = Path::new(&root);
-    let target = Path::new(&path);
-    if !is_within(root_p, target) {
-        return Err("path is outside the vault".into());
-    }
-    let rel = rel_to_root(root_p, target)?;
-    let prepared = crate::git_engine::prepare(root_p).map_err(|e| e.message().to_string())?;
+    let rel = crate::pathsafe::rel_within(root_p, Path::new(&path))
+        .ok_or_else(|| "path is outside the vault".to_string())?;
+    let Some(prepared) = history_repo(root_p)? else {
+        return Ok(Vec::new());
+    };
     let in_repo = prepared.path_in_repo(Path::new(&rel));
     let found =
         crate::git_engine::history(prepared.repo(), crate::git_engine::NOTES_REF, &in_repo)
@@ -1052,12 +1062,10 @@ pub fn note_versions(root: String, path: String) -> Result<Vec<NoteVersion>, Str
 #[tauri::command]
 pub fn note_version_text(root: String, path: String, id: String) -> Result<String, String> {
     let root_p = Path::new(&root);
-    let target = Path::new(&path);
-    if !is_within(root_p, target) {
-        return Err("path is outside the vault".into());
-    }
-    let rel = rel_to_root(root_p, target)?;
-    let prepared = crate::git_engine::prepare(root_p).map_err(|e| e.message().to_string())?;
+    let rel = crate::pathsafe::rel_within(root_p, Path::new(&path))
+        .ok_or_else(|| "path is outside the vault".to_string())?;
+    let prepared = history_repo(root_p)?
+        .ok_or_else(|| format!("'{rel}' is not part of that recorded state"))?;
     let in_repo = prepared.path_in_repo(Path::new(&rel));
     let content = crate::git_engine::content_at_version(
         prepared.repo(),
@@ -1078,7 +1086,9 @@ pub fn note_version_text(root: String, path: String, id: String) -> Result<Strin
 #[tauri::command]
 pub fn deleted_notes(root: String) -> Result<Vec<DeletedNote>, String> {
     let root_p = Path::new(&root);
-    let prepared = crate::git_engine::prepare(root_p).map_err(|e| e.message().to_string())?;
+    let Some(prepared) = history_repo(root_p)? else {
+        return Ok(Vec::new());
+    };
     let repo = prepared.repo();
 
     let kept_times = crate::git_engine::last_changed(repo, crate::git_engine::SNAPSHOT_REF)
@@ -1149,7 +1159,8 @@ fn last_written(
 pub fn restore_deleted(root: String, rel: String) -> Result<RestoredNote, String> {
     let root_p = Path::new(&root);
     validate_vault_rel(&rel)?;
-    let prepared = crate::git_engine::prepare(root_p).map_err(|e| e.message().to_string())?;
+    let prepared =
+        history_repo(root_p)?.ok_or_else(|| format!("'{rel}' is not in this folder's history"))?;
     let repo = prepared.repo();
     let in_repo = prepared.path_in_repo(Path::new(&rel));
 
@@ -1175,7 +1186,55 @@ pub fn restore_deleted(root: String, rel: String) -> Result<RestoredNote, String
     let dest = crate::fs_ops::place_restored(root_p, &rel).map_err(|e| e.to_string())?;
     atomic_write_bytes(root_p, &dest, &content).map_err(|e| e.to_string())?;
     log::info!("restore_deleted: {} (as deleted: {as_deleted})", dest.display());
+    retire_superseded_copy(root_p, repo, &prepared, &rel);
     Ok(RestoredNote { rel: rel_to_root(root_p, &dest)?, as_deleted })
+}
+
+/// Drops the older per-note copy of something that has just been restored from history.
+///
+/// Before the history held deleted notes, a copy was set aside for each one; both are still
+/// here, and both offer to bring the same note back. Taking both offers puts two of it in the
+/// folder, which is the thing a version history exists to stop.
+///
+/// The copy is only dropped when the history demonstrably holds that note — an older one set
+/// aside before anything was being kept has nowhere else to come from, and stays until it is
+/// carried over wholesale.
+fn retire_superseded_copy(
+    root: &Path,
+    repo: &git2::Repository,
+    prepared: &crate::git_engine::VaultRepo,
+    rel: &str,
+) {
+    let in_repo = prepared.path_in_repo(Path::new(rel));
+    let held = crate::git_engine::content_at_tip(repo, crate::git_engine::SNAPSHOT_REF, &in_repo)
+        .ok()
+        .flatten();
+    if held.is_none() {
+        return;
+    }
+
+    let mut items = read_trash_manifest(root);
+    let before = items.len();
+    let dir = root.join(".textree").join("trash");
+    items.retain(|item| {
+        if item.original_rel != rel || item.is_dir {
+            return true;
+        }
+        // Only the file it names, and only after the history is known to hold the note.
+        match std::fs::remove_file(dir.join(&item.trash_name)) {
+            Ok(()) => false,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => false,
+            Err(e) => {
+                log::warn!("retire_superseded_copy: {} left in place: {e}", item.trash_name);
+                true
+            }
+        }
+    });
+    if items.len() != before {
+        if let Err(e) = write_trash_manifest(root, &items) {
+            log::warn!("retire_superseded_copy: could not update the list: {e}");
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1295,6 +1354,114 @@ mod tests {
             deleted_notes(root_s.clone()).unwrap().is_empty(),
             "what is back in the folder is no longer missing from it"
         );
+    }
+
+    #[test]
+    fn looking_at_history_in_a_plain_folder_leaves_it_a_plain_folder() {
+        // Opening a panel is not recording. A folder nothing has been recorded in answers
+        // "nothing" and stays exactly as it was found.
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        let root_s = root.to_string_lossy().to_string();
+        let note = seed_note(root, "a.md", "body");
+
+        assert!(deleted_notes(root_s.clone()).unwrap().is_empty());
+        assert!(note_versions(root_s.clone(), note.clone()).unwrap().is_empty());
+        assert!(note_version_text(root_s.clone(), note, "0".repeat(40)).is_err());
+        assert!(restore_deleted(root_s, "a.md".into()).is_err());
+
+        assert!(
+            !root.join(".git").exists(),
+            "a folder nothing was recorded in is not turned into a repository by reading"
+        );
+    }
+
+    #[test]
+    fn a_deleted_notes_history_can_still_be_read() {
+        // Every entry in the deleted list is a name the folder no longer has, so requiring the
+        // path to exist would make previewing before restoring impossible.
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        git2::Repository::init(root).unwrap();
+        let root_s = root.to_string_lossy().to_string();
+
+        let note = record_note(root, "sub/a.md", "first");
+        delete_node(root_s.clone(), note.clone()).unwrap();
+        assert!(!root.join("sub").join("a.md").exists());
+
+        let versions = note_versions(root_s.clone(), note.clone()).unwrap();
+        assert_eq!(versions.len(), 1, "the note is gone; its history is not");
+        assert_eq!(
+            note_version_text(root_s.clone(), note, versions[0].id.clone()).unwrap(),
+            "first"
+        );
+
+        // The check still refuses what it is there to refuse.
+        let outside = TempDir::new().unwrap();
+        assert!(note_versions(
+            root_s,
+            outside.path().join("elsewhere.md").to_string_lossy().to_string()
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn a_note_restored_from_history_cannot_also_be_restored_from_the_older_copy() {
+        // Both offers bring the same note back. Taking both puts two of it in the folder.
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        git2::Repository::init(root).unwrap();
+        let root_s = root.to_string_lossy().to_string();
+
+        let note = seed_note(root, "a.md", "body");
+        delete_node(root_s.clone(), note).unwrap();
+        assert_eq!(list_trash(root_s.clone()).unwrap().len(), 1);
+
+        restore_deleted(root_s.clone(), "a.md".into()).unwrap();
+
+        assert!(
+            list_trash(root_s.clone()).unwrap().is_empty(),
+            "the older copy is no longer on offer once the note is back"
+        );
+        assert!(root.join("a.md").exists());
+        assert!(!root.join("a (1).md").exists());
+    }
+
+    #[test]
+    fn an_older_copy_with_nothing_behind_it_is_left_alone() {
+        // A copy set aside before contents were being kept has nowhere else to come from.
+        // Dropping it because a restore happened would be losing the only one there is.
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        git2::Repository::init(root).unwrap();
+        let root_s = root.to_string_lossy().to_string();
+
+        // Recorded, then removed without the application keeping anything.
+        let note = record_note(root, "a.md", "body");
+        std::fs::remove_file(&note).unwrap();
+        // A copy of the kind earlier versions set aside, with no kept state behind it.
+        let trash = root.join(".textree").join("trash");
+        std::fs::create_dir_all(&trash).unwrap();
+        std::fs::write(trash.join("a.md"), "the copy set aside").unwrap();
+        write_trash_manifest(
+            root,
+            &[TrashItem {
+                trash_name: "a.md".into(),
+                original_rel: "a.md".into(),
+                deleted_at: 0,
+                is_dir: false,
+            }],
+        )
+        .unwrap();
+
+        restore_deleted(root_s.clone(), "a.md".into()).unwrap();
+
+        assert_eq!(
+            list_trash(root_s).unwrap().len(),
+            1,
+            "nothing else holds it, so it stays"
+        );
+        assert!(trash.join("a.md").exists());
     }
 
     #[test]

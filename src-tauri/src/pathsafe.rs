@@ -1,7 +1,8 @@
 //! Path safety validation. Prevents escape outside the vault root and dangerous node names.
 //! Shared by commands (IPC) and fs_ops (mutations).
 
-use std::path::Path;
+use std::ffi::OsString;
+use std::path::{Component, Path, PathBuf};
 
 /// Validates that the candidate path is inside the vault root (prevents parent escape).
 /// Based on canonicalize, so it is only valid for paths that **already exist** — for paths
@@ -11,6 +12,48 @@ pub fn is_within(root: &Path, candidate: &Path) -> bool {
         (Ok(r), Ok(c)) => c.starts_with(r),
         _ => false,
     }
+}
+
+/// The deepest ancestor of `candidate` that exists, and the names below it, outermost first.
+///
+/// `None` when walking up runs out of path, which includes a candidate ending in a component
+/// that is not a plain name.
+fn deepest_existing(candidate: &Path) -> Option<(PathBuf, Vec<OsString>)> {
+    let mut existing = candidate.to_path_buf();
+    let mut below: Vec<OsString> = Vec::new();
+    while !existing.exists() {
+        below.push(existing.file_name()?.to_os_string());
+        existing = existing.parent()?.to_path_buf();
+    }
+    below.reverse();
+    Some((existing, below))
+}
+
+/// The vault-relative, `/`-separated form of a path that need not exist.
+///
+/// [`is_within`] resolves both ends against the filesystem, which is right for a path something
+/// is at and useless for one nothing is at any more. Asking what a note used to hold is asking
+/// about a name the folder no longer has, so the check cannot require the name to be there:
+/// the deepest part that does exist is resolved as usual, and the names below it are admitted
+/// only if each is a plain one, which is what stops the missing part from climbing back out.
+///
+/// `None` when the path leaves the vault, when it names the vault itself, or when a component
+/// below the existing part is anything other than a plain name.
+pub fn rel_within(root: &Path, candidate: &Path) -> Option<String> {
+    let root_c = root.canonicalize().ok()?;
+    let (existing, below) = deepest_existing(candidate)?;
+    let existing_c = existing.canonicalize().ok()?;
+    let mut out = existing_c.strip_prefix(&root_c).ok()?.to_path_buf();
+    for name in below {
+        let piece = PathBuf::from(&name);
+        let mut parts = piece.components();
+        match (parts.next(), parts.next()) {
+            (Some(Component::Normal(_)), None) => out.push(&name),
+            _ => return None,
+        }
+    }
+    let text = out.to_str()?.replace('\\', "/");
+    (!text.is_empty()).then_some(text)
 }
 
 /// Windows reserved device names (reserved regardless of extension).
@@ -80,6 +123,36 @@ mod tests {
         // Normal names that merely contain a reserved name are allowed.
         assert!(is_valid_name("CONTROL"));
         assert!(is_valid_name("réunion-CON"));
+    }
+
+    #[test]
+    fn a_path_nothing_is_at_can_still_be_placed_in_the_vault() {
+        // What a deleted note used to hold is asked for by a name the folder no longer has.
+        let tmp = TempDir::new().unwrap();
+        std::fs::create_dir_all(tmp.path().join("sub")).unwrap();
+
+        assert_eq!(rel_within(tmp.path(), &tmp.path().join("gone.md")).as_deref(), Some("gone.md"));
+        assert_eq!(
+            rel_within(tmp.path(), &tmp.path().join("sub").join("gone.md")).as_deref(),
+            Some("sub/gone.md"),
+            "the folder still exists, only the note is missing"
+        );
+        assert_eq!(
+            rel_within(tmp.path(), &tmp.path().join("gone").join("deeper.md")).as_deref(),
+            Some("gone/deeper.md"),
+            "neither the folder nor the note has to exist"
+        );
+    }
+
+    #[test]
+    fn a_path_nothing_is_at_is_still_refused_when_it_leaves_the_vault() {
+        // Admitting missing names must not admit ones that climb out with them.
+        let tmp = TempDir::new().unwrap();
+        let outside = TempDir::new().unwrap();
+
+        assert_eq!(rel_within(tmp.path(), &outside.path().join("gone.md")), None);
+        assert_eq!(rel_within(tmp.path(), &tmp.path().join("..").join("gone.md")), None);
+        assert_eq!(rel_within(tmp.path(), tmp.path()), None, "the vault is not a note");
     }
 
     #[test]

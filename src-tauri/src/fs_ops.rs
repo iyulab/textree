@@ -366,9 +366,9 @@ pub(crate) fn restore_from_trash(root: &Path, trash_path: &Path, original_rel: &
 /// SECURITY precondition: callers MUST pre-validate every component of `rel`
 /// (Component::Normal + is_valid_name) — this function trusts it for the destination.
 pub(crate) fn place_restored(root: &Path, rel: &str) -> io::Result<PathBuf> {
-    // Checked before anything is created: the folders on the way would otherwise be made for a
-    // path that has not been vouched for. Containment cannot be confirmed against the filesystem
-    // here because the destination does not exist yet, which is the whole point.
+    // Nothing is created until the destination has been vouched for, in both of the ways it
+    // has to be: every component a plain name, and the part of the path that already exists
+    // genuinely inside the vault.
     let relative = Path::new(rel);
     let mut any = false;
     for comp in relative.components() {
@@ -382,10 +382,18 @@ pub(crate) fn place_restored(root: &Path, rel: &str) -> io::Result<PathBuf> {
     }
     let dest = root.join(relative);
     let parent = dest.parent().ok_or_else(|| err("no parent directory"))?;
-    std::fs::create_dir_all(parent)?;
-    if !is_within(root, parent) {
+    // Plain names are not enough on their own: a folder on the way can be a link to somewhere
+    // else entirely, and only the filesystem knows that. The deepest folder that already exists
+    // is the one that can be asked, and everything below it is about to be made inside it — so
+    // it is asked first, before any of them are.
+    let mut standing = parent;
+    while !standing.exists() {
+        standing = standing.parent().ok_or_else(|| err("no parent directory"))?;
+    }
+    if !is_within(root, standing) {
         return Err(err("path is outside the vault"));
     }
+    std::fs::create_dir_all(parent)?;
     let file_name = dest
         .file_name()
         .and_then(|s| s.to_str())
@@ -397,6 +405,22 @@ pub(crate) fn place_restored(root: &Path, rel: &str) -> io::Result<PathBuf> {
 mod tests {
     use super::*;
     use tempfile::TempDir;
+
+    #[test]
+    fn place_restored_creates_nothing_when_the_destination_is_refused() {
+        // The reason the check has to come first is a folder on the way being a link to
+        // somewhere else: the folders below it would be made at the far end before anyone
+        // asked where that was. The invariant is the same whatever the reason for refusing —
+        // a refused destination leaves the filesystem as it found it.
+        let tmp = TempDir::new().unwrap();
+        let absent_root = tmp.path().join("no-such-vault");
+
+        assert!(place_restored(&absent_root, "sub/deep/a.md").is_err());
+        assert!(
+            !absent_root.exists(),
+            "nothing on the way to a refused destination is created"
+        );
+    }
 
     #[test]
     fn place_restored_never_points_at_something_that_exists() {
