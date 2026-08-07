@@ -103,7 +103,7 @@ test("keyboard: F2 inline rename · Delete delete", async () => {
     // Escape leaves the name unchanged.
     await expect(page.getByRole("treeitem", { name: /doomed-note/ })).toBeVisible();
 
-    // Delete → to trash (disappears from tree).
+    // Delete → the note leaves the folder (disappears from tree).
     await page.getByRole("treeitem", { name: /doomed-note/ }).focus();
     await page.keyboard.press("Delete");
     await expect(page.getByRole("treeitem", { name: /doomed-note/ })).toHaveCount(0);

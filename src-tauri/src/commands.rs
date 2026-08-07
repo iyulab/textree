@@ -8,7 +8,6 @@ use serde::{Deserialize, Serialize};
 use std::io::{self, Write};
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Manager, State};
 use tempfile::NamedTempFile;
 
@@ -293,20 +292,6 @@ fn read_trash_manifest(root: &Path) -> Vec<TrashItem> {
         Ok(s) => serde_json::from_str(&s).unwrap_or_default(),
         Err(_) => Vec::new(),
     }
-}
-
-/// Atomically rewrites the manifest (temp→fsync→rename via atomic_write).
-fn write_trash_manifest(root: &Path, items: &[TrashItem]) -> Result<(), String> {
-    let path = legacy_sidecar_path(root, TRASH_MANIFEST);
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    }
-    let json = serde_json::to_string_pretty(items).map_err(|e| e.to_string())?;
-    atomic_write(root, &path, &json).map_err(|e| e.to_string())
-}
-
-fn now_secs() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
 }
 
 /// Reads one of this folder's settings. `None` when it has never been written.
@@ -620,31 +605,32 @@ fn keep_state_of(root: &Path, target: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// Deletes a note or folder, once its state is somewhere it can be brought back from.
+///
+/// Nothing is set aside inside the notes folder. A copy there was how a deletion used to be
+/// undoable; the history is that now. Keeping both would leave two places offering to bring the
+/// same note back — and a folder holding something that is not a note.
+///
+/// The order is not an implementation detail: keeping comes first, because afterwards there is
+/// nowhere left to read the state from.
 #[tauri::command]
 pub fn delete_node(root: String, path: String) -> Result<(), String> {
     let root_p = Path::new(&root);
     let target = Path::new(&path);
-    // Capture provenance before the move (canonicalize needs the path to still exist).
-    let original_rel = rel_to_root(root_p, target)?;
-    // The state on disk is kept first: once the delete goes through, there is nowhere else for
-    // it to come back from.
+    if !is_within(root_p, target) {
+        return Err("path is outside the vault".into());
+    }
+    if std::fs::canonicalize(target).ok() == std::fs::canonicalize(root_p).ok() {
+        return Err("the folder itself cannot be deleted".into());
+    }
     keep_state_of(root_p, target)?;
-    let is_dir = target.is_dir();
-    // Move first (fs_ops validates is_within / root / .textree). Manifest after — a mid-crash
-    // leaves an "unknown-origin" trash file (recoverable) rather than a dangling manifest entry.
-    let dest = crate::fs_ops::delete_to_trash(root_p, target).map_err(|e| e.to_string())?;
+    if target.is_dir() {
+        std::fs::remove_dir_all(target).map_err(|e| e.to_string())?;
+    } else {
+        std::fs::remove_file(target).map_err(|e| e.to_string())?;
+    }
     log::info!("delete_node: {}", path);
-    let trash_name = dest
-        .file_name()
-        .and_then(|s| s.to_str())
-        .ok_or_else(|| "cannot read trashed name".to_string())?
-        .to_string();
-    let mut items = read_trash_manifest(root_p);
-    items.push(TrashItem { trash_name, original_rel, deleted_at: now_secs(), is_dir });
-    // NOTE: if write_trash_manifest fails here, the node is already in trash but this command
-    // returns Err. The node is not lost — it surfaces as an unknown-origin orphan in list_trash
-    // and can be restored. This window is data-safe by design; no behavior change intended.
-    write_trash_manifest(root_p, &items)
+    Ok(())
 }
 
 /// Re-validates a vault-relative path from the (user-editable) manifest: every component must be
@@ -667,87 +653,6 @@ fn validate_vault_rel(rel: &str) -> Result<(), String> {
         return Err("empty trash path".into());
     }
     Ok(())
-}
-
-#[tauri::command]
-pub fn restore_node(root: String, trash_name: String) -> Result<String, String> {
-    let root_p = Path::new(&root);
-    // trash_name must be a single safe segment (rejects separators / .. / dotfiles).
-    if !crate::pathsafe::is_valid_name(&trash_name) {
-        return Err("invalid trash name".into());
-    }
-    let trash_path = root_p.join(".textree").join("trash").join(&trash_name);
-    if !trash_path.exists() {
-        return Err("trash item not found".into());
-    }
-    let mut items = read_trash_manifest(root_p);
-    let idx = items.iter().position(|it| it.trash_name == trash_name);
-    let original_rel = match idx {
-        Some(i) => {
-            let rel = items[i].original_rel.clone();
-            validate_vault_rel(&rel)?; // boundary recheck on untrusted manifest
-            rel
-        }
-        None => trash_name.clone(), // unknown origin → restore to vault root (§3 fallback)
-    };
-    let restored = crate::fs_ops::restore_from_trash(root_p, &trash_path, &original_rel)
-        .map_err(|e| e.to_string())?;
-    // Rename succeeded → now drop the manifest entry (rename-first ordering).
-    if let Some(i) = idx {
-        items.remove(i);
-        write_trash_manifest(root_p, &items)?;
-    }
-    rel_to_root(root_p, &restored)
-}
-
-#[tauri::command]
-pub fn list_trash(root: String) -> Result<Vec<TrashItem>, String> {
-    let root_p = Path::new(&root);
-    let trash_dir = root_p.join(".textree").join("trash");
-    let mut items = read_trash_manifest(root_p);
-    // Drop stale entries (manifest points to a file the user removed externally).
-    items.retain(|it| trash_dir.join(&it.trash_name).exists());
-    // Surface orphan files (in trash dir but absent from the manifest) as unknown-origin.
-    let known: std::collections::HashSet<String> =
-        items.iter().map(|it| it.trash_name.clone()).collect();
-    if let Ok(entries) = std::fs::read_dir(&trash_dir) {
-        for e in entries.flatten() {
-            let name = e.file_name().to_string_lossy().to_string();
-            if !known.contains(&name) {
-                let is_dir = e.path().is_dir();
-                items.push(TrashItem { trash_name: name.clone(), original_rel: name, deleted_at: 0, is_dir });
-            }
-        }
-    }
-    Ok(items)
-}
-
-#[tauri::command]
-pub fn purge_trash(root: String, trash_name: Option<String>) -> Result<(), String> {
-    let root_p = Path::new(&root);
-    let trash_dir = root_p.join(".textree").join("trash");
-    match trash_name {
-        Some(name) => {
-            if !crate::pathsafe::is_valid_name(&name) {
-                return Err("invalid trash name".into());
-            }
-            let p = trash_dir.join(&name);
-            if p.is_dir() {
-                std::fs::remove_dir_all(&p).map_err(|e| e.to_string())?;
-            } else if p.exists() {
-                std::fs::remove_file(&p).map_err(|e| e.to_string())?;
-            }
-            let mut items = read_trash_manifest(root_p);
-            items.retain(|it| it.trash_name != name);
-            write_trash_manifest(root_p, &items)
-        }
-        None => {
-            if trash_dir.exists() {
-                std::fs::remove_dir_all(&trash_dir).map_err(|e| e.to_string())?;
-            }
-            write_trash_manifest(root_p, &[])
-        }
-    }
 }
 
 /// Carries whatever was recorded along a set of moves, in every reference that holds it.
@@ -1478,55 +1383,7 @@ pub fn restore_deleted(root: String, rel: String) -> Result<RestoredNote, String
     let dest = crate::fs_ops::place_restored(root_p, &rel).map_err(|e| e.to_string())?;
     atomic_write_bytes(root_p, &dest, &content).map_err(|e| e.to_string())?;
     log::info!("restore_deleted: {} (as deleted: {as_deleted})", dest.display());
-    retire_superseded_copy(root_p, repo, &prepared, &rel);
     Ok(RestoredNote { rel: rel_to_root(root_p, &dest)?, as_deleted })
-}
-
-/// Drops the older per-note copy of something that has just been restored from history.
-///
-/// Before the history held deleted notes, a copy was set aside for each one; both are still
-/// here, and both offer to bring the same note back. Taking both offers puts two of it in the
-/// folder, which is the thing a version history exists to stop.
-///
-/// The copy is only dropped when the history demonstrably holds that note — an older one set
-/// aside before anything was being kept has nowhere else to come from, and stays until it is
-/// carried over wholesale.
-fn retire_superseded_copy(
-    root: &Path,
-    repo: &git2::Repository,
-    prepared: &crate::git_engine::VaultRepo,
-    rel: &str,
-) {
-    let in_repo = prepared.path_in_repo(Path::new(rel));
-    let held = crate::git_engine::content_at_tip(repo, crate::git_engine::SNAPSHOT_REF, &in_repo)
-        .ok()
-        .flatten();
-    if held.is_none() {
-        return;
-    }
-
-    let mut items = read_trash_manifest(root);
-    let before = items.len();
-    let dir = root.join(".textree").join("trash");
-    items.retain(|item| {
-        if item.original_rel != rel || item.is_dir {
-            return true;
-        }
-        // Only the file it names, and only after the history is known to hold the note.
-        match std::fs::remove_file(dir.join(&item.trash_name)) {
-            Ok(()) => false,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => false,
-            Err(e) => {
-                log::warn!("retire_superseded_copy: {} left in place: {e}", item.trash_name);
-                true
-            }
-        }
-    });
-    if items.len() != before {
-        if let Err(e) = write_trash_manifest(root, &items) {
-            log::warn!("retire_superseded_copy: could not update the list: {e}");
-        }
-    }
 }
 
 #[cfg(test)]
@@ -1697,64 +1554,7 @@ mod tests {
         .is_err());
     }
 
-    #[test]
-    fn a_note_restored_from_history_cannot_also_be_restored_from_the_older_copy() {
-        // Both offers bring the same note back. Taking both puts two of it in the folder.
-        let tmp = TempDir::new().unwrap();
-        let root = tmp.path();
-        git2::Repository::init(root).unwrap();
-        let root_s = root.to_string_lossy().to_string();
 
-        let note = seed_note(root, "a.md", "body");
-        delete_node(root_s.clone(), note).unwrap();
-        assert_eq!(list_trash(root_s.clone()).unwrap().len(), 1);
-
-        restore_deleted(root_s.clone(), "a.md".into()).unwrap();
-
-        assert!(
-            list_trash(root_s.clone()).unwrap().is_empty(),
-            "the older copy is no longer on offer once the note is back"
-        );
-        assert!(root.join("a.md").exists());
-        assert!(!root.join("a (1).md").exists());
-    }
-
-    #[test]
-    fn an_older_copy_with_nothing_behind_it_is_left_alone() {
-        // A copy set aside before contents were being kept has nowhere else to come from.
-        // Dropping it because a restore happened would be losing the only one there is.
-        let tmp = TempDir::new().unwrap();
-        let root = tmp.path();
-        git2::Repository::init(root).unwrap();
-        let root_s = root.to_string_lossy().to_string();
-
-        // Recorded, then removed without the application keeping anything.
-        let note = record_note(root, "a.md", "body");
-        std::fs::remove_file(&note).unwrap();
-        // A copy of the kind earlier versions set aside, with no kept state behind it.
-        let trash = root.join(".textree").join("trash");
-        std::fs::create_dir_all(&trash).unwrap();
-        std::fs::write(trash.join("a.md"), "the copy set aside").unwrap();
-        write_trash_manifest(
-            root,
-            &[TrashItem {
-                trash_name: "a.md".into(),
-                original_rel: "a.md".into(),
-                deleted_at: 0,
-                is_dir: false,
-            }],
-        )
-        .unwrap();
-
-        restore_deleted(root_s.clone(), "a.md".into()).unwrap();
-
-        assert_eq!(
-            list_trash(root_s).unwrap().len(),
-            1,
-            "nothing else holds it, so it stays"
-        );
-        assert!(trash.join("a.md").exists());
-    }
 
     /// Puts a folder into the shape an earlier version of the application left behind.
     fn as_an_earlier_version_left_it(root: &Path, deleted: &[(&str, &str, u64)]) {
@@ -1905,6 +1705,26 @@ mod tests {
             "mine",
             "a refused request leaves the note alone"
         );
+    }
+
+    #[test]
+    fn a_note_can_only_be_brought_back_from_one_place() {
+        // There used to be two: the history, and a copy set aside inside the folder. Taking
+        // both offers put two of the same note there — the thing a version history exists to
+        // stop. Deleting no longer sets anything aside, so there is one offer.
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        git2::Repository::init(root).unwrap();
+        let root_s = root.to_string_lossy().to_string();
+
+        let note = seed_note(root, "a.md", "body");
+        delete_node(root_s.clone(), note).unwrap();
+
+        assert_eq!(deleted_notes(root_s.clone()).unwrap().len(), 1);
+        restore_deleted(root_s.clone(), "a.md".into()).unwrap();
+        assert!(deleted_notes(root_s).unwrap().is_empty());
+        assert!(root.join("a.md").exists());
+        assert!(!root.join("a (1).md").exists());
     }
 
     #[test]
@@ -2522,191 +2342,6 @@ mod tests {
         assert_eq!(std::fs::read_dir(&tmp).unwrap().flatten().count(), 0);
     }
 
-    #[test]
-    fn clear_temp_dir_is_graceful_when_absent() {
-        // No temp dir yet (fresh vault) → no error, no panic.
-        let root = TempDir::new().unwrap();
-        clear_temp_dir(root.path());
-    }
-
-    #[test]
-    fn trash_manifest_roundtrips_and_is_empty_when_absent() {
-        let tmp = TempDir::new().unwrap();
-        // Absent manifest reads as empty (graceful — the FS is the truth).
-        assert!(read_trash_manifest(tmp.path()).is_empty());
-
-        let items = vec![TrashItem {
-            trash_name: "memo (1).md".into(),
-            original_rel: "refs/memo.md".into(),
-            deleted_at: 1718600000,
-            is_dir: false,
-        }];
-        write_trash_manifest(tmp.path(), &items).unwrap();
-        let read = read_trash_manifest(tmp.path());
-        assert_eq!(read, items);
-        // Written under .textree/ (sidecar).
-        assert!(tmp.path().join(".textree").join("trash.json").is_file());
-    }
-
-    #[test]
-    fn trash_manifest_corrupt_reads_as_empty() {
-        let tmp = TempDir::new().unwrap();
-        let dir = tmp.path().join(".textree");
-        std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join("trash.json"), "{ not valid json").unwrap();
-        // Corrupt manifest must not crash — degrade to empty (trash files remain the truth).
-        assert!(read_trash_manifest(tmp.path()).is_empty());
-    }
-
-    #[test]
-    fn restore_node_roundtrip_and_clears_manifest() {
-        let tmp = TempDir::new().unwrap();
-        let note = tmp.path().join("memo.md");
-        std::fs::write(&note, "x").unwrap();
-        delete_node(tmp.path().to_string_lossy().into(), note.to_string_lossy().into()).unwrap();
-        let trash_name = read_trash_manifest(tmp.path())[0].trash_name.clone();
-
-        let restored = restore_node(tmp.path().to_string_lossy().into(), trash_name).unwrap();
-        assert_eq!(restored, "memo.md");
-        assert!(note.is_file(), "back at original location");
-        assert!(read_trash_manifest(tmp.path()).is_empty(), "manifest entry removed");
-    }
-
-    #[test]
-    fn restore_node_rejects_tampered_original_rel() {
-        let tmp = TempDir::new().unwrap();
-        let trash = tmp.path().join(".textree").join("trash");
-        std::fs::create_dir_all(&trash).unwrap();
-        std::fs::write(trash.join("evil.md"), "x").unwrap();
-        // A hand-edited manifest tries to escape the vault via the original_rel.
-        let items = vec![TrashItem {
-            trash_name: "evil.md".into(),
-            original_rel: "../escape.md".into(),
-            deleted_at: 0,
-            is_dir: false,
-        }];
-        write_trash_manifest(tmp.path(), &items).unwrap();
-
-        let res = restore_node(tmp.path().to_string_lossy().into(), "evil.md".into());
-        assert!(res.is_err(), "path traversal in original_rel must be rejected at the boundary");
-        // The escape destination must not exist — confirm no file was written outside the vault.
-        assert!(
-            !tmp.path().parent().unwrap().join("escape.md").exists(),
-            "the escaped file must not be created outside the vault"
-        );
-    }
-
-    #[test]
-    fn restore_node_unknown_origin_goes_to_root() {
-        let tmp = TempDir::new().unwrap();
-        let trash = tmp.path().join(".textree").join("trash");
-        std::fs::create_dir_all(&trash).unwrap();
-        std::fs::write(trash.join("orphan.md"), "x").unwrap(); // no manifest entry
-
-        let restored = restore_node(tmp.path().to_string_lossy().into(), "orphan.md".into()).unwrap();
-        assert_eq!(restored, "orphan.md");
-        assert!(tmp.path().join("orphan.md").is_file());
-    }
-
-    /// Covers the `is_dir=true` restore branch: delete a folder-note directory, confirm the manifest
-    /// records it as a directory, then restore it and verify the directory and its folder note are back.
-    #[test]
-    fn restore_node_folder_note_roundtrip() {
-        let tmp = TempDir::new().unwrap();
-        let root = tmp.path().to_string_lossy().to_string();
-
-        // Create a folder-note structure: journal/journal.md
-        let journal_dir = tmp.path().join("journal");
-        std::fs::create_dir(&journal_dir).unwrap();
-        std::fs::write(journal_dir.join("journal.md"), "daily notes").unwrap();
-
-        // Delete the whole journal/ directory.
-        delete_node(root.clone(), journal_dir.to_string_lossy().into()).unwrap();
-        assert!(!journal_dir.exists(), "directory removed from vault after delete");
-
-        // Manifest must record it as a directory with the correct original_rel.
-        let items = read_trash_manifest(tmp.path());
-        assert_eq!(items.len(), 1);
-        assert!(items[0].is_dir, "manifest entry must be marked as a directory");
-        assert_eq!(items[0].original_rel, "journal");
-        let trash_name = items[0].trash_name.clone();
-
-        // Restore: the directory and its folder note should reappear at the original location.
-        let restored_rel = restore_node(root.clone(), trash_name).unwrap();
-        assert_eq!(restored_rel, "journal", "restored to original vault-relative path");
-        assert!(journal_dir.is_dir(), "journal/ directory is back");
-        assert!(
-            journal_dir.join("journal.md").is_file(),
-            "the folder note journal/journal.md is restored inside the directory"
-        );
-        assert_eq!(
-            std::fs::read_to_string(journal_dir.join("journal.md")).unwrap(),
-            "daily notes",
-            "folder note content is preserved"
-        );
-        assert!(read_trash_manifest(tmp.path()).is_empty(), "manifest entry removed after restore");
-    }
-
-    #[test]
-    fn delete_node_records_provenance_in_manifest() {
-        let tmp = TempDir::new().unwrap();
-        let dir = tmp.path().join("refs");
-        std::fs::create_dir_all(&dir).unwrap();
-        let note = dir.join("memo.md");
-        std::fs::write(&note, "x").unwrap();
-
-        delete_node(tmp.path().to_string_lossy().into(), note.to_string_lossy().into()).unwrap();
-
-        let items = read_trash_manifest(tmp.path());
-        assert_eq!(items.len(), 1);
-        assert_eq!(items[0].original_rel, "refs/memo.md"); // forward slashes, vault-relative
-        assert!(!items[0].is_dir);
-        assert!(!note.exists(), "original moved to trash");
-        // The recorded trash_name actually exists in the trash dir.
-        let trashed = tmp.path().join(".textree").join("trash").join(&items[0].trash_name);
-        assert!(trashed.is_file());
-    }
-
-    #[test]
-    fn list_trash_merges_manifest_and_orphans_drops_stale() {
-        let tmp = TempDir::new().unwrap();
-        let trash = tmp.path().join(".textree").join("trash");
-        std::fs::create_dir_all(&trash).unwrap();
-        std::fs::write(trash.join("known.md"), "x").unwrap();
-        std::fs::write(trash.join("orphan.md"), "x").unwrap(); // on disk, not in manifest
-        let items = vec![
-            TrashItem { trash_name: "known.md".into(), original_rel: "known.md".into(), deleted_at: 5, is_dir: false },
-            TrashItem { trash_name: "ghost.md".into(), original_rel: "ghost.md".into(), deleted_at: 9, is_dir: false }, // stale: no file
-        ];
-        write_trash_manifest(tmp.path(), &items).unwrap();
-
-        let listed = list_trash(tmp.path().to_string_lossy().into()).unwrap();
-        let names: std::collections::HashSet<_> = listed.iter().map(|i| i.trash_name.as_str()).collect();
-        assert!(names.contains("known.md"));
-        assert!(names.contains("orphan.md"), "orphan file surfaced");
-        assert!(!names.contains("ghost.md"), "stale manifest entry dropped");
-    }
-
-    #[test]
-    fn purge_individual_and_all() {
-        let tmp = TempDir::new().unwrap();
-        let trash = tmp.path().join(".textree").join("trash");
-        std::fs::create_dir_all(&trash).unwrap();
-        std::fs::write(trash.join("a.md"), "x").unwrap();
-        std::fs::write(trash.join("b.md"), "x").unwrap();
-        write_trash_manifest(tmp.path(), &[
-            TrashItem { trash_name: "a.md".into(), original_rel: "a.md".into(), deleted_at: 0, is_dir: false },
-            TrashItem { trash_name: "b.md".into(), original_rel: "b.md".into(), deleted_at: 0, is_dir: false },
-        ]).unwrap();
-
-        purge_trash(tmp.path().to_string_lossy().into(), Some("a.md".into())).unwrap();
-        assert!(!trash.join("a.md").exists());
-        assert_eq!(read_trash_manifest(tmp.path()).len(), 1);
-
-        purge_trash(tmp.path().to_string_lossy().into(), None).unwrap();
-        assert!(!trash.join("b.md").exists());
-        assert!(read_trash_manifest(tmp.path()).is_empty());
-    }
 }
 
 #[cfg(test)]

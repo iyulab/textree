@@ -8,7 +8,7 @@ function stubActions(over: Partial<PaletteActions> = {}): PaletteActions {
     "newNoteAtRoot", "newFolderAtRoot", "hasSelection", "renameSelected",
     "deleteSelected", "promoteSelected", "toggleFavoriteSelected", "moveSelectedUp",
     "moveSelectedDown", "rebuildIndex", "hasVault", "hasOpenNote", "addVersion", "openVersionHistory",
-    "publishSite", "publishToWeb", "openTrash", "openDeletedNotes",
+    "publishSite", "publishToWeb", "openDeletedNotes",
     "openLogDir", "openSettings",
   ];
   const base = Object.fromEntries(keys.map((k) => [k, () => {}]));

@@ -224,7 +224,7 @@ test("rename → blur-away commit, then a second rename both land (guard reset)"
   }
 });
 
-test("delete → move to trash (original disappears)", async () => {
+test("delete → the note leaves the folder (original disappears)", async () => {
   const vault = createTempVault({ "delete-target-note.md": "content\n" });
   try {
     await loadVault(page, vault);

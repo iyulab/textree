@@ -10,6 +10,8 @@ mod gate_deletion_recoverable;
 mod gate_foreground_latency;
 #[cfg(test)]
 mod gate_staging_untouched;
+#[cfg(test)]
+mod gate_vault_untouched;
 pub(crate) mod git_engine;
 pub(crate) mod pathsafe;
 pub(crate) mod process_ext;
@@ -102,7 +104,6 @@ pub fn run() {
             commands::create_folder,
             commands::promote_node,
             commands::delete_node,
-            commands::restore_node,
             commands::rename_node,
             commands::rename_note_unique,
             commands::move_node,
@@ -115,8 +116,6 @@ pub fn run() {
             commands::publish_site,
             commands::publish_to_cloud,
             cloud_auth::connect_publish,
-            commands::list_trash,
-            commands::purge_trash,
             commands::ensure_default_vault,
             commands::open_log_dir,
             host::host_status,

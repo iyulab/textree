@@ -51,7 +51,6 @@
   import { chatStore, type ChatScope } from "$lib/chatStore.svelte";
   import { aiHost } from "$lib/aiHost.svelte";
   import { formatModelDownload } from "$lib/modelDownload.helpers";
-  import Trash from "$lib/Trash.svelte";
   import AddVersion from "$lib/AddVersion.svelte";
   import VersionHistory from "$lib/VersionHistory.svelte";
   import DeletedNotes from "$lib/DeletedNotes.svelte";
@@ -108,7 +107,6 @@
   // a dismissible notice so the user knows where their notes live; null when no fallback happened.
   let vaultFallbackPath = $state<string | null>(null);
   let publishNotice = $state<{ kind: "ok" | "error"; text: string; detail?: string; onRetry?: () => void } | null>(null);
-  let showTrash = $state(false);
   let showAddVersion = $state(false);
   let showVersionHistory = $state(false);
   let showDeletedNotes = $state(false);
@@ -1034,7 +1032,6 @@
     hasVault: () => root !== null,
     publishSite: () => { void choosePublishTarget(); },
     publishToWeb: () => { void publishToWeb(); },
-    openTrash: () => { showTrash = true; },
     openDeletedNotes: () => { showDeletedNotes = true; },
     hasOpenNote: () => root !== null && activePath !== null,
     addVersion: () => { void startAddVersion(); },
@@ -1669,14 +1666,7 @@
         onrestored={refreshTree}
       />
     {/if}
-    {#if showTrash && root}
-      <Trash
-        {root}
-        onclose={() => { showTrash = false; }}
-        onrestored={refreshTree}
-      />
-    {/if}
-    <!-- No `&& root` guard (unlike Trash): Settings is usable with no vault open — the Vault section's "Open vault" path needs it. -->
+    <!-- No `&& root` guard (unlike the other panels): Settings is usable with no vault open — the Vault section's "Open vault" path needs it. -->
     {#if showSettings}
       <Settings
         {root}

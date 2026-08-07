@@ -130,32 +130,6 @@ pub(crate) fn unique_in(trash: &Path, file_name: &str, is_dir: bool) -> PathBuf 
     }
 }
 
-/// Moves a node (a leaf `.md` or a container directory) to `.textree/trash/`.
-/// Not permanent removal but a recoverable trash move. Returns the destination within the trash.
-pub fn delete_to_trash(root: &Path, target: &Path) -> io::Result<PathBuf> {
-    if !is_within(root, target) {
-        return Err(err("path is outside the vault"));
-    }
-    let root_c = root.canonicalize()?;
-    let target_c = target.canonicalize()?;
-    if target_c == root_c {
-        return Err(err("the vault root cannot be deleted"));
-    }
-    // .textree itself or anything inside it is not a deletion target (reserved sidecar).
-    if target_c.starts_with(root_c.join(".textree")) {
-        return Err(err(".textree cannot be deleted"));
-    }
-    let trash = root.join(".textree").join("trash");
-    std::fs::create_dir_all(&trash)?;
-    let file_name = target
-        .file_name()
-        .and_then(|s| s.to_str())
-        .ok_or_else(|| err("cannot read name"))?;
-    let dest = unique_in(&trash, file_name, target.is_dir());
-    std::fs::rename(target, &dest)?;
-    Ok(dest)
-}
-
 /// Renames a node. A leaf `.md` renames the file; a container renames the directory and its
 /// folder note together (node identity = file/folder name, design §3.5). Returns the new path.
 pub fn rename_node(root: &Path, target: &Path, new_name: &str) -> io::Result<PathBuf> {
@@ -330,34 +304,6 @@ pub fn save_attachment(
     Ok(format!("assets/{name}"))
 }
 
-/// Restores a trashed node to `original_rel` under root. Recreates missing parent dirs,
-/// and on a name collision disambiguates (`name (1)`) — never overwrites (data safety).
-/// Returns the restored path.
-///
-/// SECURITY precondition: callers MUST pre-validate every component of `original_rel`
-/// (Component::Normal + is_valid_name) — this function trusts it for the destination
-/// and does NOT re-check.
-///
-/// NOTE: folder-note restore on a name collision degrades the folder-note mapping.
-/// Example: restoring `journal/` when `journal/` already exists yields `journal (1)/`
-/// containing `journal.md`, which is no longer a valid folder-note (stem mismatch).
-/// This is a known content-safe limitation tracked as a follow-up.
-pub(crate) fn restore_from_trash(root: &Path, trash_path: &Path, original_rel: &str) -> io::Result<PathBuf> {
-    if !is_within(root, trash_path) {
-        return Err(err("trash path is outside the vault"));
-    }
-    let dest = root.join(original_rel);
-    let parent = dest.parent().ok_or_else(|| err("no parent directory"))?;
-    std::fs::create_dir_all(parent)?;
-    let file_name = dest
-        .file_name()
-        .and_then(|s| s.to_str())
-        .ok_or_else(|| err("cannot read name"))?;
-    let final_dest = unique_in(parent, file_name, trash_path.is_dir());
-    std::fs::rename(trash_path, &final_dest)?;
-    Ok(final_dest)
-}
-
 /// Decides where a file coming back from history should land, creating the folders it needs.
 ///
 /// Nothing is written here and nothing existing is replaced: a name already in use is numbered
@@ -480,38 +426,8 @@ mod tests {
         assert_eq!(std::fs::read_to_string(body).unwrap(), "body text", "content preserved");
     }
 
-    #[test]
-    fn delete_moves_to_trash_not_permanent() {
-        let tmp = TempDir::new().unwrap();
-        let note = tmp.path().join("doomed-note.md");
-        std::fs::write(&note, "x").unwrap();
-        let dest = delete_to_trash(tmp.path(), &note).unwrap();
-        assert!(!note.exists(), "the original is gone");
-        assert!(dest.is_file(), "preserved in the trash");
-        assert!(dest.starts_with(tmp.path().join(".textree").join("trash")));
-    }
 
-    #[test]
-    fn delete_into_trash_disambiguates_collisions() {
-        let tmp = TempDir::new().unwrap();
-        for _ in 0..2 {
-            let note = tmp.path().join("dup.md");
-            std::fs::write(&note, "x").unwrap();
-            delete_to_trash(tmp.path(), &note).unwrap();
-        }
-        let trash = tmp.path().join(".textree").join("trash");
-        assert!(trash.join("dup.md").is_file());
-        assert!(trash.join("dup (1).md").is_file(), "collisions are disambiguated by a counter");
-    }
 
-    #[test]
-    fn delete_rejects_root_and_textree() {
-        let tmp = TempDir::new().unwrap();
-        assert!(delete_to_trash(tmp.path(), tmp.path()).is_err());
-        let textree = tmp.path().join(".textree");
-        std::fs::create_dir_all(&textree).unwrap();
-        assert!(delete_to_trash(tmp.path(), &textree).is_err());
-    }
 
     #[test]
     fn rename_leaf_note() {
@@ -570,8 +486,8 @@ mod tests {
     }
 
     #[test]
-    fn delete_note_leaves_sibling_obsidian_and_canvas_untouched() {
-        // Deleting a note trashes only that file; sibling Obsidian artifacts are never collateral.
+    fn removing_a_note_leaves_the_files_beside_it_untouched() {
+        // Only the note goes. Anything another tool keeps beside it is never collateral.
         let tmp = TempDir::new().unwrap();
         let note = tmp.path().join("doomed-note.md");
         std::fs::write(&note, "x").unwrap();
@@ -579,8 +495,8 @@ mod tests {
         std::fs::write(tmp.path().join(".obsidian").join("app.json"), "{}").unwrap();
         std::fs::write(tmp.path().join("board.canvas"), "{}").unwrap();
 
-        delete_to_trash(tmp.path(), &note).unwrap();
-        assert!(!note.exists(), "only the note is trashed");
+        std::fs::remove_file(&note).unwrap();
+        assert!(!note.exists());
         assert!(tmp.path().join(".obsidian").join("app.json").is_file());
         assert!(tmp.path().join("board.canvas").is_file());
     }
@@ -742,33 +658,7 @@ mod tests {
         assert!(dir.join("assets").join(name).is_file(), "assets sits next to the folder note (bar/assets)");
     }
 
-    #[test]
-    fn restore_returns_to_original_location() {
-        let tmp = TempDir::new().unwrap();
-        let trash = tmp.path().join(".textree").join("trash");
-        std::fs::create_dir_all(&trash).unwrap();
-        let trashed = trash.join("memo.md");
-        std::fs::write(&trashed, "x").unwrap();
 
-        let restored = restore_from_trash(tmp.path(), &trashed, "refs/memo.md").unwrap();
-        assert_eq!(restored, tmp.path().join("refs").join("memo.md"));
-        assert!(restored.is_file(), "parent dir recreated and file restored");
-        assert!(!trashed.exists(), "removed from trash");
-    }
-
-    #[test]
-    fn restore_disambiguates_on_collision_never_overwrites() {
-        let tmp = TempDir::new().unwrap();
-        std::fs::write(tmp.path().join("memo.md"), "original").unwrap(); // occupies the spot
-        let trash = tmp.path().join(".textree").join("trash");
-        std::fs::create_dir_all(&trash).unwrap();
-        let trashed = trash.join("memo.md");
-        std::fs::write(&trashed, "restored").unwrap();
-
-        let restored = restore_from_trash(tmp.path(), &trashed, "memo.md").unwrap();
-        assert_eq!(restored, tmp.path().join("memo (1).md"), "disambiguated, not overwritten");
-        assert_eq!(std::fs::read_to_string(tmp.path().join("memo.md")).unwrap(), "original");
-    }
 
     #[test]
     fn adopt_rejects_leaf_inside_src() {
