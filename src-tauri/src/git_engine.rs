@@ -128,53 +128,82 @@ fn tip_paths_of(tree: &Tree<'_>) -> Result<Vec<String>, git2::Error> {
     Ok(out)
 }
 
-/// The paths a revision changed relative to its first parent.
-fn changed_paths(repo: &Repository, commit: &git2::Commit<'_>) -> Result<Vec<String>, git2::Error> {
-    let tree = commit.tree()?;
-    let parent = match commit.parent(0) {
-        Ok(p) => Some(p.tree()?),
+/// Counts the times a whole revision had to be compared against its parent.
+///
+/// The cost of reading history is dominated by these, and the point of deciding by path is that
+/// they stay rare however long the folder has been in use. Counted per thread, so a test that
+/// asserts on the number is not affected by whatever else is running.
+#[cfg(test)]
+pub(crate) mod full_comparisons {
+    use std::cell::Cell;
+
+    thread_local! {
+        static TAKEN: Cell<usize> = const { Cell::new(0) };
+    }
+
+    pub(crate) fn record() {
+        TAKEN.with(|t| t.set(t.get() + 1));
+    }
+
+    /// How many have happened on this thread, and starts counting again from zero.
+    pub(crate) fn taken() -> usize {
+        TAKEN.with(|t| t.replace(0))
+    }
+}
+
+/// What a revision did to one path, decided by looking at that path alone.
+///
+/// Comparing what a revision and its parent hold at one name costs a few tree lookups. Asking
+/// for the whole difference between two revisions costs the whole difference — and a folder
+/// only gets more history the longer it is used, so paying that per revision makes reading one
+/// note slower every time an unrelated one is recorded.
+#[derive(PartialEq, Eq)]
+enum Touch {
+    /// Both hold the same thing there, or neither holds anything.
+    Untouched,
+    /// Both hold something there, and it differs.
+    Changed,
+    /// This revision holds it and its parent did not.
+    Appeared,
+    /// Its parent held it and this revision does not.
+    Gone,
+}
+
+fn touch(repo: &Repository, commit: &git2::Commit<'_>, target: &Path) -> Result<Touch, git2::Error> {
+    let here = blob_in_tree(repo, &commit.tree()?, target);
+    let before = match commit.parent(0) {
+        Ok(parent) => blob_in_tree(repo, &parent.tree()?, target),
         Err(_) => None,
     };
-    let diff = repo.diff_tree_to_tree(parent.as_ref(), Some(&tree), None)?;
-    let mut out: Vec<String> = Vec::new();
-    for delta in diff.deltas() {
-        for path in [delta.new_file().path(), delta.old_file().path()]
-            .into_iter()
-            .flatten()
-        {
-            let s = slashed(path);
-            if !s.is_empty() && !out.contains(&s) {
-                out.push(s);
-            }
-        }
-    }
-    Ok(out)
+    Ok(match (before, here) {
+        (Some(a), Some(b)) if a == b => Touch::Untouched,
+        (Some(_), Some(_)) => Touch::Changed,
+        (None, Some(_)) => Touch::Appeared,
+        (Some(_), None) => Touch::Gone,
+        (None, None) => Touch::Untouched,
+    })
 }
 
-/// How one revision relates to the path being followed.
-enum Step {
-    /// The revision left it alone.
-    Untouched,
-    /// The revision wrote it.
-    Changed,
-    /// The revision brought it here from another name; keep following that one.
-    MovedFrom(String),
-}
-
-/// What one revision did to `target`, with moves recognised as moves.
+/// Where `target` came from, when a revision is the one that brought it in.
+///
+/// This is the only place the whole difference between two revisions is needed, and it is only
+/// reached where a name first appears — which for any one note is a handful of revisions out of
+/// however many the folder has.
 ///
 /// Rename detection is git's own: nothing records where a file used to be, it is inferred from
 /// contents. That is also why a move has to be a revision at all — an unwritten move is one git
 /// has no way to infer.
-fn step_for(
+fn moved_from(
     repo: &Repository,
     commit: &git2::Commit<'_>,
     target: &str,
-) -> Result<Step, git2::Error> {
+) -> Result<Option<String>, git2::Error> {
+    #[cfg(test)]
+    full_comparisons::record();
     let tree = commit.tree()?;
     let parent = match commit.parent(0) {
         Ok(p) => Some(p.tree()?),
-        Err(_) => None,
+        Err(_) => return Ok(None),
     };
     let mut diff = repo.diff_tree_to_tree(parent.as_ref(), Some(&tree), None)?;
     let mut finding = git2::DiffFindOptions::new();
@@ -182,23 +211,17 @@ fn step_for(
     diff.find_similar(Some(&mut finding))?;
 
     for delta in diff.deltas() {
-        let new = delta.new_file().path().map(slashed);
-        let old = delta.old_file().path().map(slashed);
-        if new.as_deref() == Some(target) {
-            if delta.status() == git2::Delta::Renamed {
-                if let Some(previous) = old.filter(|o| o != target) {
-                    return Ok(Step::MovedFrom(previous));
-                }
-            }
-            return Ok(Step::Changed);
+        if delta.status() != git2::Delta::Renamed {
+            continue;
         }
-        if old.as_deref() == Some(target) {
-            // It left this name here. Following further back would be following whatever
-            // occupies the name now, which is a different note.
-            return Ok(Step::Changed);
+        if delta.new_file().path().map(slashed).as_deref() != Some(target) {
+            continue;
+        }
+        if let Some(previous) = delta.old_file().path().map(slashed).filter(|o| o != target) {
+            return Ok(Some(previous));
         }
     }
-    Ok(Step::Untouched)
+    Ok(None)
 }
 
 /// Every revision on `reference` that changed `rel`, newest first.
@@ -228,13 +251,18 @@ pub fn history(
     walk.push_ref(reference)?;
     for id in walk {
         let commit = repo.find_commit(id?)?;
-        match step_for(repo, &commit, &target)? {
-            Step::Untouched => continue,
-            Step::MovedFrom(previous) => {
-                target = previous;
-                continue;
+        match touch(repo, &commit, Path::new(&target))? {
+            Touch::Untouched => continue,
+            // The trail under this name starts here. Anything earlier at the same name is a
+            // different note that happened to be called this.
+            Touch::Gone => break,
+            Touch::Appeared => {
+                if let Some(previous) = moved_from(repo, &commit, &target)? {
+                    target = previous;
+                    continue;
+                }
             }
-            Step::Changed => {}
+            Touch::Changed => {}
         }
         out.push(RecordedVersion {
             id: commit.id().to_string(),
@@ -266,16 +294,19 @@ pub fn content_at_version(
     content_at(repo, id, Path::new(&version.path))
 }
 
-/// When each path on `reference` was last changed, in seconds since the epoch.
+/// When each of `wanted` was last written on `reference`, in seconds since the epoch.
 ///
-/// Answered for every path at once because asking per path would re-read the whole history once
-/// per note.
-pub fn last_changed(
+/// Asked for a named set rather than for everything, and the walk stops as soon as all of them
+/// are answered. Both matter for the same reason: a folder accumulates revisions for as long as
+/// it is used, so anything that reads all of them to answer about a few gets slower forever.
+/// Paths the reference never held are simply absent from the result.
+pub fn last_written(
     repo: &Repository,
     reference: &str,
+    wanted: &[String],
 ) -> Result<std::collections::HashMap<String, i64>, git2::Error> {
     let mut out = std::collections::HashMap::new();
-    if repo.find_reference(reference).is_err() {
+    if wanted.is_empty() || repo.find_reference(reference).is_err() {
         return Ok(out);
     }
     let mut walk = repo.revwalk()?;
@@ -285,11 +316,19 @@ pub fn last_changed(
     walk.set_sorting(git2::Sort::TIME | git2::Sort::TOPOLOGICAL)?;
     walk.push_ref(reference)?;
     for id in walk {
+        if out.len() == wanted.len() {
+            break;
+        }
         let commit = repo.find_commit(id?)?;
         let seconds = commit.time().seconds();
-        for path in changed_paths(repo, &commit)? {
-            // Newest first, so the first sighting of a path is its latest change.
-            out.entry(path).or_insert(seconds);
+        for path in wanted {
+            if out.contains_key(path) {
+                continue;
+            }
+            // Newest first, so the first revision that wrote a path is its latest write.
+            if touch(repo, &commit, Path::new(path))? != Touch::Untouched {
+                out.insert(path.clone(), seconds);
+            }
         }
     }
     Ok(out)
@@ -1521,11 +1560,17 @@ mod tests {
         paths.sort();
         assert_eq!(paths, vec!["a.md".to_string(), "notes/b.md".to_string()]);
 
-        let times = last_changed(&repo, NOTES_REF).unwrap();
+        let times = last_written(&repo, NOTES_REF, &paths).unwrap();
         assert!(times.contains_key("a.md") && times.contains_key("notes/b.md"));
         assert!(
             times["a.md"] >= times["notes/b.md"],
             "the later change must not be reported as older"
+        );
+
+        let unheld = ["never-recorded.md".to_string()];
+        assert!(
+            last_written(&repo, NOTES_REF, &unheld).unwrap().is_empty(),
+            "a path the reference never held has no time to report"
         );
     }
 }

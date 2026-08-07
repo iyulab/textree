@@ -1091,17 +1091,16 @@ pub fn deleted_notes(root: String) -> Result<Vec<DeletedNote>, String> {
     };
     let repo = prepared.repo();
 
-    let kept_times = crate::git_engine::last_changed(repo, crate::git_engine::SNAPSHOT_REF)
-        .map_err(|e| e.message().to_string())?;
-    let recorded_times = crate::git_engine::last_changed(repo, crate::git_engine::NOTES_REF)
-        .map_err(|e| e.message().to_string())?;
     let recorded_paths: std::collections::HashSet<String> =
         crate::git_engine::tip_paths(repo, crate::git_engine::NOTES_REF)
             .map_err(|e| e.message().to_string())?
             .into_iter()
             .collect();
 
-    let mut seen: std::collections::HashMap<String, DeletedNote> = std::collections::HashMap::new();
+    // Which notes are missing is settled first, from the folder alone. Only then is the history
+    // asked anything, and only about those — the ones still in the folder have no question to
+    // answer, and there are usually far more of them.
+    let mut missing: Vec<(String, String)> = Vec::new();
     for in_repo in recorded_paths.iter().cloned().chain(
         crate::git_engine::tip_paths(repo, crate::git_engine::SNAPSHOT_REF)
             .map_err(|e| e.message().to_string())?,
@@ -1113,7 +1112,18 @@ pub fn deleted_notes(root: String) -> Result<Vec<DeletedNote>, String> {
         if root_p.join(&rel).exists() {
             continue;
         }
-        let rel = rel.to_string_lossy().replace('\\', "/");
+        missing.push((in_repo, rel.to_string_lossy().replace('\\', "/")));
+    }
+    let asking: Vec<String> = missing.iter().map(|(in_repo, _)| in_repo.clone()).collect();
+    let kept_times =
+        crate::git_engine::last_written(repo, crate::git_engine::SNAPSHOT_REF, &asking)
+            .map_err(|e| e.message().to_string())?;
+    let recorded_times =
+        crate::git_engine::last_written(repo, crate::git_engine::NOTES_REF, &asking)
+            .map_err(|e| e.message().to_string())?;
+
+    let mut seen: std::collections::HashMap<String, DeletedNote> = std::collections::HashMap::new();
+    for (in_repo, rel) in missing {
         // When it left, not when it was last saved. Only the first of those answers the
         // question the list is sorted by.
         let seconds = kept_times
@@ -1133,16 +1143,17 @@ pub fn deleted_notes(root: String) -> Result<Vec<DeletedNote>, String> {
     Ok(out)
 }
 
-/// When `reference` last wrote `rel`, in seconds since the epoch.
-fn last_written(
+/// When `reference` last wrote one path, in seconds since the epoch.
+fn last_written_at(
     repo: &git2::Repository,
     reference: &str,
     in_repo: &Path,
 ) -> Result<Option<i64>, String> {
-    Ok(crate::git_engine::history(repo, reference, in_repo)
+    let asking = [in_repo.to_string_lossy().replace('\\', "/")];
+    Ok(crate::git_engine::last_written(repo, reference, &asking)
         .map_err(|e| e.message().to_string())?
-        .first()
-        .map(|v| v.seconds))
+        .into_values()
+        .next())
 }
 
 /// Brings a deleted note back into the folder.
@@ -1164,8 +1175,8 @@ pub fn restore_deleted(root: String, rel: String) -> Result<RestoredNote, String
     let repo = prepared.repo();
     let in_repo = prepared.path_in_repo(Path::new(&rel));
 
-    let kept = last_written(repo, crate::git_engine::SNAPSHOT_REF, &in_repo)?;
-    let recorded = last_written(repo, crate::git_engine::NOTES_REF, &in_repo)?;
+    let kept = last_written_at(repo, crate::git_engine::SNAPSHOT_REF, &in_repo)?;
+    let recorded = last_written_at(repo, crate::git_engine::NOTES_REF, &in_repo)?;
     // A tie goes to what was kept: it is written as the note leaves, so it is at or after
     // whatever was recorded in the same second.
     let as_deleted = match (kept, recorded) {

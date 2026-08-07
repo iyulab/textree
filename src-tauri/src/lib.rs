@@ -7,6 +7,8 @@ pub(crate) mod fs_ops;
 #[cfg(test)]
 mod gate_deletion_recoverable;
 #[cfg(test)]
+mod gate_foreground_latency;
+#[cfg(test)]
 mod gate_staging_untouched;
 pub(crate) mod git_engine;
 pub(crate) mod pathsafe;
