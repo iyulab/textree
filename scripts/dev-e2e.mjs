@@ -44,12 +44,29 @@ const SAMPLE_VAULT = {
  */
 const DEFAULT_VAULT_BASE = join(tmpdir(), "textree-e2e-default-vault");
 
+/**
+ * Base directory the app is forced to keep per-folder settings under.
+ * Keep in sync with E2E_PERSONAL_BASE in e2e/helpers.ts.
+ *
+ * Without this the app resolves the home directory, so a suite run writes a settings folder for
+ * every temporary vault it creates into the home directory of whoever ran it, and leaves them
+ * there: the vaults are removed at the end of each test, the settings keyed to them are not.
+ * Forcing a base the launcher owns keeps the run self-contained and lets it start from a clean
+ * slate, the same way the default-vault base does.
+ */
+const PERSONAL_BASE = join(tmpdir(), "textree-e2e-personal");
+
 // Only ever recreate a directory we own: inside the temp dir and under our own name.
-if (resolve(DEFAULT_VAULT_BASE) !== resolve(join(tmpdir(), "textree-e2e-default-vault"))) {
-  throw new Error(`Refusing to reset an unexpected path: ${DEFAULT_VAULT_BASE}`);
+for (const [owned, expected] of [
+  [DEFAULT_VAULT_BASE, join(tmpdir(), "textree-e2e-default-vault")],
+  [PERSONAL_BASE, join(tmpdir(), "textree-e2e-personal")],
+]) {
+  if (resolve(owned) !== resolve(expected)) {
+    throw new Error(`Refusing to reset an unexpected path: ${owned}`);
+  }
+  rmSync(owned, { recursive: true, force: true });
+  mkdirSync(owned, { recursive: true });
 }
-rmSync(DEFAULT_VAULT_BASE, { recursive: true, force: true });
-mkdirSync(DEFAULT_VAULT_BASE, { recursive: true });
 
 const sampleVault = join(REPO, "sample-vault");
 rmSync(sampleVault, { recursive: true, force: true });
@@ -60,12 +77,17 @@ for (const [rel, content] of Object.entries(SAMPLE_VAULT)) {
 }
 
 console.log(`[dev:e2e] default vault base: ${DEFAULT_VAULT_BASE}`);
+console.log(`[dev:e2e] personal settings base: ${PERSONAL_BASE}`);
 console.log(`[dev:e2e] sample vault seeded: ${sampleVault}`);
 
 const child = spawn("tauri", ["dev", "--config", "src-tauri/tauri.e2e.conf.json"], {
   stdio: "inherit",
   shell: true,
-  env: { ...process.env, TEXTREE_DEFAULT_VAULT_BASE: DEFAULT_VAULT_BASE },
+  env: {
+    ...process.env,
+    TEXTREE_DEFAULT_VAULT_BASE: DEFAULT_VAULT_BASE,
+    TEXTREE_PERSONAL_BASE: PERSONAL_BASE,
+  },
 });
 
 child.on("exit", (code, signal) => {

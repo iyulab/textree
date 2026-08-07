@@ -5,6 +5,8 @@ import {
   createTempVault,
   removeTempVault,
   readVaultFile,
+  readSidecar,
+  listVaultDir,
 } from "./helpers";
 
 /**
@@ -103,15 +105,9 @@ test("folder table: filter, save a named view, persist, reselect, delete", async
     await table.getByRole("textbox", { name: "View name" }).fill("Done");
     await table.getByRole("button", { name: "Save", exact: true }).click();
 
-    // It persists to .textree/views.json on disk (folder-keyed; new IPC 0, reuses write_sidecar).
+    // It persists to views.json among this vault's settings (folder-keyed; reuses write_sidecar).
     await expect
-      .poll(() => {
-        try {
-          return readVaultFile(vault, ".textree/views.json");
-        } catch {
-          return "";
-        }
-      })
+      .poll(() => JSON.stringify(readSidecar(vault, "views.json") ?? ""))
       .toContain("Done");
 
     // "All" returns to the unfiltered view.
@@ -140,6 +136,10 @@ test("folder table: saved views from a different vault location surface a dismis
   // Pre-seed views.json with a key that belongs to ANOTHER absolute location (vault moved or
   // opened on another device). The views can't resolve here, so instead of vanishing silently
   // the app raises a non-destructive notice. The saved data is never rewritten or deleted.
+  //
+  // Seeded where settings used to be kept, so opening the vault also carries them out of the notes
+  // folder on the way: a view saved before that move must still reach the notice rather than be
+  // dropped in transit.
   const foreignKey = "C:/some-old-location/tasks";
   const vault = createTempVault({
     "tasks/alpha.md": "---\nstatus: done\n---\n# Alpha\n",
@@ -153,14 +153,22 @@ test("folder table: saved views from a different vault location surface a dismis
 
   try {
     await loadVault(page, vault);
+
+    // Moving them out is announced first, and that notice is modal — acknowledge it before
+    // anything underneath can be reached.
+    await page.getByTestId("migration-ok").click();
+    await expect(page.getByTestId("migration-notice")).toHaveCount(0);
+
     await expect(banner).toBeVisible();
 
-    // Dismissible (D18: non-destructive — surface + let the user decide).
+    // Dismissible (non-destructive — surface it and let the user decide).
     await banner.getByRole("button", { name: "Dismiss" }).click();
     await expect(banner).toHaveCount(0);
 
-    // The foreign view data is still on disk, untouched.
-    expect(readVaultFile(vault, ".textree/views.json")).toContain("some-old-location");
+    // The foreign view data survived the move, untouched...
+    expect(JSON.stringify(readSidecar(vault, "views.json"))).toContain("some-old-location");
+    // ...and it is no longer sitting among the notes.
+    expect(listVaultDir(vault, ".")).not.toContain(".textree");
   } finally {
     removeTempVault(vault);
   }

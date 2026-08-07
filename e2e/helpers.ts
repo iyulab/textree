@@ -19,6 +19,56 @@ const APP_URL_FRAGMENT = "localhost:1420";
 export const E2E_DEFAULT_VAULT_BASE = join(tmpdir(), "textree-e2e-default-vault");
 
 /**
+ * Base directory the launcher forces per-folder settings under.
+ * Keep in sync with PERSONAL_BASE in scripts/dev-e2e.mjs.
+ */
+export const E2E_PERSONAL_BASE = join(tmpdir(), "textree-e2e-personal");
+
+/**
+ * Directory holding the settings the app keeps for one vault.
+ *
+ * Settings live outside the notes folder, keyed per folder, so a spec cannot read them at a path
+ * it composes from the vault path alone. The key is the folder's own name followed by a digest of
+ * its absolute path, so this looks the folder up by that name rather than recomputing the digest:
+ * a copy of the digest in the specs would keep passing after the real one changed, which is worse
+ * than not checking at all.
+ *
+ * Throws rather than returning null when the lookup is not unambiguous, so a spec says which of
+ * the three it hit — never started through the launcher, the app wrote nothing, or two vaults in
+ * the run share a folder name.
+ */
+export function sidecarDir(vaultPath: string): string {
+  const vaults = join(E2E_PERSONAL_BASE, ".textree", "vaults");
+  if (!existsSync(vaults)) {
+    throw new Error(
+      `No settings directory at ${vaults}. Start the app with \`npm run dev:e2e\`; ` +
+        "scripts/dev-e2e.mjs points the app at this base.",
+    );
+  }
+  const name = vaultPath.replace(/[/\\]+$/, "").split(/[/\\]/).pop() ?? "";
+  const matches = readdirSync(vaults).filter((entry) => entry.startsWith(`${name}-`));
+  if (matches.length !== 1) {
+    throw new Error(
+      `Expected exactly one settings folder for "${name}" under ${vaults}, found ${matches.length}` +
+        (matches.length > 1 ? ` (${matches.join(", ")})` : ""),
+    );
+  }
+  return join(vaults, matches[0]);
+}
+
+/**
+ * Read one of the vault's settings files, or null when the app has not written it yet.
+ * Callers poll this: the write is a side effect of a UI action, not something to await directly.
+ */
+export function readSidecar(vaultPath: string, name: string): unknown {
+  try {
+    return JSON.parse(readFileSync(join(sidecarDir(vaultPath), name), "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Absolute path to sample-vault (slash-normalized — the Tauri backend accepts both separators).
  * The launcher seeds it; failing here names that, instead of letting every dependent spec fail on
  * a missing tree item.
@@ -35,6 +85,37 @@ export function sampleVaultPath(): string {
 }
 
 /**
+ * Warnings and errors the app reported while the suite was driving it, oldest first.
+ *
+ * Some failures only warn: a settings write that does not land keeps the new state on screen while
+ * disk keeps the old one, and the app carries on. A spec that later reads that file reports a value
+ * mismatch with nothing to explain it, which is indistinguishable from a spec that is simply wrong.
+ * Collecting these — and echoing them to the runner as they happen — is what makes the difference
+ * visible on the run that hits it, rather than only on a run someone manages to reproduce.
+ */
+export const appLog: string[] = [];
+
+/** Take everything collected so far and reset, so one test's noise is not read as another's. */
+export function drainAppLog(): string[] {
+  return appLog.splice(0, appLog.length);
+}
+
+function recordAppLog(page: Page): void {
+  page.on("console", (msg) => {
+    const type = msg.type();
+    if (type !== "warning" && type !== "error") return;
+    const line = `[app ${type}] ${msg.text()}`;
+    appLog.push(line);
+    console.log(line);
+  });
+  page.on("pageerror", (err) => {
+    const line = `[app pageerror] ${err.message}`;
+    appLog.push(line);
+    console.log(line);
+  });
+}
+
+/**
  * Connect to the running Textree WebView2 via CDP and return the app page.
  * When done, the caller closes only the CDP connection with browser.close() (the real app stays running).
  */
@@ -43,6 +124,7 @@ export async function connectToApp(): Promise<{ browser: Browser; page: Page }> 
   for (const ctx of browser.contexts()) {
     for (const p of ctx.pages()) {
       if (p.url().includes(APP_URL_FRAGMENT)) {
+        recordAppLog(p);
         // Wait until the dev test bridge is up (guarantees onMount completed).
         await p.waitForFunction(
           () => Boolean((window as unknown as { __textreeTest?: unknown }).__textreeTest),

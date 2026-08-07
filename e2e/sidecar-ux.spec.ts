@@ -1,13 +1,29 @@
 import { test, expect, type Browser, type Page } from "@playwright/test";
-import { connectToApp, loadVault, createTempVault, removeTempVault, readVaultFile } from "./helpers";
+import {
+  connectToApp,
+  loadVault,
+  createTempVault,
+  removeTempVault,
+  listVaultDir,
+  readSidecar,
+} from "./helpers";
 
 /**
- * P0 sidecar UX — verify manual ordering (order.json) and favorites (favorites.json)
- * all the way from the real UI → backend IPC → disk sidecar.
+ * Settings UX — verify manual ordering (order.json) and favorites (favorites.json)
+ * all the way from the real UI → backend IPC → the settings written to disk.
  *
- * Favorites are exposed in the tree as a star affordance (read indicator + toggle, P1) and can
- * also be toggled via palette command mode ('>'). Both paths persist to favorites.json.
+ * Favorites are exposed in the tree as a star affordance (read indicator + toggle) and can also be
+ * toggled via palette command mode ('>'). Both paths persist to favorites.json.
+ *
+ * These files are kept outside the notes folder, so each test asserts both halves: the setting was
+ * written where settings belong, and the notes folder gained nothing. Asserting only the first
+ * would keep passing if the app started leaving files among the notes again.
  */
+
+/** Names the notes folder holds beyond the notes themselves — expected to stay empty. */
+function strayEntries(vault: string): string[] {
+  return listVaultDir(vault, ".").filter((name) => name !== ".git" && !name.endsWith(".md"));
+}
 
 let browser: Browser;
 let page: Page;
@@ -28,14 +44,6 @@ async function runCommand(p: Page, query: string): Promise<void> {
   await expect(p.getByTestId("palette-item").first()).toBeVisible();
   await p.keyboard.press("Enter");
   await expect(p.getByTestId("palette-overlay")).toHaveCount(0);
-}
-
-function readSidecar(vault: string, name: string): unknown {
-  try {
-    return JSON.parse(readVaultFile(vault, `.textree/${name}`));
-  } catch {
-    return null;
-  }
 }
 
 test("manual ordering: 'move down' → visual order swap + order.json persists", async () => {
@@ -66,6 +74,9 @@ test("manual ordering: 'move down' → visual order swap + order.json persists",
         return order[key]?.[0] ?? null;
       })
       .toContain("bravo"); // before[1] = bravo moves to the front
+
+    // ...and the notes folder is exactly what it was.
+    expect(strayEntries(vault)).toEqual([]);
   } finally {
     removeTempVault(vault);
   }
@@ -90,6 +101,8 @@ test("favorite toggle → favorites.json add/remove persists", async () => {
     await expect
       .poll(() => (readSidecar(vault, "favorites.json") as string[] | null)?.length ?? 0)
       .toBe(0);
+
+    expect(strayEntries(vault)).toEqual([]);
   } finally {
     removeTempVault(vault);
   }
@@ -114,6 +127,8 @@ test("tree star: toggle favorite from the row + reflects state + persists", asyn
     await expect
       .poll(() => (readSidecar(vault, "favorites.json") as string[] | null)?.length ?? 0)
       .toBe(0);
+
+    expect(strayEntries(vault)).toEqual([]);
   } finally {
     removeTempVault(vault);
   }
