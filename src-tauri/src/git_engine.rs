@@ -103,6 +103,11 @@ pub struct RecordedVersion {
     pub seconds: i64,
     /// Who it is recorded as being written by.
     pub author: String,
+    /// The name the note went by at this revision, separated by `/`.
+    ///
+    /// Not the same as the name it goes by now: a note that was renamed is one note, and its
+    /// earlier states are held under whatever it was called at the time.
+    pub path: String,
 }
 
 /// Every path the newest revision on `reference` holds, separated by `/`.
@@ -110,9 +115,14 @@ pub struct RecordedVersion {
 /// Returns nothing when the reference does not exist, which is the ordinary state of a folder
 /// where nothing has been recorded yet rather than a failure.
 pub fn tip_paths(repo: &Repository, reference: &str) -> Result<Vec<String>, git2::Error> {
-    let Some(tree) = tip_tree(repo, reference) else {
-        return Ok(Vec::new());
-    };
+    match tip_tree(repo, reference) {
+        Some(tree) => tip_paths_of(&tree),
+        None => Ok(Vec::new()),
+    }
+}
+
+/// Every path a tree holds, separated by `/`.
+fn tip_paths_of(tree: &Tree<'_>) -> Result<Vec<String>, git2::Error> {
     let mut out = Vec::new();
     tree.walk(git2::TreeWalkMode::PreOrder, |dir, entry| {
         if entry.kind() == Some(git2::ObjectType::Blob) {
@@ -148,16 +158,71 @@ fn changed_paths(repo: &Repository, commit: &git2::Commit<'_>) -> Result<Vec<Str
     Ok(out)
 }
 
+/// How one revision relates to the path being followed.
+enum Step {
+    /// The revision left it alone.
+    Untouched,
+    /// The revision wrote it.
+    Changed,
+    /// The revision brought it here from another name; keep following that one.
+    MovedFrom(String),
+}
+
+/// What one revision did to `target`, with moves recognised as moves.
+///
+/// Rename detection is git's own: nothing records where a file used to be, it is inferred from
+/// contents. That is also why a move has to be a revision at all — an unwritten move is one git
+/// has no way to infer.
+fn step_for(
+    repo: &Repository,
+    commit: &git2::Commit<'_>,
+    target: &str,
+) -> Result<Step, git2::Error> {
+    let tree = commit.tree()?;
+    let parent = match commit.parent(0) {
+        Ok(p) => Some(p.tree()?),
+        Err(_) => None,
+    };
+    let mut diff = repo.diff_tree_to_tree(parent.as_ref(), Some(&tree), None)?;
+    let mut finding = git2::DiffFindOptions::new();
+    finding.renames(true);
+    diff.find_similar(Some(&mut finding))?;
+
+    for delta in diff.deltas() {
+        let new = delta.new_file().path().map(slashed);
+        let old = delta.old_file().path().map(slashed);
+        if new.as_deref() == Some(target) {
+            if delta.status() == git2::Delta::Renamed {
+                if let Some(previous) = old.filter(|o| o != target) {
+                    return Ok(Step::MovedFrom(previous));
+                }
+            }
+            return Ok(Step::Changed);
+        }
+        if old.as_deref() == Some(target) {
+            // It left this name here. Following further back would be following whatever
+            // occupies the name now, which is a different note.
+            return Ok(Step::Changed);
+        }
+    }
+    Ok(Step::Untouched)
+}
+
 /// Every revision on `reference` that changed `rel`, newest first.
 ///
 /// Revisions that left `rel` alone are skipped: recording several notes at once would otherwise
 /// make each of them appear to have changed whenever any of the others did.
+///
+/// A revision that only moved the note is followed rather than listed. Renaming a note does not
+/// produce a state of it worth going back to, and listing one would put an entry in front of
+/// the reader that they did not make; but the states from before the rename are still theirs,
+/// so the trail continues under the earlier name.
 pub fn history(
     repo: &Repository,
     reference: &str,
     rel: &Path,
 ) -> Result<Vec<RecordedVersion>, git2::Error> {
-    let target = slashed(rel);
+    let mut target = slashed(rel);
     let mut out = Vec::new();
     if repo.find_reference(reference).is_err() {
         return Ok(out);
@@ -170,17 +235,42 @@ pub fn history(
     walk.push_ref(reference)?;
     for id in walk {
         let commit = repo.find_commit(id?)?;
-        if !changed_paths(repo, &commit)?.contains(&target) {
-            continue;
+        match step_for(repo, &commit, &target)? {
+            Step::Untouched => continue,
+            Step::MovedFrom(previous) => {
+                target = previous;
+                continue;
+            }
+            Step::Changed => {}
         }
         out.push(RecordedVersion {
             id: commit.id().to_string(),
             message: commit.summary().ok().flatten().unwrap_or("").to_string(),
             seconds: commit.time().seconds(),
             author: commit.author().name().unwrap_or("").to_string(),
+            path: target.clone(),
         });
     }
     Ok(out)
+}
+
+/// What a note held at one of its recorded states, named by the note's current path.
+///
+/// Goes through the note's history rather than straight to the revision, because a note that
+/// was renamed is held under its earlier name in everything recorded before the rename: asking
+/// an old revision for the current name finds nothing there.
+///
+/// `None` when no state of this note carries that identifier.
+pub fn content_at_version(
+    repo: &Repository,
+    reference: &str,
+    rel: &Path,
+    id: &str,
+) -> Result<Option<Vec<u8>>, git2::Error> {
+    let Some(version) = history(repo, reference, rel)?.into_iter().find(|v| v.id == id) else {
+        return Ok(None);
+    };
+    content_at(repo, id, Path::new(&version.path))
 }
 
 /// When each path on `reference` was last changed, in seconds since the epoch.
@@ -298,7 +388,15 @@ pub fn tree_with_file(
         .and_then(|o| o.into_tree().ok());
     let rest: PathBuf = comps.iter().collect();
     let sub_oid = tree_with_file(repo, sub_base.as_ref(), &rest, blob)?;
-    builder.insert(name.as_str(), sub_oid, MODE_TREE)?;
+    // A folder that just lost its last file is not a folder any more. Keeping the empty tree
+    // would leave a name behind that holds nothing and that no listing can account for.
+    if repo.find_tree(sub_oid)?.is_empty() {
+        if base.and_then(|t| t.get_name(&name)).is_some() {
+            builder.remove(name.as_str())?;
+        }
+    } else {
+        builder.insert(name.as_str(), sub_oid, MODE_TREE)?;
+    }
     builder.write()
 }
 
@@ -356,6 +454,80 @@ pub fn commit_paths(
     // behalf: only the reference named by the caller is advanced, below.
     let commit = repo.commit(None, author, committer, message, &tree, &parents)?;
     repo.reference(reference, commit, true, message)?;
+    Ok(Some(commit))
+}
+
+/// Every path `tree` holds at or under `from`, paired with where `to` puts it.
+fn rewritten_under(tree_paths: &[String], from: &str, to: &str) -> Vec<(String, String)> {
+    let under = format!("{from}/");
+    tree_paths
+        .iter()
+        .filter_map(|held| {
+            if held == from {
+                Some((held.clone(), to.to_string()))
+            } else {
+                held.strip_prefix(&under)
+                    .map(|rest| (held.clone(), format!("{to}/{rest}")))
+            }
+        })
+        .collect()
+}
+
+/// Carries what `reference` holds from one place to another, as one revision.
+///
+/// Each pair moves everything at or under its first path, and the pairs are applied in the
+/// order given — so an operation that is several moves on disk (renaming a folder also renames
+/// the note that carries its name) is still one revision here. Returns `None` when the
+/// reference holds nothing that any pair touches, which is the ordinary case for notes that
+/// were never recorded.
+///
+/// **The move has to be written.** Nothing else records where a note used to be: leaving it out
+/// keeps the old name in the reference for good, where it reads as a note that is no longer in
+/// the folder — so renaming a note would offer it back under its old name as something deleted,
+/// and taking that offer would produce a second stale copy of a note nobody deleted.
+pub fn move_recorded(
+    repo: &Repository,
+    reference: &str,
+    moves: &[(PathBuf, PathBuf)],
+    author: &Signature<'_>,
+    committer: &Signature<'_>,
+) -> Result<Option<Oid>, git2::Error> {
+    let Some(base) = tip_tree(repo, reference) else {
+        return Ok(None);
+    };
+    let mut tree = base;
+    let mut moved_any = false;
+    let mut described: Vec<String> = Vec::new();
+
+    for (from, to) in moves {
+        let (from_s, to_s) = (slashed(from), slashed(to));
+        if from_s.is_empty() || to_s.is_empty() || from_s == to_s {
+            continue;
+        }
+        let held = tip_paths_of(&tree)?;
+        let pairs = rewritten_under(&held, &from_s, &to_s);
+        if pairs.is_empty() {
+            continue;
+        }
+        for (old, new) in &pairs {
+            let blob = blob_in_tree(repo, &tree, Path::new(old))
+                .ok_or_else(|| git2::Error::from_str("a path the tree listed is not in it"))?;
+            let without =
+                repo.find_tree(tree_with_file(repo, Some(&tree), Path::new(old), None)?)?;
+            let with = tree_with_file(repo, Some(&without), Path::new(new), Some(blob))?;
+            tree = repo.find_tree(with)?;
+        }
+        moved_any = true;
+        described.push(format!("{from_s} to {to_s}"));
+    }
+    if !moved_any {
+        return Ok(None);
+    }
+
+    let parent = repo.find_reference(reference)?.peel_to_commit()?;
+    let message = format!("moved {}", described.join(", "));
+    let commit = repo.commit(None, author, committer, &message, &tree, &[&parent])?;
+    repo.reference(reference, commit, true, &message)?;
     Ok(Some(commit))
 }
 
@@ -494,6 +666,30 @@ impl VaultRepo {
 /// has no commit yet.
 pub fn prepare(vault_root: &Path) -> Result<VaultRepo, git2::Error> {
     match probe(vault_root) {
+        RepoState::None => Ok(VaultRepo {
+            repo: Repository::init(vault_root)?,
+            prefix: PathBuf::new(),
+        }),
+        governed => open_governing(vault_root, governed),
+    }
+}
+
+/// Opens the repository governing a vault folder, and does not make one.
+///
+/// `Ok(None)` when no repository governs the folder yet. For anything that only looks at what
+/// was recorded, that is an ordinary state — a folder nothing has been recorded in — and not a
+/// reason to create a repository there. Creating one is what recording does.
+pub fn open_existing(vault_root: &Path) -> Result<Option<VaultRepo>, git2::Error> {
+    match probe(vault_root) {
+        RepoState::None => Ok(None),
+        governed => open_governing(vault_root, governed).map(Some),
+    }
+}
+
+/// Opens the repository named by an already-taken [`probe`], which must not be
+/// [`RepoState::None`].
+fn open_governing(vault_root: &Path, state: RepoState) -> Result<VaultRepo, git2::Error> {
+    match state {
         RepoState::AtRoot => Ok(VaultRepo {
             repo: Repository::open(vault_root)?,
             prefix: PathBuf::new(),
@@ -518,10 +714,9 @@ pub fn prepare(vault_root: &Path) -> Result<VaultRepo, git2::Error> {
         RepoState::Bare(_) => Err(git2::Error::from_str(
             "this folder is a repository without a working tree, so notes cannot live in it",
         )),
-        RepoState::None => Ok(VaultRepo {
-            repo: Repository::init(vault_root)?,
-            prefix: PathBuf::new(),
-        }),
+        RepoState::None => Err(git2::Error::from_str(
+            "no repository governs this folder",
+        )),
     }
 }
 

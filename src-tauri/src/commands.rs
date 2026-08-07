@@ -429,9 +429,22 @@ pub fn create_folder(root: String, parent: String, name: String) -> Result<Strin
 
 #[tauri::command]
 pub fn promote_node(root: String, path: String) -> Result<String, String> {
-    let dir = crate::fs_ops::promote_leaf(Path::new(&root), Path::new(&path))
-        .map_err(|e| e.to_string())?;
+    let root_p = Path::new(&root);
+    // Resolved first: promoting replaces the file this names.
+    let from_rel = rel_to_root(root_p, Path::new(&path)).ok();
+    let dir = crate::fs_ops::promote_leaf(root_p, Path::new(&path)).map_err(|e| e.to_string())?;
+    // The note did not disappear, it went one level down and took its history with it.
+    if let (Some(from), Some(to)) = (from_rel, folder_note_rel(root_p, &dir)) {
+        record_moves(root_p, &[(from, to)]);
+    }
     Ok(dir.display().to_string())
+}
+
+/// The vault-relative path of the note a folder is named after.
+fn folder_note_rel(root: &Path, dir: &Path) -> Option<String> {
+    let stem = dir.file_name().and_then(|s| s.to_str())?;
+    let dir_rel = rel_to_root(root, dir).ok()?;
+    Some(format!("{dir_rel}/{stem}.md"))
 }
 
 /// Vault-root-relative, `/`-separated path of an existing target (for manifest portability).
@@ -660,26 +673,115 @@ pub fn purge_trash(root: String, trash_name: Option<String>) -> Result<(), Strin
     }
 }
 
+/// Carries whatever was recorded along a set of moves, in every reference that holds it.
+///
+/// The pairs are vault-relative and applied in order, so an operation that is several moves on
+/// disk stays one revision here.
+///
+/// Best-effort by design: the files have already moved by the time this runs, and a history
+/// that could not keep up is not a reason to report the move as having failed. It is reported
+/// in the log instead.
+///
+/// No repository is created here. A folder nothing was ever recorded in has no history for a
+/// move to affect, and moving a file around is not the moment to start one.
+fn record_moves(root: &Path, pairs: &[(String, String)]) {
+    if pairs.is_empty() {
+        return;
+    }
+    let prepared = match crate::git_engine::open_existing(root) {
+        Ok(Some(p)) => p,
+        Ok(None) => return,
+        Err(e) => {
+            log::warn!("record_moves: cannot open the repository: {}", e.message());
+            return;
+        }
+    };
+    let repo = prepared.repo();
+    let moves: Vec<(PathBuf, PathBuf)> = pairs
+        .iter()
+        .map(|(from, to)| {
+            (
+                prepared.path_in_repo(Path::new(from)),
+                prepared.path_in_repo(Path::new(to)),
+            )
+        })
+        .collect();
+    let Ok((author, committer)) = crate::git_engine::commit_identities(repo) else {
+        log::warn!("record_moves: no identity available");
+        return;
+    };
+    // Both references are carried over. What was kept when a note was deleted describes the
+    // same note, so leaving it at the old name would make a note that came back and was then
+    // renamed look deleted all over again.
+    for reference in [crate::git_engine::NOTES_REF, crate::git_engine::SNAPSHOT_REF] {
+        match crate::git_engine::move_recorded(repo, reference, &moves, &author, &committer) {
+            Ok(Some(_)) => log::info!("record_moves: {} pair(s) in {reference}", pairs.len()),
+            Ok(None) => {}
+            Err(e) => log::warn!("record_moves: {reference} not updated: {}", e.message()),
+        }
+    }
+}
+
 #[tauri::command]
 pub fn rename_node(root: String, path: String, name: String) -> Result<String, String> {
-    let p = crate::fs_ops::rename_node(Path::new(&root), Path::new(&path), &name)
-        .map_err(|e| e.to_string())?;
+    let root_p = Path::new(&root);
+    let target = Path::new(&path);
+    // Read before the move: resolving a path needs it to still be where it is. A folder also
+    // carries a note named after it, and that note is renamed too — two moves, one revision.
+    let from_rel = rel_to_root(root_p, target).ok();
+    let folder_note = target
+        .is_dir()
+        .then(|| target.file_name().and_then(|s| s.to_str()).map(str::to_string))
+        .flatten();
+
+    let p = crate::fs_ops::rename_node(root_p, target, &name).map_err(|e| e.to_string())?;
     log::info!("rename_node: {} -> {}", path, name);
+
+    if let (Some(from), Ok(to)) = (from_rel, rel_to_root(root_p, &p)) {
+        let mut pairs = vec![(from, to.clone())];
+        if let Some(old_name) = folder_note {
+            pairs.push((format!("{to}/{old_name}.md"), format!("{to}/{name}.md")));
+        }
+        record_moves(root_p, &pairs);
+    }
     Ok(p.display().to_string())
 }
 
 #[tauri::command]
 pub fn move_node(root: String, path: String, dest: String) -> Result<String, String> {
-    let p = crate::fs_ops::move_node(Path::new(&root), Path::new(&path), Path::new(&dest))
+    let root_p = Path::new(&root);
+    let from_rel = rel_to_root(root_p, Path::new(&path)).ok();
+    let p = crate::fs_ops::move_node(root_p, Path::new(&path), Path::new(&dest))
         .map_err(|e| e.to_string())?;
     log::info!("move_node: {} -> {}", path, dest);
+    if let (Some(from), Ok(to)) = (from_rel, rel_to_root(root_p, &p)) {
+        record_moves(root_p, &[(from, to)]);
+    }
     Ok(p.display().to_string())
 }
 
 #[tauri::command]
 pub fn adopt_node(root: String, path: String, leaf: String) -> Result<String, String> {
-    let p = crate::fs_ops::adopt_into_leaf(Path::new(&root), Path::new(&path), Path::new(&leaf))
+    let root_p = Path::new(&root);
+    let leaf_p = Path::new(&leaf);
+    let from_rel = rel_to_root(root_p, Path::new(&path)).ok();
+    // The leaf is resolved before it is promoted, because promoting replaces the file it names.
+    let leaf_before = rel_to_root(root_p, leaf_p).ok();
+
+    let p = crate::fs_ops::adopt_into_leaf(root_p, Path::new(&path), leaf_p)
         .map_err(|e| e.to_string())?;
+
+    // Adopting is a promotion followed by a move, and both have to be carried over.
+    let mut pairs = Vec::new();
+    if let (Some(before), Some(after)) =
+        (leaf_before, p.parent().and_then(|d| folder_note_rel(root_p, d)))
+    {
+        pairs.push((before, after));
+    }
+    if let (Some(from), Ok(to)) = (from_rel, rel_to_root(root_p, &p)) {
+        pairs.push((from, to));
+    }
+    record_moves(root_p, &pairs);
     Ok(p.display().to_string())
 }
 
@@ -957,9 +1059,14 @@ pub fn note_version_text(root: String, path: String, id: String) -> Result<Strin
     let rel = rel_to_root(root_p, target)?;
     let prepared = crate::git_engine::prepare(root_p).map_err(|e| e.message().to_string())?;
     let in_repo = prepared.path_in_repo(Path::new(&rel));
-    let content = crate::git_engine::content_at(prepared.repo(), &id, &in_repo)
-        .map_err(|e| e.message().to_string())?
-        .ok_or_else(|| format!("'{rel}' is not part of that recorded state"))?;
+    let content = crate::git_engine::content_at_version(
+        prepared.repo(),
+        crate::git_engine::NOTES_REF,
+        &in_repo,
+        &id,
+    )
+    .map_err(|e| e.message().to_string())?
+    .ok_or_else(|| format!("'{rel}' is not part of that recorded state"))?;
     String::from_utf8(content).map_err(|_| "this state is not text".to_string())
 }
 
@@ -1187,6 +1294,196 @@ mod tests {
         assert!(
             deleted_notes(root_s.clone()).unwrap().is_empty(),
             "what is back in the folder is no longer missing from it"
+        );
+    }
+
+    #[test]
+    fn renaming_a_recorded_note_does_not_make_it_look_deleted() {
+        // Nothing was deleted, so nothing belongs in the deleted list. Offering the old name
+        // back would put a second, older copy of a live note into the folder.
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        git2::Repository::init(root).unwrap();
+        let root_s = root.to_string_lossy().to_string();
+
+        let note = record_note(root, "before.md", "body");
+        rename_node(root_s.clone(), note, "after".into()).unwrap();
+
+        assert!(
+            deleted_notes(root_s.clone()).unwrap().is_empty(),
+            "a note that was renamed is still in the folder"
+        );
+        assert!(root.join("after.md").exists());
+    }
+
+    #[test]
+    fn a_renamed_notes_earlier_states_are_still_its_own() {
+        // Following the move is the other half of writing it: the states from before the
+        // rename were recorded by the same person about the same note.
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        git2::Repository::init(root).unwrap();
+        let root_s = root.to_string_lossy().to_string();
+
+        let note = record_note(root, "before.md", "first");
+        std::fs::write(&note, "second").unwrap();
+        commit_notes(root_s.clone(), vec![note.clone()], "second".into()).unwrap();
+        let after = rename_node(root_s.clone(), note, "after".into()).unwrap();
+
+        let versions = note_versions(root_s.clone(), after.clone()).unwrap();
+        assert_eq!(
+            versions.len(),
+            2,
+            "the rename is followed, and is not itself one of the states"
+        );
+        assert_eq!(versions[0].message, "second");
+        assert_eq!(
+            note_version_text(root_s, after, versions[1].id.clone()).unwrap(),
+            "first",
+            "the earliest state is readable under the new name"
+        );
+    }
+
+    #[test]
+    fn moving_a_folder_carries_every_recorded_note_in_it() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        git2::Repository::init(root).unwrap();
+        let root_s = root.to_string_lossy().to_string();
+
+        record_note(root, "src/a.md", "a");
+        record_note(root, "src/deep/b.md", "b");
+        std::fs::create_dir_all(root.join("dest")).unwrap();
+
+        move_node(
+            root_s.clone(),
+            root.join("src").to_string_lossy().to_string(),
+            root.join("dest").to_string_lossy().to_string(),
+        )
+        .unwrap();
+
+        assert!(
+            deleted_notes(root_s.clone()).unwrap().is_empty(),
+            "moving a folder deletes none of the notes in it"
+        );
+        assert_eq!(
+            note_versions(
+                root_s,
+                root.join("dest").join("src").join("deep").join("b.md")
+                    .to_string_lossy()
+                    .to_string(),
+            )
+            .unwrap()
+            .len(),
+            1,
+            "a note one level down keeps its history too"
+        );
+    }
+
+    #[test]
+    fn renaming_a_folder_carries_the_note_named_after_it() {
+        // A folder rename is two moves on disk: the folder, and the note that carries its
+        // name. Following only the first leaves the second recorded under a name nothing is at.
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        git2::Repository::init(root).unwrap();
+        let root_s = root.to_string_lossy().to_string();
+
+        record_note(root, "topic/topic.md", "the folder note");
+        record_note(root, "topic/child.md", "a child");
+
+        rename_node(
+            root_s.clone(),
+            root.join("topic").to_string_lossy().to_string(),
+            "subject".into(),
+        )
+        .unwrap();
+
+        assert!(
+            deleted_notes(root_s.clone()).unwrap().is_empty(),
+            "renaming a folder deletes neither it nor anything in it"
+        );
+        assert_eq!(
+            note_versions(
+                root_s,
+                root.join("subject").join("subject.md").to_string_lossy().to_string(),
+            )
+            .unwrap()
+            .len(),
+            1,
+            "the note the folder is named after keeps its history under the new name"
+        );
+    }
+
+    #[test]
+    fn turning_a_note_into_a_folder_carries_its_history_down_with_it() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        git2::Repository::init(root).unwrap();
+        let root_s = root.to_string_lossy().to_string();
+
+        let note = record_note(root, "topic.md", "body");
+        promote_node(root_s.clone(), note).unwrap();
+
+        assert!(
+            deleted_notes(root_s.clone()).unwrap().is_empty(),
+            "the note is still there, one level down"
+        );
+        assert_eq!(
+            note_versions(
+                root_s,
+                root.join("topic").join("topic.md").to_string_lossy().to_string(),
+            )
+            .unwrap()
+            .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn adopting_carries_both_the_promoted_note_and_the_one_taken_in() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        git2::Repository::init(root).unwrap();
+        let root_s = root.to_string_lossy().to_string();
+
+        let host = record_note(root, "host.md", "the host");
+        let guest = record_note(root, "guest.md", "the guest");
+
+        adopt_node(root_s.clone(), guest, host).unwrap();
+
+        assert!(
+            deleted_notes(root_s.clone()).unwrap().is_empty(),
+            "adopting is two moves, and neither of them is a deletion"
+        );
+        for landed in ["host.md", "guest.md"] {
+            assert_eq!(
+                note_versions(
+                    root_s.clone(),
+                    root.join("host").join(landed).to_string_lossy().to_string(),
+                )
+                .unwrap()
+                .len(),
+                1,
+                "{landed} keeps its history"
+            );
+        }
+    }
+
+    #[test]
+    fn renaming_a_note_that_was_never_recorded_starts_no_history() {
+        // There is nothing to carry over, and moving a file is not the moment to begin
+        // recording one.
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        let root_s = root.to_string_lossy().to_string();
+
+        let note = seed_note(root, "scratch.md", "body");
+        rename_node(root_s, note, "renamed".into()).unwrap();
+
+        assert!(
+            !root.join(".git").exists(),
+            "a folder nothing was recorded in stays a plain folder"
         );
     }
 
