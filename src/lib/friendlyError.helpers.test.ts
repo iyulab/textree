@@ -63,6 +63,25 @@ describe("friendlyError", () => {
     expect(r.raw).toContain("Permission denied (os error 13)");
   });
 
+  it("explains a folder left mid-operation without naming the machinery", () => {
+    const r = friendlyError(
+      "the repository is in the middle of another operation (Merge)",
+    );
+    expect(r.summary).toContain("Another tool left something unfinished");
+    expect(r.summary).toContain("nothing is lost");
+    // The words for what the other tool was doing stay out of the sentence: they name
+    // machinery the person never opted into and cannot act on.
+    expect(r.summary.toLowerCase()).not.toMatch(/merge|rebase|bisect|repositor/);
+    expect(r.raw).toContain("Merge");
+  });
+
+  it("explains a file a rule says to skip, and says the note is untouched", () => {
+    const r = friendlyError("'draft.md' is covered by an ignore rule, so recording it would leave it out");
+    expect(r.summary).toContain("says to skip this file");
+    expect(r.summary).toContain("untouched");
+    expect(r.summary.toLowerCase()).not.toMatch(/gitignore|git/);
+  });
+
   it("falls back to the raw text when the error is unrecognized (no silent loss)", () => {
     const r = friendlyError("totally novel backend failure xyz");
     // unknown → summary IS the raw text; nothing is hidden or swallowed

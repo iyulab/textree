@@ -58,6 +58,21 @@ const RULES: Rule[] = [
     summary: "Pick a folder outside your vault to publish the site into.",
   },
   {
+    // Another tool left an operation half-finished in this folder. Naming the operation would
+    // mean naming machinery the person never opted into, and they cannot act on the name
+    // either — what they can act on is the tool they were using.
+    match: ["in the middle of another operation"],
+    summary:
+      "Another tool left something unfinished in this folder. Finish it there, then try again. Your note is saved on disk — nothing is lost.",
+  },
+  {
+    // A rule in the folder says to skip this file. Refusing is the honest answer: recording it
+    // would leave the history without the thing it was asked to keep.
+    match: ["covered by an ignore rule"],
+    summary:
+      "A rule in this folder says to skip this file, so it can't get a version. The note itself is untouched.",
+  },
+  {
     match: ["outside the vault", "path is outside"],
     summary: "That location is outside the vault and can't be used.",
   },

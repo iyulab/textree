@@ -34,6 +34,9 @@ export interface PaletteActions {
   moveSelectedDown: () => void;
   rebuildIndex: () => void;
   hasVault: () => boolean;
+  /** Whether a note is open, so a version of it can be added. */
+  hasOpenNote: () => boolean;
+  addVersion: () => void;
   publishSite: () => void;
   publishToWeb: () => void;
   openTrash: () => void;
@@ -68,6 +71,7 @@ export function buildCommands(a: PaletteActions): Command[] {
     { id: "node.favorite", title: "Toggle favorite on selected node", category: "Selected node", run: a.toggleFavoriteSelected, when: sel },
     { id: "node.moveUp", title: "Move selected node up", category: "Selected node", run: a.moveSelectedUp, when: sel },
     { id: "node.moveDown", title: "Move selected node down", category: "Selected node", run: a.moveSelectedDown, when: sel },
+    { id: "note.addVersion", title: "Add version…", category: "Selected node", run: a.addVersion, keybinding: "mod+shift+s", when: a.hasOpenNote },
     { id: "search.rebuild", title: "Rebuild content index", category: "Search", run: a.rebuildIndex },
     { id: "vault.publish", title: "Publish site…", category: "Vault", run: a.publishSite, when: a.hasVault },
     { id: "vault.publishWeb", title: "Publish to web", category: "Vault", run: a.publishToWeb, when: a.hasVault },

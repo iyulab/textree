@@ -49,6 +49,7 @@
   import { aiHost } from "$lib/aiHost.svelte";
   import { formatModelDownload } from "$lib/modelDownload.helpers";
   import Trash from "$lib/Trash.svelte";
+  import AddVersion from "$lib/AddVersion.svelte";
   import Settings from "$lib/Settings.svelte";
   import PageHeader from "$lib/PageHeader.svelte";
   import { parseFrontmatter, getField } from "$lib/frontmatter.helpers";
@@ -102,6 +103,9 @@
   let vaultFallbackPath = $state<string | null>(null);
   let publishNotice = $state<{ kind: "ok" | "error"; text: string; detail?: string; onRetry?: () => void } | null>(null);
   let showTrash = $state(false);
+  let showAddVersion = $state(false);
+  /** What the last attempt to add a version came to. Not an error — it can also say nothing changed. */
+  let versionNotice = $state<string | null>(null);
   let showSettings = $state(false);
 
   // Sync-conflict surfacing — derived from the live tree (no IPC). Non-destructive: we only
@@ -175,6 +179,9 @@
 
   function handleEdit(text: string) {
     liveDoc = text; // keep the page header in sync with in-editor frontmatter edits
+    // The note has moved on from the state that was recorded, so what was said about it no
+    // longer describes what is on screen.
+    versionNotice = null;
     if (activePath) scheduleSave(activePath, text);
   }
 
@@ -571,6 +578,8 @@
     saveError = null;
     removed = false;
     conflictDisk = null;
+    // What the last version attempt came to was about the note being left, not this one.
+    versionNotice = null;
     relatedNotes.clear();
   }
 
@@ -1007,9 +1016,25 @@
     publishSite: () => { void choosePublishTarget(); },
     publishToWeb: () => { void publishToWeb(); },
     openTrash: () => { showTrash = true; },
+    hasOpenNote: () => root !== null && activePath !== null,
+    addVersion: () => { void startAddVersion(); },
     openLogDir: () => { void openLogDir(); },
     openSettings: () => { showSettings = true; },
   };
+
+  /**
+   * Opens the dialog that records a version, after making sure the file on disk is the one the
+   * version will be taken from — a version of a state that is still only in the editor would
+   * record the wrong thing while looking like it worked.
+   */
+  async function startAddVersion() {
+    if (!root || !activePath) return;
+    versionNotice = null;
+    if (dirty) await flush();
+    // A version of what is on disk is only the right version once the disk has it.
+    if (saveError) return;
+    showAddVersion = true;
+  }
 
   let commands = $derived(activeCommands(buildCommands(actions)));
 
@@ -1521,6 +1546,8 @@
           >⚠ Save failed: {saveError.summary}</span>
         {:else if removed}
           <span class="status error">⚠ Moved/deleted externally</span>
+        {:else if versionNotice}
+          <span class="status" data-testid="version-notice">{versionNotice}</span>
         {/if}
         <div class="title-tools">
           {#if !saveError && !removed}
@@ -1593,6 +1620,14 @@
           onOpen={openFileFromPalette}
         />
       {/key}
+    {/if}
+    {#if showAddVersion && root && activePath}
+      <AddVersion
+        {root}
+        paths={[activePath]}
+        onclose={() => { showAddVersion = false; }}
+        ondone={(message) => { versionNotice = message; }}
+      />
     {/if}
     {#if showTrash && root}
       <Trash

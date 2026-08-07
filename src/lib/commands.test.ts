@@ -7,7 +7,8 @@ function stubActions(over: Partial<PaletteActions> = {}): PaletteActions {
     "openVault", "toggleTheme", "toggleSidebar", "toggleReading", "toggleMode",
     "newNoteAtRoot", "newFolderAtRoot", "hasSelection", "renameSelected",
     "deleteSelected", "promoteSelected", "toggleFavoriteSelected", "moveSelectedUp",
-    "moveSelectedDown", "rebuildIndex", "hasVault", "publishSite", "publishToWeb", "openTrash",
+    "moveSelectedDown", "rebuildIndex", "hasVault", "hasOpenNote", "addVersion",
+    "publishSite", "publishToWeb", "openTrash",
     "openLogDir", "openSettings",
   ];
   const base = Object.fromEntries(keys.map((k) => [k, () => {}]));
@@ -45,5 +46,31 @@ describe("buildCommands — menu categories", () => {
       expect(c.category, `command ${c.id} must have a category`).toBeDefined();
       expect(allowed.has(c.category), `command ${c.id} category "${c.category}"`).toBe(true);
     }
+  });
+});
+
+describe("buildCommands — Add version", () => {
+  it("is offered only while a note is open", () => {
+    const withNote = buildCommands(stubActions({ hasOpenNote: () => true }));
+    const without = buildCommands(stubActions({ hasOpenNote: () => false }));
+    const find = (cmds: ReturnType<typeof buildCommands>) =>
+      cmds.find((c) => c.id === "note.addVersion");
+
+    expect(find(withNote)?.when?.()).toBe(true);
+    expect(find(without)?.when?.()).toBe(false);
+  });
+
+  it("carries an accelerator and the agreed wording", () => {
+    const cmd = buildCommands(stubActions()).find((c) => c.id === "note.addVersion");
+    expect(cmd?.title).toBe("Add version…");
+    expect(cmd?.keybinding).toBe("mod+shift+s");
+  });
+
+  it("runs the action it was given", () => {
+    const addVersion = vi.fn();
+    buildCommands(stubActions({ addVersion }))
+      .find((c) => c.id === "note.addVersion")!
+      .run();
+    expect(addVersion).toHaveBeenCalledOnce();
   });
 });
