@@ -329,7 +329,7 @@ export async function publishToCloud(
 
 /** Run the in-app web-publish sign-in (browser OAuth loopback + PKCE) and store the resulting
  * token in the OS Credential Manager. Resolves once connected; rejects on cancel/timeout/error.
- * The desktop only ever receives the opaque token — never the cloud identity (D15). */
+ * The desktop only ever receives the opaque token — never the cloud identity. */
 export function connectPublish(): Promise<void> {
   return invoke<void>("connect_publish");
 }

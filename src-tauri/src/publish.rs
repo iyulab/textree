@@ -1,5 +1,5 @@
 //! In-app publishing: spawn the canopy renderer (a separate executable) to turn the open vault
-//! into a static site. Read-only over the source (constitution D13 — publish is one-directional):
+//! into a static site. Read-only over the source (publish is one-directional):
 //! canopy only *reads* the vault; the source `.md` is never mutated. User-triggered only — there is
 //! no autonomous publish (Filer boundary).
 //!
@@ -329,7 +329,7 @@ mod tests {
 
     /// Production-path guard: resolve canopy from the *assembled* sidecar payload (node + cli.js +
     /// node_modules under `src-tauri/resources/canopy/`) and actually publish a vault through it,
-    /// proving the bundled payload renders AND leaves the source `.md` byte-unchanged (D13). Ignored
+    /// proving the bundled payload renders AND leaves the source `.md` byte-unchanged. Ignored
     /// by default because it requires the payload — run `scripts/assemble-canopy-sidecar.ps1` first,
     /// then `cargo test -- --ignored run_publish_via_assembled_sidecar`. CI does both (release.yml).
     #[test]
@@ -353,13 +353,13 @@ mod tests {
 
         assert!(result.page_count >= 1, "expected at least one published page");
         assert!(out.join("hello.html").exists(), "expected hello.html in the output");
-        // D13: the source vault note is untouched.
+        // The source vault note is untouched.
         assert_eq!(std::fs::read_to_string(&note).unwrap(), source);
     }
 
     /// Runtime integration: actually spawn canopy (via node) and prove the Rust wiring end-to-end —
     /// the arg vector, the temp-file -> subprocess handoff (a Windows file-sharing risk), exit
-    /// status, AND that the source vault is byte-unchanged (D13 read-only). Ignored by default
+    /// status, AND that the source vault is byte-unchanged and read-only. Ignored by default
     /// because it needs node + a built canopy; run with `cargo test -- --ignored`. The permanent
     /// guard is the C44 E2E; this is the empirical de-risk before building UI on top.
     #[test]
@@ -393,7 +393,7 @@ mod tests {
         assert!(out.join("note.html").is_file(), "the note rendered to html");
         let tokens = std::fs::read_to_string(out.join("tokens.css")).unwrap();
         assert!(tokens.contains("INJECTED"), "injected tokens reached the site");
-        // D13: the source `.md` is read-only — its bytes (CRLF included) are untouched by publish.
+        // The source `.md` is read-only — its bytes (CRLF included) are untouched by publish.
         assert_eq!(std::fs::read_to_string(&note).unwrap(), source);
     }
 }

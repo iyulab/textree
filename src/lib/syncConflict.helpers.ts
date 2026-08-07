@@ -7,7 +7,7 @@
  * as ordinary notes the user may never notice — a silent path to losing edits.
  *
  * This helper flags them so the app can surface them non-destructively (no auto-merge,
- * no auto-delete — constitution D18 data-safety guard). The user decides.
+ * no auto-delete: nothing is removed on the user's behalf). The user decides.
  *
  * Precision over recall: we only match markers that are distinctive enough to be safe to
  * flag. Ambiguous patterns (OneDrive's `-MACHINENAME`, Google's ` (1)`, iCloud's ` 2`) are

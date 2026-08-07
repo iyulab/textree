@@ -1,6 +1,6 @@
 //! Cloud publishing (slice 2b): render the vault locally (reusing `publish::run_publish`), zip the
 //! output, and upload it to api.textree.me/publish (slice 2a contract). User-triggered, read-only
-//! over the source (D13). The publish token is read from the OS keychain (publish_secret), never
+//! over the source. The publish token is read from the OS keychain (publish_secret), never
 //! passed from the frontend.
 
 use crate::publish::{run_publish, CanopyInvocation, PublishOptions};
@@ -123,7 +123,7 @@ pub fn upload_bundle(
     }
 }
 
-/// Renders the vault locally (temp output, read-only over the source — D13), zips it, and uploads.
+/// Renders the vault locally (temp output, read-only over the source), zips it, and uploads.
 pub fn publish_to_cloud(
     vault: &Path,
     options: &PublishOptions,

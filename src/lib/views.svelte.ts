@@ -13,7 +13,7 @@
  * The ViewDefinition schema (view.helpers.ts) is untouched and stored as the map's array values.
  *
  * Pure logic (upsertView/removeView) lives in view.helpers.ts (vitest); this runes module is a thin
- * persistence wrapper and is not imported by tests (constitution: pure ↔ runes separation).
+ * persistence wrapper and is not imported by tests, keeping pure helpers separate from reactive state.
  */
 
 import { readSidecar, writeSidecar } from "./ipc";

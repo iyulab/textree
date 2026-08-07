@@ -4,7 +4,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 
 /**
- * D5 — Page detail. Asserts that clicking the title in the body header to edit
+ * Page detail. Asserts that clicking the title in the body header to edit
  * it inline actually renames the note (file) and updates the title.
  */
 

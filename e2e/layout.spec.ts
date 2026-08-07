@@ -2,7 +2,7 @@ import { test, expect, type Browser, type Page } from "@playwright/test";
 import { connectToApp } from "./helpers";
 
 /**
- * D2 — app shell. Assert in the real webview that sidebar collapse/expand +
+ * App shell. Assert in the real webview that sidebar collapse/expand +
  * resize work and that the selection persists in localStorage.
  *
  * The sidebar collapse toggle now lives in the custom title bar (TitleBar.svelte),

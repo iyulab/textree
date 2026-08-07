@@ -1,4 +1,4 @@
-//! Content-free, by-construction telemetry egress (D25 diagnostic telemetry design).
+//! Content-free, by-construction telemetry egress.
 //! Emits a small, fixed set of events — `app.launch`, `vault.open.failed`, `app.panic` — whose
 //! payloads are, by construction, PII-free: no paths, filenames, note titles, vault identifiers,
 //! search queries, or content ever enter an envelope.
@@ -38,7 +38,7 @@ pub fn host_connection() -> Option<String> {
 
 /// Sends one content-free event. No-op when telemetry is disabled. Never blocks the caller and
 /// never propagates errors — a failed send is dropped (no buffering). Transparency: the event name
-/// is logged locally so the user can see what is sent (D25 "no silence").
+/// is logged locally so the user can see what is sent, rather than it leaving unannounced.
 pub fn emit(event: TelemetryEvent) {
     let Some(config) = resolved_connection() else {
         return;

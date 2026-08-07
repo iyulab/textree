@@ -2,7 +2,7 @@
  * Turns a raw backend error (Rust `Result<_, String>` text or a thrown JS error) into a
  * user-facing summary while ALWAYS preserving the original text for diagnosis.
  *
- * Principle (constitution: data safety, no silent loss): we only rewrite errors we recognize.
+ * Principle — data safety, no silent loss: we only rewrite errors we recognize.
  * Anything unknown passes through verbatim — we never swallow or replace a diagnostic we can't map.
  */
 export interface FriendlyError {

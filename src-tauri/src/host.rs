@@ -634,7 +634,7 @@ pub fn restart_ai_host(
 
 /// User-triggered (Settings → turn local AI off): stop the host now and free its process.
 /// Thin wrapper over `shutdown_host` (no new logic). No-op-safe when the host is already down.
-/// The on-disk index is a regenerable cache and is left intact (constitution: content immutable).
+/// The on-disk index is a regenerable cache and is left intact: nothing a person wrote is altered.
 #[tauri::command]
 pub fn stop_host(host: State<'_, Arc<HostHandle>>) -> Result<(), String> {
     shutdown_host(&host);
@@ -656,7 +656,7 @@ pub async fn semantic_search(
     if !matches!(host.status(), HostStatus::Ready) {
         return Ok(Vec::new());
     }
-    // N3: reject scope_path that escapes the vault (constitution: security at the edge).
+    // Reject a scope_path that escapes the vault: containment is checked at the boundary.
     // is_within uses canonicalize — both paths must exist; scope defaults to vault root.
     if let Some(ref sp) = scope_path {
         if !crate::pathsafe::is_within(
@@ -851,7 +851,7 @@ pub async fn ask(
 // ---------------------------------------------------------------------------
 
 /// Fire-and-forget single-note index. Silent on any error (degrade, don't block).
-/// Content-immutable background work — auto-allowed per D18.
+/// Runs without asking because it only reads: nothing a person wrote is altered.
 pub fn index_note(handle: &HostHandle, vault: &str, path: &str) {
     let Some(base) = handle.base_url() else { return };
     if !matches!(handle.status(), HostStatus::Ready) {
@@ -864,7 +864,7 @@ pub fn index_note(handle: &HostHandle, vault: &str, path: &str) {
 }
 
 /// Fire-and-forget full vault reindex. Silent on any error (degrade, don't block).
-/// Content-immutable background work — auto-allowed per D18.
+/// Runs without asking because it only reads: nothing a person wrote is altered.
 pub fn reindex_vault(handle: &HostHandle, vault: &str) {
     let Some(base) = handle.base_url() else { return };
     if !matches!(handle.status(), HostStatus::Ready) {

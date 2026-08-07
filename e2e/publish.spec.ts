@@ -55,7 +55,7 @@ test("publish renders the vault to an auto-theming static site, source untouched
     expect(mediaAt).toBeGreaterThanOrEqual(0);
     expect(tokens.slice(mediaAt)).toContain(":root {");
 
-    // D13: publish is read-only over the source — the note (CRLF included) is byte-unchanged.
+    // Publishing is read-only over the source — the note (CRLF included) is byte-unchanged.
     expect(readVaultFile(vault, "note.md")).toBe(source);
 
     // The UI surfaced the success notice with self-host guidance (vault-level, no note open).
@@ -67,7 +67,7 @@ test("publish renders the vault to an auto-theming static site, source untouched
 });
 
 test("publish into the vault is rejected with friendly, actionable guidance", async () => {
-  // Publishing into the vault itself violates the read-only-outward boundary (D13). canopy is
+  // Publishing into the vault itself violates the read-only-outward boundary. canopy is
   // resolved before the boundary check, so this (like the test above) needs TEXTREE_CANOPY_CLI.
   // The raw backend error ("the output directory must be outside the vault") is rewritten by
   // friendlyError to actionable guidance — verifies the domain string matches the mapping key.

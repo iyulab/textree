@@ -4,7 +4,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 
 /**
- * D3 — tree expand/collapse. Toggle child visibility via the container's chevron
+ * Tree expand/collapse. Toggle child visibility via the container's chevron
  * and assert in a real webview that the state persists to localStorage.
  */
 

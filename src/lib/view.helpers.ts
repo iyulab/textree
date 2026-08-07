@@ -9,7 +9,7 @@
  *
  * Ratified top-level contract (HANDOFF §3, ROADMAP §3): `{version, name, folder, columns, sort,
  * filters}` — exactly these six fields. Adding a top-level field (e.g. groupBy) is a schema change
- * that needs approval (constitution §4.2), not a silent extension. The INTERNAL shape of each field
+ * that needs approval, not a silent extension. The INTERNAL shape of each field
  * is free to design.
  *
  * Boundary contract (same as folderTable.helpers): this layer consumes an already-built FolderTable,

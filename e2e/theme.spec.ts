@@ -2,7 +2,7 @@ import { test, expect, type Browser, type Page } from "@playwright/test";
 import { connectToApp } from "./helpers";
 
 /**
- * D1 — design tokens + theme. Assert in the real webview that the theme toggle
+ * Design tokens + theme. Assert in the real webview that the theme toggle
  * switches <html data-theme> and the actual background color changes (tokens
  * applied). The toggle lives in the ⋮ app menu (the standalone sidebar button
  * was absorbed into it), and the ungated View category is always shown.

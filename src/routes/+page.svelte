@@ -117,7 +117,7 @@
   let showSettings = $state(false);
 
   // Sync-conflict surfacing — derived from the live tree (no IPC). Non-destructive: we only
-  // flag the duplicate copies a sync tool left behind; the user decides what to do (D18 guard).
+  // flag the duplicate copies a sync tool left behind; the user decides what to do; nothing is removed for them.
   let syncConflicts = $derived(detectSyncConflicts(tree));
   let conflictSig = $derived(syncConflicts.map((c) => c.path).join("|"));
   // Dismissal is keyed by the conflict set's signature, so the banner reappears if a NEW
@@ -343,7 +343,7 @@
     }
   }
 
-  // ── Inline title editing (D5) ──────────────────────────────────────
+  // ── Inline title editing ──────────────────────────────────────────
   let titleEditing = $state(false);
   let titleInput = $state("");
   // On Escape cancel, suppress once the commit from the blur that fires as the input disappears.
@@ -832,7 +832,7 @@
     return parts;
   }
 
-  // ── Sidebar resize (D2) ─────────────────────────────────────
+  // ── Sidebar resize ──────────────────────────────────────────
   // Adjust width via pointer capture on the drag handle. Persist once on release (avoid localStorage
   // thrashing during drag). pointermove/up are pinned to the handle via setPointerCapture, not window.
   function startResize(e: PointerEvent) {
@@ -919,7 +919,7 @@
 
   /**
    * Rebuild the vault-wide backlink index by reading every note's body once. Frontend scan (no new
-   * IPC); the simplicity beats a Rust link graph at this scale (constitution: simplicity > perf).
+   * IPC); the simplicity beats a Rust link graph at this scale: simplicity wins until it measurably does not.
    * Reads use absolute paths (the IPC contract); the index is keyed by vault-relative paths.
    * A failed read degrades that note to empty rather than aborting the whole index.
    */
@@ -967,7 +967,7 @@
   });
 
   // ── Frontmatter table (folder = DB, .md = row) — read-only first slice ────
-  // Built from already-parsed frontmatter (no backend leakage; in-memory, D17). Reads each direct
+  // Built from already-parsed frontmatter (no backend leakage; held in memory only). Reads each direct
   // child note's body once via the existing readNote IPC — same frontend-scan precedent as backlinks.
   let folderTable = $state<FolderTable | null>(null);
   async function buildFolderTableFor(node: TreeNode): Promise<void> {

@@ -270,7 +270,7 @@ fn legacy_sidecar_path(root: &Path, rel: &str) -> PathBuf {
 const TRASH_MANIFEST: &str = "trash.json";
 
 /// One trashed node's provenance. Lives in `.textree/trash.json` (sidecar, regeneratable
-/// in spirit: if lost, the trash files themselves remain the truth — §1.4 / D17).
+/// in spirit: if lost, the trash files themselves remain the truth).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TrashItem {
@@ -354,7 +354,8 @@ pub fn write_note(
             if let Some(state) = index.0.lock().unwrap_or_else(|e| e.into_inner()).as_mut() {
                 let _ = state.index_note(&root, &path, &content);
             }
-            // Background semantic index (content-immutable; auto-allowed per D18).
+            // Background semantic index. Runs without asking because it only reads: it derives a
+            // search index and never alters what the person wrote.
             let host_arc = host.inner().clone();
             let (v, p) = (root.to_string_lossy().to_string(), path.to_string_lossy().to_string());
             tauri::async_runtime::spawn_blocking(move || {
@@ -412,7 +413,8 @@ pub fn open_vault(
         }
     }
 
-    // Background semantic reindex (content-immutable; auto-allowed per D18).
+    // Background semantic reindex. Runs without asking for the same reason as the per-note
+    // index above: it only reads, and changes nothing a person wrote.
     host.set_current_vault(root.clone());
     let host_arc = host.inner().clone();
     let vault_str = root.clone();
@@ -832,7 +834,7 @@ fn resolve_canopy(app: &AppHandle) -> Result<crate::publish::CanopyInvocation, S
         .into())
 }
 
-/// Publishes the open vault to a static site by spawning canopy. Read-only over the source (D13):
+/// Publishes the open vault to a static site by spawning canopy. Read-only over the source:
 /// the vault `.md` is never mutated; only `out_dir` (which must lie outside the vault) is written.
 #[tauri::command]
 pub fn publish_site(
@@ -851,7 +853,7 @@ pub fn publish_site(
 
 /// Publishes the open vault to the cloud (pub.textree.me): renders locally via canopy, zips the
 /// output, and uploads it to api.textree.me/publish using the stored publish token. Read-only over
-/// the source (D13). Errors if no publish token is set (add one in Settings).
+/// the source. Errors if no publish token is set (add one in Settings).
 #[tauri::command]
 pub fn publish_to_cloud(
     app: AppHandle,

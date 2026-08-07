@@ -60,7 +60,7 @@ describe('buildSummaryNote', () => {
   });
 });
 
-// Guards the whole reason Sources exist (D20 "verifiable"): the [[basename]] links we emit must
+// Guards the whole reason Sources exist — a reader must be able to check them: the [[basename]] links we emit must
 // actually resolve back to the source notes. buildWikiResolver resolves a bare name by stem, so a
 // basename link resolves regardless of the note's folder (ambiguous stems fall back to the app's
 // shortest-path rule — the same behavior any user-typed [[stem]] has).

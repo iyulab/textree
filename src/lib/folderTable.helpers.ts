@@ -5,9 +5,9 @@
  * folder's notes — each already parsed into scalar frontmatter — into a table model: the union of
  * frontmatter keys as columns, one row per note.
  *
- * Boundary contract (constitution / ROADMAP §2): this layer consumes ALREADY-PARSED frontmatter,
+ * Boundary contract: this layer consumes ALREADY-PARSED frontmatter,
  * not raw files or a storage handle. The view is therefore not coupled to how notes are stored or
- * scanned — an in-memory model today (D17: in-memory first, no SQLite) that a future indexed
+ * scanned — an in-memory model today — no database of its own — that a future indexed
  * backend could feed without changing this contract.
  */
 

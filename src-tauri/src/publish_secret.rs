@@ -1,4 +1,4 @@
-//! OS credential storage for the cloud publish token (D16 — never written to disk in plaintext).
+//! OS credential storage for the cloud publish token (never written to disk in plaintext).
 //! Mirrors `byo_secret.rs`; both sit on `secret_store` for store init and namespacing. Distinct
 //! (SERVICE, ACCOUNT) entry so it never collides with the BYO key.
 
@@ -31,7 +31,7 @@ pub fn clear_token() -> Result<(), String> {
     }
 }
 
-/// Whether a token is currently stored (the only thing the frontend ever learns — D16).
+/// Whether a token is currently stored (the only thing the frontend ever learns).
 pub fn has_token() -> bool {
     get_token().is_some()
 }

@@ -1,4 +1,4 @@
-// Pure helpers for saving a scope summary to a new note (generative D18 content-write).
+// Pure helpers for saving a scope summary to a new note.
 // Imported by tests and by chatStore (runes) — no runes here. The scope kind is taken as an
 // inline union (not imported from the chatStore runes module) to keep the pure/runes separation
 // clean, mirroring summary.helpers.ts which takes primitives rather than importing ChatScope.

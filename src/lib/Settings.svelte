@@ -55,7 +55,7 @@
 
   // Web publishing connection (Settings ▸Advanced). The token is obtained via in-app sign-in
   // (browser OAuth) — never pasted — and lives in the OS keychain. The UI only ever knows whether
-  // a token is stored (D16); it never sees the token itself.
+  // a token is stored; it never sees the token itself.
   let publishHasToken = $state(false);
   let publishSaving = $state(false);
   let publishError = $state<string | null>(null);

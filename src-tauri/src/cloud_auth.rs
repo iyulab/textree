@@ -1,6 +1,6 @@
 //! In-app web-publish authentication (slice 2c): obtain a publish token via a browser OAuth
 //! round-trip (RFC 8252 loopback + RFC 7636 PKCE) instead of manual token paste. The desktop only
-//! ever receives the opaque publish token — never the cloud identity (D15). The token is stored in
+//! ever receives the opaque publish token — never the cloud identity. The token is stored in
 //! the OS keychain (publish_secret), the same entry the uploader reads.
 
 use crate::cloud_publish::api_base;

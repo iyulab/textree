@@ -2,7 +2,7 @@ import { test, expect, type Browser, type Page } from "@playwright/test";
 import { connectToApp, loadVault, createTempVault, removeTempVault } from "./helpers";
 
 /**
- * D4 — Live preview. Asserts that headings/emphasis/code render inline, and that
+ * Live preview. Asserts that headings/emphasis/code render inline, and that
  * markers (#, **, `) are hidden on lines without the cursor and reappear when the
  * cursor moves onto that line.
  */

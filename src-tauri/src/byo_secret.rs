@@ -10,7 +10,7 @@ fn service() -> String {
     service_name(SERVICE)
 }
 
-/// Store the BYO API key in the OS credential store. Never touches disk in plaintext (D16 —
+/// Store the BYO API key in the OS credential store. Never touches disk in plaintext (
 /// secrets are not written to `.md`/sidecar JSON/localStorage).
 pub fn set_api_key(key: &str) -> Result<(), String> {
     ensure_store();
@@ -29,7 +29,7 @@ pub fn clear_api_key() -> Result<(), String> {
 }
 
 /// Whether a key is currently stored. Never returns the plaintext value to callers that don't
-/// need it — the frontend only ever sees this boolean (D16: no plaintext key round-trips to JS).
+/// need it — the frontend only ever sees this boolean (no plaintext key round-trips to JS).
 pub fn has_api_key() -> bool {
     get_api_key().is_some()
 }

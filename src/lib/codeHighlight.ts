@@ -8,7 +8,7 @@
  *
  * Parity note: the editor uses CodeMirror (lezer) highlighting; the published site uses Shiki
  * (canopy). The two engines never produce byte-identical output — the goal is "both highlight",
- * not "identical". Code fences are standard markdown, so the .md round-trips regardless (D21).
+ * not "identical". Code fences are standard markdown, so the .md round-trips regardless.
  */
 import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
 import { languages } from "@codemirror/language-data";

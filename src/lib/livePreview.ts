@@ -9,8 +9,8 @@
  * Performance: iterates the syntaxTree over only the visible ranges (visibleRanges), and recomputes
  * decorations only on document, viewport, or selection changes.
  *
- * Scope (D4): headings, emphasis (bold/italic), strikethrough, inline code. Links, checkboxes,
- * quotes/horizontal rules, and inline images are follow-ups (D4 continued/P4).
+ * Scope: headings, emphasis (bold/italic), strikethrough, inline code. Links, checkboxes,
+ * quotes/horizontal rules, and inline images are follow-ups.
  */
 
 import { syntaxTree } from "@codemirror/language";
