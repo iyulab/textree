@@ -7,7 +7,7 @@ function stubActions(over: Partial<PaletteActions> = {}): PaletteActions {
     "openVault", "toggleTheme", "toggleSidebar", "toggleReading", "toggleMode",
     "newNoteAtRoot", "newFolderAtRoot", "hasSelection", "renameSelected",
     "deleteSelected", "promoteSelected", "toggleFavoriteSelected", "moveSelectedUp",
-    "moveSelectedDown", "rebuildIndex", "hasVault", "hasOpenNote", "addVersion",
+    "moveSelectedDown", "rebuildIndex", "hasVault", "hasOpenNote", "addVersion", "openVersionHistory",
     "publishSite", "publishToWeb", "openTrash",
     "openLogDir", "openSettings",
   ];
@@ -72,5 +72,15 @@ describe("buildCommands — Add version", () => {
       .find((c) => c.id === "note.addVersion")!
       .run();
     expect(addVersion).toHaveBeenCalledOnce();
+  });
+});
+
+describe("buildCommands — Version history", () => {
+  it("is offered only while a note is open, and carries the agreed wording", () => {
+    const cmd = buildCommands(stubActions({ hasOpenNote: () => true })).find(
+      (c) => c.id === "note.versionHistory",
+    );
+    expect(cmd?.title).toBe("Version history…");
+    expect(cmd?.when?.()).toBe(true);
   });
 });

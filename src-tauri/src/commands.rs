@@ -484,7 +484,7 @@ fn files_under(
     found
 }
 
-/// Keeps the state of everything about to be deleted, and records that it happened.
+/// Keeps the state of everything at or under a path, and records that it happened.
 ///
 /// Everything is kept, not only what history lacks. Two reasons, and each alone is enough:
 ///
@@ -494,16 +494,19 @@ fn files_under(
 /// - The revision is also the only record of *when* something left the folder. A deletion that
 ///   writes nothing leaves no answer to that question, and there is no other place holding it.
 ///
+/// Called before anything that replaces what is on disk, not only before deleting: going back to
+/// an earlier state overwrites the current one just as finally.
+///
 /// Contents that history already holds cost nothing to keep again: identical contents are one
 /// object either way. Nothing written here is part of the history anyone reads.
-fn keep_before_deleting(root: &Path, target: &Path) -> Result<(), String> {
+fn keep_state_of(root: &Path, target: &Path) -> Result<(), String> {
     let prepared = match crate::git_engine::prepare(root) {
         Ok(p) => p,
         // Without a repository there is nowhere to keep anything. Deleting still works; this
         // is a safety net, not a precondition.
         Err(e) => {
             log::warn!(
-                "keep_before_deleting: no repository available: {}",
+                "keep_state_of: no repository available: {}",
                 e.message()
             );
             return Ok(());
@@ -539,7 +542,7 @@ fn keep_before_deleting(root: &Path, target: &Path) -> Result<(), String> {
         crate::git_engine::WhenUnchanged::Record,
     )
     .map_err(|e| e.message().to_string())?;
-    log::info!("keep_before_deleting: kept {} file(s)", entries.len());
+    log::info!("keep_state_of: kept {} file(s)", entries.len());
     Ok(())
 }
 
@@ -551,7 +554,7 @@ pub fn delete_node(root: String, path: String) -> Result<(), String> {
     let original_rel = rel_to_root(root_p, target)?;
     // The state on disk is kept first: once the delete goes through, there is nowhere else for
     // it to come back from.
-    keep_before_deleting(root_p, target)?;
+    keep_state_of(root_p, target)?;
     let is_dir = target.is_dir();
     // Move first (fs_ops validates is_within / root / .textree). Manifest after — a mid-crash
     // leaves an "unknown-origin" trash file (recoverable) rather than a dangling manifest entry.
@@ -1156,6 +1159,40 @@ fn last_written_at(
         .next())
 }
 
+/// Puts a note back to one of its recorded states.
+///
+/// What is on disk right now is kept first. Going back is the one action here that overwrites
+/// work rather than adding to it, and work that was never recorded has nowhere else to be —
+/// so the state being replaced is put where the deleted ones go, and stays reachable.
+///
+/// The note has to still be in the folder: bringing back one that is not is `restore_deleted`,
+/// which decides for itself which state that should be.
+#[tauri::command]
+pub fn restore_version(root: String, path: String, id: String) -> Result<(), String> {
+    let root_p = Path::new(&root);
+    let target = Path::new(&path);
+    if !is_within(root_p, target) {
+        return Err("path is outside the vault".into());
+    }
+    let rel = rel_to_root(root_p, target)?;
+    let prepared = history_repo(root_p)?
+        .ok_or_else(|| format!("'{rel}' is not part of that recorded state"))?;
+    let in_repo = prepared.path_in_repo(Path::new(&rel));
+    let content = crate::git_engine::content_at_version(
+        prepared.repo(),
+        crate::git_engine::NOTES_REF,
+        &in_repo,
+        &id,
+    )
+    .map_err(|e| e.message().to_string())?
+    .ok_or_else(|| format!("'{rel}' is not part of that recorded state"))?;
+
+    keep_state_of(root_p, target)?;
+    atomic_write_bytes(root_p, target, &content).map_err(|e| e.to_string())?;
+    log::info!("restore_version: {rel} at {id}");
+    Ok(())
+}
+
 /// Brings a deleted note back into the folder.
 ///
 /// Two places may hold it — what was kept when it left, and the last state recorded before
@@ -1473,6 +1510,55 @@ mod tests {
             "nothing else holds it, so it stays"
         );
         assert!(trash.join("a.md").exists());
+    }
+
+    #[test]
+    fn going_back_to_an_earlier_state_keeps_the_one_it_replaces() {
+        // Going back is the one action that overwrites work rather than adding to it. Work that
+        // was never recorded has nowhere else to be, so it has to land somewhere reachable
+        // before the older state is written over it.
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        git2::Repository::init(root).unwrap();
+        let root_s = root.to_string_lossy().to_string();
+
+        let note = record_note(root, "a.md", "first");
+        std::fs::write(&note, "worked on since, never recorded").unwrap();
+
+        let first = note_versions(root_s.clone(), note.clone()).unwrap()[0].id.clone();
+        restore_version(root_s.clone(), note.clone(), first).unwrap();
+
+        assert_eq!(std::fs::read_to_string(&note).unwrap(), "first");
+
+        // The replaced state is reachable: deleting the note now brings it back, because what
+        // was kept is newer than anything recorded.
+        delete_node(root_s.clone(), note).unwrap();
+        let back = restore_deleted(root_s, "a.md".into()).unwrap();
+        assert!(back.as_deleted);
+        assert_eq!(
+            std::fs::read_to_string(root.join("a.md")).unwrap(),
+            "first",
+            "and the last state on disk was the one that was put back"
+        );
+    }
+
+    #[test]
+    fn going_back_needs_a_state_that_belongs_to_this_note() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        git2::Repository::init(root).unwrap();
+        let root_s = root.to_string_lossy().to_string();
+
+        let a = record_note(root, "a.md", "mine");
+        let b = record_note(root, "b.md", "someone else's");
+        let other = note_versions(root_s.clone(), b).unwrap()[0].id.clone();
+
+        assert!(restore_version(root_s, a.clone(), other).is_err());
+        assert_eq!(
+            std::fs::read_to_string(&a).unwrap(),
+            "mine",
+            "a refused request leaves the note alone"
+        );
     }
 
     #[test]

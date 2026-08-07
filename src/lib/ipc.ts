@@ -110,6 +110,19 @@ export async function noteVersionText(
   return invoke<string>("note_version_text", { root, path, id });
 }
 
+/**
+ * Puts a note back to one of its recorded states, overwriting what is on disk.
+ *
+ * What is being replaced is kept first, so unrecorded work is never the price of going back.
+ */
+export async function restoreVersion(
+  root: string,
+  path: string,
+  id: string,
+): Promise<void> {
+  return invoke<void>("restore_version", { root, path, id });
+}
+
 /** Everything the history holds that is no longer in the folder, newest first. */
 export async function deletedNotes(root: string): Promise<DeletedNote[]> {
   return invoke<DeletedNote[]>("deleted_notes", { root });
