@@ -6,6 +6,7 @@ use crate::vault::{self, TreeNode};
 use crate::watcher::WatcherHandle;
 use serde::{Deserialize, Serialize};
 use std::io::{self, Write};
+use std::collections::BTreeSet;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use tauri::{AppHandle, Manager, State};
@@ -51,12 +52,18 @@ fn clear_temp_dir(root: &Path) {
 /// destination. A rename is only atomic within one volume, and settings live wherever the
 /// person's home is — which is often not the volume the notes are on.
 fn atomic_write_beside(path: &Path, content: &str) -> io::Result<()> {
+    atomic_bytes_beside(path, content.as_bytes())
+}
+
+/// The same guarantee for content that is not necessarily text, so that carrying a file across
+/// does not require being able to read it.
+fn atomic_bytes_beside(path: &Path, content: &[u8]) -> io::Result<()> {
     let dir = path
         .parent()
         .ok_or_else(|| io::Error::other("no parent directory"))?;
     std::fs::create_dir_all(dir)?;
     let mut tmp = NamedTempFile::new_in(dir)?;
-    tmp.write_all(content.as_bytes())?;
+    tmp.write_all(content)?;
     tmp.as_file().sync_all()?;
     tmp.persist(path).map_err(|e| e.error)?;
     Ok(())
@@ -625,6 +632,19 @@ pub fn delete_node(root: String, path: String) -> Result<(), String> {
     if std::fs::canonicalize(target).ok() == std::fs::canonicalize(root_p).ok() {
         return Err("the folder itself cannot be deleted".into());
     }
+    // Nothing whose name begins with a dot, at any depth. The tree never offers these, but this
+    // is where paths are checked, and the cost of the check being somewhere else is total: asked
+    // to delete the repository, this would read all of it into a commit, write that commit inside
+    // the very directory it is about to remove, and then remove it — losing the notes, their
+    // history, and the copy just made of them in one step.
+    if target
+        .strip_prefix(root_p)
+        .unwrap_or(target)
+        .components()
+        .any(|c| matches!(c, Component::Normal(s) if s.to_string_lossy().starts_with('.')))
+    {
+        return Err("that is not a note".into());
+    }
     keep_state_of(root_p, target)?;
     if target.is_dir() {
         std::fs::remove_dir_all(target).map_err(|e| e.to_string())?;
@@ -1098,7 +1118,16 @@ pub fn deleted_notes(root: String) -> Result<Vec<DeletedNote>, String> {
         }
         missing.push((in_repo, rel.to_string_lossy().replace('\\', "/")));
     }
-    let asking: Vec<String> = missing.iter().map(|(in_repo, _)| in_repo.clone()).collect();
+    // Deduplicated, because a note that was recorded and then deleted is named by both references
+    // and would otherwise be asked about twice. The history walk stops once it has an answer for
+    // everything asked, and a list that can never be satisfied — two entries, one answer — stops
+    // only at the end of the history, which is the cost this whole path exists to avoid.
+    let asking: Vec<String> = missing
+        .iter()
+        .map(|(in_repo, _)| in_repo.clone())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
     let kept_times =
         crate::git_engine::last_written(repo, crate::git_engine::SNAPSHOT_REF, &asking)
             .map_err(|e| e.message().to_string())?;
@@ -1181,16 +1210,30 @@ fn files_beneath(dir: &Path) -> Vec<(PathBuf, PathBuf)> {
 /// The date matters as much as the contents: the list of deleted notes is ordered by when each
 /// one left, and the copies are the only place that answer exists for anything deleted before
 /// the history started keeping it. Losing it here would silently reorder someone's list.
-fn carry_over_set_aside(root: &Path, prepared: &crate::git_engine::VaultRepo) -> usize {
+fn carry_over_set_aside(root: &Path, prepared: &crate::git_engine::VaultRepo) -> CarriedOver {
     let dir = root.join(".textree").join("trash");
     if !dir.exists() {
-        return 0;
+        return CarriedOver { notes: 0, everything: true };
     }
+    // What is actually in there, which is not the same as what the list says is in there. A
+    // corrupt list reads as empty, an entry can name a file that is gone, and a copy can be
+    // sitting there with no entry at all — the old restore screen showed those as unknown
+    // origin and could still put them back. Each name is struck off as it is carried, and
+    // whatever is left over is why the folder stays.
+    let mut left_over: BTreeSet<String> = std::fs::read_dir(&dir)
+        .map(|entries| {
+            entries
+                .filter_map(|e| e.ok())
+                .map(|e| e.file_name().to_string_lossy().to_string())
+                .collect()
+        })
+        .unwrap_or_default();
+
     let manifest = read_trash_manifest(root);
     let repo = prepared.repo();
     let Ok((author, committer)) = crate::git_engine::commit_identities(repo) else {
         log::warn!("carry_over_set_aside: no identity available");
-        return 0;
+        return CarriedOver { notes: 0, everything: false };
     };
 
     // Oldest first, so the newest write for any one path is also the latest deletion of it.
@@ -1242,11 +1285,31 @@ fn carry_over_set_aside(root: &Path, prepared: &crate::git_engine::VaultRepo) ->
             &committer_then,
             crate::git_engine::WhenUnchanged::Record,
         ) {
-            Ok(_) => carried += entries.len(),
+            Ok(_) => {
+                carried += entries.len();
+                left_over.remove(&item.trash_name);
+            }
             Err(e) => log::warn!("carry_over_set_aside: {} not carried: {}", item.original_rel, e.message()),
         }
     }
-    carried
+    if !left_over.is_empty() {
+        log::warn!(
+            "carry_over_set_aside: {} item(s) stay where they are: {}",
+            left_over.len(),
+            left_over.iter().cloned().collect::<Vec<_>>().join(", ")
+        );
+    }
+    CarriedOver { notes: carried, everything: left_over.is_empty() }
+}
+
+/// What came out of the set-aside copies, and whether anything had to be left behind.
+///
+/// The second half is the one that matters: the folder is only removed once there is nothing in
+/// it that exists nowhere else, and a copy that could not be carried — unreadable, unnamed by the
+/// list, refused by the repository — is exactly such a thing.
+struct CarriedOver {
+    notes: usize,
+    everything: bool,
 }
 
 /// Moves everything the application keeps out of the notes folder, keeping every file.
@@ -1280,8 +1343,13 @@ pub fn move_state_out_of_vault(root: String) -> Result<MoveOut, String> {
             let _ = std::fs::remove_file(&from);
             continue;
         }
-        let content = std::fs::read_to_string(&from).map_err(|e| e.to_string())?;
-        atomic_write_beside(&to, &content).map_err(|e| e.to_string())?;
+        // Read as bytes and carried across unchanged. Insisting on valid text here would abort
+        // the whole move over one damaged file, and the abort is not where it ends: the next
+        // write puts a fresh file at the new location, and the move after that sees one there
+        // and removes the old one — so the settings that could not be read get discarded by the
+        // recovery rather than by anything that decided to.
+        let content = std::fs::read(&from).map_err(|e| e.to_string())?;
+        atomic_bytes_beside(&to, &content).map_err(|e| e.to_string())?;
         std::fs::remove_file(&from).map_err(|e| e.to_string())?;
         moved.settings = true;
     }
@@ -1289,10 +1357,18 @@ pub fn move_state_out_of_vault(root: String) -> Result<MoveOut, String> {
     // The copies set aside need somewhere to go before they can be removed from the folder.
     if root_p.join(".textree").join("trash").exists() {
         let prepared = crate::git_engine::prepare(root_p).map_err(|e| e.message().to_string())?;
-        moved.notes = carry_over_set_aside(root_p, &prepared);
-        std::fs::remove_dir_all(root_p.join(".textree").join("trash"))
-            .map_err(|e| e.to_string())?;
-        let _ = std::fs::remove_file(legacy_sidecar_path(root_p, TRASH_MANIFEST));
+        let carried = carry_over_set_aside(root_p, &prepared);
+        moved.notes = carried.notes;
+        // Only once every copy is reachable from somewhere else. Removing the folder is the one
+        // step here that cannot be taken back, and a copy that failed to carry has no other copy
+        // by definition — that is what being set aside meant. Leaving the folder is untidy; the
+        // alternative is destroying the only remaining copy of something someone deleted but did
+        // not throw away.
+        if carried.everything {
+            std::fs::remove_dir_all(root_p.join(".textree").join("trash"))
+                .map_err(|e| e.to_string())?;
+            let _ = std::fs::remove_file(legacy_sidecar_path(root_p, TRASH_MANIFEST));
+        }
     }
 
     // Anything else in there is the application's too — temp files it wrote, and nothing a

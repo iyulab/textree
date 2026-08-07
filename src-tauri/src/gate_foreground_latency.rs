@@ -18,7 +18,7 @@
 
 use crate::commands::{deleted_notes, note_version_text, note_versions};
 use crate::git_engine::{
-    commit_identities, commit_paths, full_comparisons, WhenUnchanged, NOTES_REF,
+    commit_identities, commit_paths, full_comparisons, revisions_visited, WhenUnchanged, NOTES_REF,
 };
 use git2::Repository;
 use std::path::PathBuf;
@@ -151,4 +151,31 @@ fn the_deleted_list_asks_nothing_about_notes_that_are_still_there() {
         "nothing was deleted, so the list has nothing to say"
     );
     assert_eq!(full_comparisons::taken(), 0);
+}
+
+#[test]
+fn asking_about_a_note_named_by_both_references_still_stops_early() {
+    // A note that was recorded and then deleted is named by the recorded paths AND by the kept
+    // ones, so it reaches the history twice. The walk stops when every path asked about has an
+    // answer, and that test counts answers against questions — two questions with one answer
+    // between them never balances, and the walk then reads the whole history instead. The
+    // answers look the same either way, so only the number of revisions visited shows it.
+    let tmp = vault_with_history(1, 40);
+    let root = tmp.path();
+    let note = root.join("note-0.md");
+    crate::commands::delete_node(
+        root.to_string_lossy().to_string(),
+        note.to_string_lossy().to_string(),
+    )
+    .unwrap();
+
+    revisions_visited::taken();
+    let listed = deleted_notes(root.to_string_lossy().to_string()).unwrap();
+    let visited = revisions_visited::taken();
+
+    assert_eq!(listed.len(), 1, "the deleted note is listed once, not twice");
+    assert!(
+        visited <= 4,
+        "the newest revisions hold the answer, so the walk should stop within a few of them;          it visited {visited} of 41"
+    );
 }

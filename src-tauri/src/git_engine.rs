@@ -151,6 +151,30 @@ pub(crate) mod full_comparisons {
     }
 }
 
+/// Revisions [`last_written`] actually looked at.
+///
+/// Separate from the comparisons above because the failure it guards is a different one: not
+/// paying too much per revision, but never stopping. The walk is meant to end as soon as every
+/// path asked about has an answer, and whether it does cannot be seen from the answers — they
+/// are the same either way. Only the count of revisions visited says so.
+#[cfg(test)]
+pub(crate) mod revisions_visited {
+    use std::cell::Cell;
+
+    thread_local! {
+        static SEEN: Cell<usize> = const { Cell::new(0) };
+    }
+
+    pub(crate) fn record() {
+        SEEN.with(|s| s.set(s.get() + 1));
+    }
+
+    /// How many were visited on this thread, and starts counting again from zero.
+    pub(crate) fn taken() -> usize {
+        SEEN.with(|s| s.replace(0))
+    }
+}
+
 /// What a revision did to one path, decided by looking at that path alone.
 ///
 /// Comparing what a revision and its parent hold at one name costs a few tree lookups. Asking
@@ -169,6 +193,22 @@ enum Touch {
     Gone,
 }
 
+/// Names a path a revision was written for when its tree cannot say so. See [`commit_paths`].
+const RECORDED_PATH: &str = "Recorded-path";
+
+/// Whether this revision says in so many words that it was written for `target`.
+fn names_path(commit: &git2::Commit<'_>, target: &Path) -> bool {
+    let wanted = slashed(target);
+    let Ok(message) = commit.message() else {
+        return false;
+    };
+    let prefix = format!("{RECORDED_PATH}: ");
+    message
+        .lines()
+        .filter_map(|line: &str| line.strip_prefix(prefix.as_str()))
+        .any(|named: &str| named.trim() == wanted)
+}
+
 fn touch(repo: &Repository, commit: &git2::Commit<'_>, target: &Path) -> Result<Touch, git2::Error> {
     let here = blob_in_tree(repo, &commit.tree()?, target);
     let before = match commit.parent(0) {
@@ -176,7 +216,17 @@ fn touch(repo: &Repository, commit: &git2::Commit<'_>, target: &Path) -> Result<
         Err(_) => None,
     };
     Ok(match (before, here) {
-        (Some(a), Some(b)) if a == b => Touch::Untouched,
+        // Identical contents usually means this revision was not about this path. It can also
+        // mean the same thing was recorded twice — deleting a note, putting it back, and
+        // deleting it again unchanged — and those are two moments, not one. The tree cannot
+        // tell them apart, so the revision is asked directly.
+        (Some(a), Some(b)) if a == b => {
+            if names_path(commit, target) {
+                Touch::Changed
+            } else {
+                Touch::Untouched
+            }
+        }
         (Some(_), Some(_)) => Touch::Changed,
         (None, Some(_)) => Touch::Appeared,
         (Some(_), None) => Touch::Gone,
@@ -309,6 +359,19 @@ pub fn last_written(
     if wanted.is_empty() || repo.find_reference(reference).is_err() {
         return Ok(out);
     }
+    // Asked about once each. The walk stops as soon as it has an answer for everything asked, and
+    // that test compares a count of answers against a count of questions — so a list naming the
+    // same path twice can never satisfy it, and the walk runs to the end of the history instead.
+    // A note that was recorded and then deleted is named by two references, which makes the
+    // duplicate the ordinary case rather than an odd one; leaving it to each caller to remember
+    // is a contract that has already been broken once.
+    let wanted: Vec<String> = wanted
+        .iter()
+        .cloned()
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    let wanted = &wanted;
     let mut walk = repo.revwalk()?;
     // Topological as well as by time: several notes recorded in the same second carry
     // identical timestamps, and time alone leaves their order to chance. Topological order puts
@@ -320,6 +383,8 @@ pub fn last_written(
             break;
         }
         let commit = repo.find_commit(id?)?;
+        #[cfg(test)]
+        revisions_visited::record();
         let seconds = commit.time().seconds();
         for path in wanted {
             if out.contains_key(path) {
@@ -473,19 +538,35 @@ pub fn commit_paths(
     }
     let tree = tree.expect("entries is non-empty, so a tree was built");
 
-    if unchanged == WhenUnchanged::Skip {
-        if let Some(commit) = parent.as_ref() {
-            if commit.tree_id() == tree.id() {
-                return Ok(None);
-            }
-        }
+    let same_as_before = parent
+        .as_ref()
+        .is_some_and(|commit| commit.tree_id() == tree.id());
+
+    if unchanged == WhenUnchanged::Skip && same_as_before {
+        return Ok(None);
     }
+
+    // A revision that changed nothing is invisible to anything that reads history by comparing
+    // trees — and reading trees is the only way to tell what a revision was about, because the
+    // paths it was written for are nowhere else. So when a state is recorded despite being the
+    // one already held, the paths are written down. Only then: everywhere else the trees already
+    // say it, and a note's own name does not belong in text a person may read.
+    let message = if same_as_before {
+        let mut said = String::from(message);
+        said.push('\n');
+        for (rel, _) in entries {
+            said.push_str(&format!("\n{RECORDED_PATH}: {}", slashed(rel)));
+        }
+        said
+    } else {
+        message.to_string()
+    };
 
     let parents: Vec<&git2::Commit<'_>> = parent.iter().collect();
     // Passing `None` as the update target keeps libgit2 from moving any reference on our
     // behalf: only the reference named by the caller is advanced, below.
-    let commit = repo.commit(None, author, committer, message, &tree, &parents)?;
-    repo.reference(reference, commit, true, message)?;
+    let commit = repo.commit(None, author, committer, &message, &tree, &parents)?;
+    repo.reference(reference, commit, true, &message)?;
     Ok(Some(commit))
 }
 
@@ -542,6 +623,14 @@ pub fn move_recorded(
             continue;
         }
         for (old, new) in &pairs {
+            // Never onto something already there. A name that is free in the folder is not
+            // necessarily free here: a note deleted without ever being recorded lives only in
+            // this reference, and renaming an unrelated note onto that name would replace the
+            // one copy of it with a different file — invisibly, since it would also drop out of
+            // the deleted list. The move is skipped and the old name keeps its history.
+            if blob_in_tree(repo, &tree, Path::new(new)).is_some() {
+                continue;
+            }
             let blob = blob_in_tree(repo, &tree, Path::new(old))
                 .ok_or_else(|| git2::Error::from_str("a path the tree listed is not in it"))?;
             let without =
@@ -761,6 +850,86 @@ mod tests {
 
     fn author() -> Signature<'static> {
         Signature::now("Test", "test@example.invalid").unwrap()
+    }
+
+    /// Signs at a stated moment, so a test can put two revisions in different seconds.
+    fn author_at(seconds: i64) -> Signature<'static> {
+        Signature::new("Test", "test@example.invalid", &git2::Time::new(seconds, 0)).unwrap()
+    }
+
+    #[test]
+    fn recording_the_same_contents_again_is_a_later_moment_for_that_path() {
+        // Keeping a state that is already held writes a revision with an identical tree. Nothing
+        // that compares trees can see it, so `last_written` would report the first of the two and
+        // date the note to a moment it was still there — and a restore reading "since then" would
+        // hand back whatever was written in between.
+        let dir = TempDir::new().unwrap();
+        let repo = Repository::init(dir.path()).unwrap();
+        let entries = vec![(std::path::PathBuf::from("a.md"), b"X".to_vec())];
+
+        for at in [1_000i64, 2_000] {
+            commit_paths(
+                &repo,
+                SNAPSHOT_REF,
+                &entries,
+                "keep deleted content",
+                &author_at(at),
+                &author_at(at),
+                WhenUnchanged::Record,
+            )
+            .unwrap()
+            .expect("recording is asked for even when the state is unchanged");
+        }
+
+        let seen = last_written(&repo, SNAPSHOT_REF, &["a.md".to_string()]).unwrap();
+        assert_eq!(
+            seen.get("a.md"),
+            Some(&2_000),
+            "the later of two identical recordings is the one reported"
+        );
+    }
+
+    #[test]
+    fn a_move_never_lands_on_something_already_recorded_there() {
+        // A name free in the folder is not necessarily free here: a note deleted without ever
+        // being recorded exists only in this reference. Renaming another note onto that name
+        // must not replace it.
+        let dir = TempDir::new().unwrap();
+        let repo = Repository::init(dir.path()).unwrap();
+        commit_paths(
+            &repo,
+            SNAPSHOT_REF,
+            &[
+                (std::path::PathBuf::from("Draft.md"), b"the deleted one".to_vec()),
+                (std::path::PathBuf::from("Notes.md"), b"the other one".to_vec()),
+            ],
+            "keep deleted content",
+            &author(),
+            &author(),
+            WhenUnchanged::Record,
+        )
+        .unwrap();
+
+        move_recorded(
+            &repo,
+            SNAPSHOT_REF,
+            &[(
+                std::path::PathBuf::from("Notes.md"),
+                std::path::PathBuf::from("Draft.md"),
+            )],
+            &author(),
+            &author(),
+        )
+        .unwrap();
+
+        let tip = repo.find_reference(SNAPSHOT_REF).unwrap().peel_to_commit().unwrap();
+        let kept = blob_in_tree(&repo, &tip.tree().unwrap(), Path::new("Draft.md")).unwrap();
+        let blob = repo.find_blob(kept).unwrap();
+        assert_eq!(
+            blob.content(),
+            b"the deleted one",
+            "the copy already recorded under that name is the one that stays"
+        );
     }
 
     #[test]

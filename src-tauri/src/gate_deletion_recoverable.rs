@@ -203,6 +203,25 @@ fn deleting_the_same_contents_twice_records_two_moments() {
         2,
         "two deletions are two events, whatever the contents were"
     );
+
+    // Counting the revisions is not enough: the second one only counts if anything reading the
+    // history can see it. Asking when the note was last kept has to answer with the second
+    // deletion, not the first — otherwise the note is dated to a moment it was still in the
+    // folder, and a restore hands back whatever was recorded in between.
+    let kept_at = crate::git_engine::last_written(&repo, SNAPSHOT_REF, &["a.md".to_string()])
+        .unwrap();
+    let mut walk = repo.revwalk().unwrap();
+    walk.push_ref(SNAPSHOT_REF).unwrap();
+    let newest = repo
+        .find_commit(walk.next().unwrap().unwrap())
+        .unwrap()
+        .time()
+        .seconds();
+    assert_eq!(
+        kept_at.get("a.md"),
+        Some(&newest),
+        "the latest deletion is the one the history reports, not the first"
+    );
 }
 
 #[test]
