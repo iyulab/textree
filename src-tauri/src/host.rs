@@ -397,6 +397,11 @@ fn poll_health(handle: Arc<HostHandle>, base: String, my_gen: u64) {
                 .and_then(|mut resp| resp.body_mut().read_to_string().ok())
                 .and_then(|body| parse_health(&body))
         };
+        // The request can outlast a restart (up to its timeout): what the old host said must not
+        // overwrite what the new one's poller reports.
+        if handle.generation.load(Ordering::SeqCst) != my_gen {
+            return;
+        }
 
         if let Some(h) = &health {
             // Refresh generatorReady on EVERY poll for the host's lifetime: the generator loads

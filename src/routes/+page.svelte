@@ -183,17 +183,29 @@
   }
 
   async function writePending() {
-    // Nor while the note is gone: the file is not there to save into, and whether to put it back
-    // is theirs to say.
-    if (!pending || !root || conflictDisk !== null || removed) return;
-    const job = pending;
+    if (pending) await writeJob(pending);
+  }
+
+  async function writeJob(job: { path: string; text: string; base: string }) {
+    const vault = root;
+    if (!vault) return;
+    // Not while the open note waits on an answer — which copy wins, or whether to put it back
+    // after it was deleted elsewhere: saving would answer for them.
+    if (job.path === activePath && (conflictDisk !== null || removed)) return;
     try {
-      const outcome = await writeNote(root, job.path, job.text, job.base);
+      const outcome = await writeNote(vault, job.path, job.text, job.base);
       if (outcome.kind === "conflict") {
         saveError = null;
         saveFailure = null;
+        if (job.path !== activePath) {
+          // Edits to a note already left (see scheduleSave): there is no banner to ask on.
+          saveError = friendlyError(
+            `Your last edits to "${baseName(job.path).replace(/\.md$/i, "")}" were not saved — it changed on disk.`,
+          );
+          return;
+        }
         // Answered while this save was in flight (e.g. they took the copy on disk): nothing to ask.
-        if (job.path !== activePath || !pending) return;
+        if (!pending) return;
         if (outcome.disk === null) markActiveRemoved();
         else conflictDisk = outcome.disk;
         return;
@@ -212,7 +224,7 @@
     } catch (e) {
       // Keep pending → retryable. Surface to the user (friendly summary, raw kept for diagnosis).
       saveError = friendlyError(e);
-      saveFailure = saveError;
+      if (job.path === activePath) saveFailure = saveError;
     }
   }
 
@@ -225,6 +237,11 @@
    */
   async function saveBeforeLeaving(): Promise<"saved" | "asking" | "failed"> {
     await flush();
+    // Edits typed while that save ran are pending again without anything having gone wrong:
+    // write them too. Bounded, so someone who never stops typing is not held here.
+    for (let i = 0; i < 5 && pending && !saveFailure && conflictDisk === null && !removed; i++) {
+      await flush();
+    }
     if (!pending) return "saved";
     if (conflictDisk !== null) {
       void drawAttentionToConflict();
@@ -236,7 +253,7 @@
     }
     // The save failed: the edits exist only in the editor. Leaving would drop them, so the caller
     // stays; the banner offers another try or letting them go.
-    void drawAttentionToFailure();
+    if (saveFailure) void drawAttentionToFailure();
     return "failed";
   }
 
@@ -273,6 +290,14 @@
   }
 
   function scheduleSave(path: string, text: string) {
+    if (pending && pending.path !== path) {
+      // Edits to the note being left, typed while the next one was loading (the editor stays on
+      // the old note until then). They are written, not replaced by the first edit to the new one.
+      const left = pending;
+      pending = null;
+      const run = saving.then(() => writeJob(left));
+      saving = run.catch(() => {});
+    }
     const base = pending?.path === path ? pending.base : synced;
     pending = { path, text, base };
     dirty = true;
@@ -1254,7 +1279,7 @@
    * record the wrong thing while looking like it worked.
    */
   async function startAddVersion() {
-    if (!root || !activePath) return;
+    if (!root || !activePath || removed) return; // nothing on disk to record
     versionNotice = null;
     // A version of what is on disk is only the right version once the disk has it.
     if (dirty && (await saveBeforeLeaving()) !== "saved") return;

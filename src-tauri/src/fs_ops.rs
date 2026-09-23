@@ -352,8 +352,8 @@ pub(crate) fn place_restored(root: &Path, rel: &str) -> io::Result<PathBuf> {
 /// ten thousand of them cost the better part of a second — while the folders holding them list in
 /// a few milliseconds.
 ///
-/// Names are compared the way the platform's filesystem compares them by default: ignoring case
-/// on Windows and macOS, exactly elsewhere — so the answer is the one a per-file check would give.
+/// Names are compared ignoring case on Windows and macOS, exactly elsewhere; a name not found that
+/// way is checked with the filesystem, so the answer is the one a per-file check would give.
 #[derive(Default)]
 pub(crate) struct PresentFiles {
     folders: std::collections::HashMap<PathBuf, Option<std::collections::HashSet<String>>>,
@@ -384,7 +384,11 @@ impl PresentFiles {
                     .collect(),
             )
         });
-        listing.as_ref().is_some_and(|names| names.contains(&Self::key(name)))
+        // A name the listing does not have is confirmed with the filesystem itself. Folding case is
+        // not all a filesystem does to names — macOS also treats Unicode NFC and NFD spellings of a
+        // name as one — and a note wrongly reported missing would be listed as deleted. Missing
+        // files are the few (deleted notes), so this costs little.
+        listing.as_ref().is_some_and(|names| names.contains(&Self::key(name))) || path.is_file()
     }
 }
 

@@ -83,4 +83,26 @@ describe("RetryingWriter", () => {
     // The in-flight write finishing must not clear the newer, still-unwritten state.
     expect(writer.pending()).toEqual(["favorites.json"]);
   });
+  it("stops a save in progress when the folder changes, so the rest does not land in the new one", async () => {
+    const written: string[] = [];
+    let release: () => void = () => {};
+    let attempt = 0;
+    const writer = new RetryingWriter(async (rel) => {
+      if (rel === "favorites.json") {
+        attempt += 1;
+        if (attempt === 1) throw new Error("owed"); // favorites.json is owed from here on
+        await new Promise<void>((r) => (release = r)); // its retry is slow
+      }
+      written.push(rel);
+    });
+    await writer.save("favorites.json", () => "[]");
+
+    const saving = writer.save("order.json", () => "{}"); // retries favorites first, then order
+    await Promise.resolve();
+    writer.reset(); // the folder changes while favorites.json is being retried
+    release();
+    await saving;
+
+    expect(written).toEqual(["favorites.json"]); // order.json was not written into the new folder
+  });
 });

@@ -149,6 +149,53 @@ test("deleted outside while editing: leaving is refused until I choose, then dis
   }
 });
 
+test("typing while the next note opens: the switch goes ahead and nothing typed is lost", async () => {
+  // The editor stays on the old note until the next one has loaded, so keystrokes in that gap
+  // belong to the old note: they must not hold the switch back (they are saved like any other
+  // edit), and typing in the new one right after must not replace them unsaved. The gap is a few
+  // milliseconds; this lands in it only sometimes (the switch itself it checks every time).
+  const vault = createTempVault({ "Alpha.md": "alpha\n", "Beta.md": "beta\n" });
+  try {
+    await loadVault(page, vault);
+    await page.getByRole("treeitem", { name: /Alpha/ }).click();
+    await expect(page.locator(".cm-content")).toContainText("alpha");
+
+    const result = await page.evaluate(async () => {
+      const editor = () => document.querySelector(".cm-content") as HTMLElement;
+      const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+      const beta = [...document.querySelectorAll<HTMLElement>('[role="treeitem"]')].find((e) =>
+        /Beta/.test(e.textContent ?? ""),
+      )!;
+      editor().focus();
+      beta.click(); // focus stays in the editor
+      const typed: string[] = [];
+      for (let i = 0; i < 40 && editor().textContent?.includes("alpha"); i++) {
+        editor().focus();
+        document.execCommand("insertText", false, `Q${i}.`);
+        typed.push(`Q${i}.`);
+        await sleep(1);
+      }
+      for (let i = 0; i < 2000 && !editor().textContent?.includes("beta"); i++) await sleep(1);
+      // Straight on into the new note, well inside the save delay.
+      let typedIntoBeta = false;
+      for (let i = 0; i < 100 && !typedIntoBeta; i++) {
+        await sleep(5);
+        editor().focus();
+        document.execCommand("insertText", false, "R");
+        typedIntoBeta = editor().textContent?.includes("R") ?? false;
+      }
+      return { typed, typedIntoBeta };
+    });
+
+    expect(result.typedIntoBeta).toBe(true);
+    expect(result.typed.length).toBeGreaterThan(0);
+    await expect.poll(() => readVaultFile(vault, "Alpha.md")).toContain(result.typed.at(-1)!);
+    await expect.poll(() => readVaultFile(vault, "Beta.md")).toContain("R");
+  } finally {
+    removeTempVault(vault);
+  }
+});
+
 /** Open `stuck.md`, make it unwritable, and type — the save fails and the edits exist only on screen. */
 async function failWhileEditing(vault: string): Promise<void> {
   await loadVault(page, vault);

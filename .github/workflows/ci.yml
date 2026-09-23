@@ -88,7 +88,15 @@ jobs:
       - name: Read pinned canopy commit
         id: canopy
         shell: bash
-        run: echo "ref=$(tr -d '[:space:]' < .github/canopy-ref)" >> "$GITHUB_OUTPUT"
+        # Refuse anything but a full commit hash: an empty ref would check out canopy's default
+        # branch and build, green, against an unpinned canopy.
+        run: |
+          ref=$(tr -d '[:space:]' < .github/canopy-ref) || exit 1
+          if [[ ! "$ref" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error file=.github/canopy-ref::must hold a full 40-character commit hash, got '$ref'"
+            exit 1
+          fi
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
 
       - name: Checkout canopy (pinned)
         uses: actions/checkout@v4

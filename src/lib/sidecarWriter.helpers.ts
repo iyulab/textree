@@ -14,6 +14,8 @@ export type WriteFile = (rel: string, body: string) => Promise<void>;
 export class RetryingWriter {
   /** File → how to serialize its current state, for every file whose last write did not land. */
   private unsaved = new Map<string, () => string>();
+  /** Bumped by `reset`: a save that started before it stops at its next step. */
+  private epoch = 0;
 
   constructor(
     private readonly write: WriteFile,
@@ -23,7 +25,10 @@ export class RetryingWriter {
   /** Write `rel`, and retry every file an earlier save left unwritten. */
   async save(rel: string, serialize: () => string): Promise<void> {
     this.unsaved.set(rel, serialize);
+    const epoch = this.epoch;
     for (const [file, current] of [...this.unsaved]) {
+      // The folder changed while an earlier write was awaited: the rest belongs to the folder left.
+      if (this.epoch !== epoch) return;
       try {
         await this.write(file, current());
         // A newer save may have queued this file again meanwhile; that one is still owed.
@@ -45,5 +50,6 @@ export class RetryingWriter {
    */
   reset(): void {
     this.unsaved.clear();
+    this.epoch += 1;
   }
 }
