@@ -580,12 +580,7 @@
       const newPath = await renameNoteUnique(root, pathToRename, candidate);
       await refreshTree();
       if (activePath === pathToRename) {
-        // Still on the renamed note → follow the new path. Keep the recreated editor in sync:
-        // changing activePath bumps docKey → Editor rebuilds from `content`, so `content` must hold
-        // the just-typed text (handleEdit only updates liveDoc).
-        content = liveDoc;
-        activePath = newPath;
-        activeName = baseName(newPath).replace(/\.md$/i, "");
+        followOpenNote(newPath); // still on the renamed note
         selectedNode = null;
       }
       opError = null;
@@ -687,6 +682,18 @@
     return c === a || c.startsWith(a + "/");
   }
 
+  /**
+   * The open note now lives at `path` — it, or a folder holding it, was moved or renamed. A new
+   * path recreates the editor from `content`, so `content` must hold what is on screen now: left at
+   * the text the note was opened with, the next keystroke would save that text over everything
+   * typed since.
+   */
+  function followOpenNote(path: string) {
+    content = liveDoc;
+    activePath = path;
+    activeName = baseName(path).replace(/\.md$/i, "");
+  }
+
   /** Parent directory of a path (separator preserved). */
   function parentDir(p: string): string {
     const i = Math.max(p.lastIndexOf("/"), p.lastIndexOf("\\"));
@@ -780,7 +787,7 @@
       const newDir = await promoteNode(root, leaf);
       await refreshTree();
       // If the promoted leaf was the open note, its body moved to newDir/<stem>.md → follow it.
-      if (wasActive) activePath = joinPath(newDir, `${baseName(newDir)}.md`);
+      if (wasActive) followOpenNote(joinPath(newDir, `${baseName(newDir)}.md`));
       selectedNode = null;
       void createNewNote(newDir); // target the new container
     } catch (e) {
@@ -889,7 +896,7 @@
       const newPath = await moveNode(root, src, destDir);
       await refreshTree();
       // If the open note is inside the moved subtree, follow the new path (content same, path only changed).
-      if (affectsOpen && activePath) activePath = newPath + activePath.slice(src.length);
+      if (affectsOpen && activePath) followOpenNote(newPath + activePath.slice(src.length));
       selectedNode = null;
       opError = null;
     } catch (e) {
@@ -924,9 +931,9 @@
       const newDir = parentDir(movedPath);
       if (wasActiveLeaf) {
         // The promoted leaf body moved to newDir/<stem>.md.
-        activePath = joinPath(newDir, `${baseName(newDir)}.md`);
+        followOpenNote(joinPath(newDir, `${baseName(newDir)}.md`));
       } else if (wasActiveSrc && activePath) {
-        activePath = movedPath + activePath.slice(src.length);
+        followOpenNote(movedPath + activePath.slice(src.length));
       }
       selectedNode = null;
       opError = null;
