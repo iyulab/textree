@@ -30,8 +30,8 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddSingleton(opts);
 builder.Services.AddSingleton(status);
 builder.Services.AddSingleton(embedder);
-// Telemetry: disabled (no-op) unless TEXTREE_TELEMETRY_CONNECTION is set. Hand-built pipe
-// (allowlist processor + context scrub processor) lives entirely inside TelemetryEmitter.Create.
+// Telemetry: disabled (no-op) unless TEXTREE_TELEMETRY_CONNECTION holds both a key and an endpoint.
+// TelemetryEmitter writes each envelope field by field and posts it to the ingestion endpoint.
 // This dictionary is also reused below to decide the ITextGenerator backend (TEXTREE_BYO_PRESET),
 // so Environment.GetEnvironmentVariables() is only ever materialized once.
 var envDict = Environment.GetEnvironmentVariables()

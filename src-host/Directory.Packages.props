@@ -3,7 +3,6 @@
     <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
   </PropertyGroup>
   <ItemGroup>
-    <PackageVersion Include="Microsoft.ApplicationInsights" Version="2.22.0" />
     <PackageVersion Include="FluxIndex.Core" Version="0.52.3" />
     <PackageVersion Include="FluxIndex.Storage.SQLite" Version="0.52.3" />
     <PackageVersion Include="FluxIndex.Providers.LMSupply" Version="0.52.3" />
