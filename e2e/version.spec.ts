@@ -64,6 +64,10 @@ test("versions: add two → both listed, newest current → preview the first �
     const firstState = readVaultFile(vault, "memo.md");
 
     await appendAndSave(page, vault, "memo.md", "draft two");
+    // Adding the first version creates the repository, which the watcher sees as a change to
+    // the checked-out branch and answers with a full refresh. Typing through that refresh is the
+    // user's own edit — it must not be presented as a change made on disk.
+    await expect(page.locator(".banner")).toHaveCount(0);
     await addVersion(page, "draft two");
 
     await runCommand(page, "Version history");

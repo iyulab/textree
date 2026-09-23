@@ -85,8 +85,14 @@
   // Live document text — mirrors `content` on note load, then tracks edits so the page header
   // reflects frontmatter changes immediately (the editor owns its own doc; `content` is load-only).
   let liveDoc = $state("");
+  // The last text the editor and disk were known to agree on: every assignment to `content` is a
+  // disk state (a load, a reload, or text just flushed), and each successful save moves it forward.
+  // The external-change reconciliation compares disk against this to tell an edit made elsewhere
+  // from the user's own unsaved typing.
+  let synced = "";
   $effect(() => {
     liveDoc = content;
+    synced = content;
   });
   let frontmatter = $derived(parseFrontmatter(liveDoc));
   // Reading view toggle (ephemeral, per-session) — clean read-only render vs. live-preview editing.
@@ -164,6 +170,7 @@
       await writeNote(root, job.path, job.text);
       backlinks.updateSource(toRelative(job.path), job.text); // refresh links from the saved note (relative key, no re-read)
       // Switch to clean state only if no newer edit accumulated during the save.
+      if (job.path === activePath) synced = job.text;
       if (pending === job) {
         pending = null;
         dirty = false;
@@ -181,6 +188,11 @@
     publishNotice = null; // an edit supersedes the last publish notice (the site is now stale)
     if (saveTimer) clearTimeout(saveTimer);
     saveTimer = setTimeout(() => {
+      saveTimer = null;
+      // While the note is in conflict with a change on disk, the user has been asked which copy
+      // wins. Saving on a timer would answer for them — and overwrite the copy on disk. The edit
+      // stays pending until they choose (resolveKeepMine saves it; resolveTakeDisk drops it).
+      if (conflictDisk !== null) return;
       void flush();
     }, DEBOUNCE_MS);
   }
@@ -806,13 +818,18 @@
 
   /** Conflict banner: overwrite with the copy on disk, discarding my edits. */
   function resolveTakeDisk() {
+    if (saveTimer) {
+      clearTimeout(saveTimer);
+      saveTimer = null;
+    }
     if (conflictDisk !== null) applyReload(conflictDisk);
     conflictDisk = null;
   }
 
-  /** Conflict banner: keep my edits (overwrites disk on the next save). */
+  /** Conflict banner: keep my edits — they replace the copy on disk now. */
   function resolveKeepMine() {
     conflictDisk = null;
+    void flush();
   }
 
   /** Last folder name of the vault root path (for the compact sidebar header). Full path is in the title. */
@@ -1267,6 +1284,7 @@
       activePath: () => activePath,
       activeDoc: () => liveDoc,
       isDirty: () => dirty,
+      synced: () => synced,
       setTree: (t) => {
         tree = t;
       },

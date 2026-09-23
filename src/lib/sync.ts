@@ -6,7 +6,7 @@
 
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { listTree, readNote, type TreeNode } from "./ipc";
-import { decideRescanAction } from "./sync.helpers";
+import { decideChangeAction, decideRescanAction } from "./sync.helpers";
 
 export type FsChangeKind = "created" | "modified" | "removed";
 
@@ -24,6 +24,8 @@ export interface SyncHandlers {
   activeDoc: () => string;
   /** Whether the editor has unsaved edits. */
   isDirty: () => boolean;
+  /** The last content the editor and disk were known to agree on (last loaded or last saved). */
+  synced: () => string;
   /** Replace with the refreshed tree. */
   setTree: (tree: TreeNode[]) => void;
   /** Reload a clean note with the disk content (FS is the truth). */
@@ -71,11 +73,9 @@ async function handleChange(handlers: SyncHandlers, payload: FsChange): Promise<
     return;
   }
 
-  if (handlers.isDirty()) {
-    handlers.conflict(disk); // protect unsaved edits — user chooses
-  } else {
-    handlers.reloadActive(disk); // reload silently
-  }
+  const action = decideChangeAction(disk, handlers.isDirty(), handlers.synced());
+  if (action === "conflict") handlers.conflict(disk); // protect unsaved edits — user chooses
+  else if (action === "reload") handlers.reloadActive(disk); // reload silently
 }
 
 /**
@@ -105,7 +105,7 @@ async function handleRescan(handlers: SyncHandlers): Promise<void> {
     return;
   }
 
-  const action = decideRescanAction(disk, handlers.activeDoc(), handlers.isDirty());
+  const action = decideRescanAction(disk, handlers.activeDoc(), handlers.isDirty(), handlers.synced());
   if (action === "conflict") handlers.conflict(disk);
   else if (action === "reload") handlers.reloadActive(disk);
 }

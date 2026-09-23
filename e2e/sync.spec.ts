@@ -132,6 +132,30 @@ test("conflict resolution: load the copy on disk → editor replaced with disk c
   }
 });
 
+test("conflict pending: further typing is not saved over the copy on disk until I choose", async () => {
+  const vault = createTempVault({ "clash.md": "initial\n" });
+  try {
+    await triggerConflict(vault);
+    const onDisk = readVaultFile(vault, "clash.md");
+
+    // Keep typing with the question still open, and wait well past the autosave debounce.
+    await page.locator(".cm-content").click();
+    await page.keyboard.press("Control+End");
+    await page.keyboard.type("more of mine");
+    await page.waitForTimeout(1500);
+
+    // The copy on disk is untouched: the timer must not answer the question for the user.
+    expect(readVaultFile(vault, "clash.md")).toBe(onDisk);
+    await expect(page.locator(".banner")).toBeVisible();
+
+    // Choosing to keep my edits is what replaces it.
+    await page.getByRole("button", { name: "Keep my edits" }).click();
+    await expect.poll(() => readVaultFile(vault, "clash.md"), { timeout: 5000 }).toContain("more of mine");
+  } finally {
+    removeTempVault(vault);
+  }
+});
+
 test("conflict resolution: keep my edit → close banner and preserve my edit (disk version not applied)", async () => {
   const vault = createTempVault({ "clash.md": "initial\n" });
   try {
