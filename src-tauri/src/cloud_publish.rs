@@ -101,18 +101,23 @@ pub fn upload_bundle(
     timeout: Duration,
 ) -> Result<PublishToCloudResult, String> {
     let url = format!("{}/publish", base.trim_end_matches('/'));
+    // Error statuses come back as responses (not errors) so their body can explain the failure.
     match ureq::post(&url)
-        .set("X-Publish-Token", token)
-        .set("Content-Type", "application/zip")
-        .timeout(timeout)
-        .send_bytes(&zip)
+        .header("X-Publish-Token", token)
+        .header("Content-Type", "application/zip")
+        .config()
+        .timeout_global(Some(timeout))
+        .http_status_as_error(false)
+        .build()
+        .send(&zip[..])
     {
-        Ok(resp) => {
-            let body = resp.into_string().map_err(|e| e.to_string())?;
+        Ok(mut resp) if resp.status().is_success() => {
+            let body = resp.body_mut().read_to_string().map_err(|e| e.to_string())?;
             parse_publish_response(&body)
         }
-        Err(ureq::Error::Status(code, resp)) => {
-            let body = resp.into_string().unwrap_or_default();
+        Ok(mut resp) => {
+            let code = resp.status().as_u16();
+            let body = resp.body_mut().read_to_string().unwrap_or_default();
             Err(map_upload_error(code, &body))
         }
         // Transport failure: a timeout (stalled/hung server) or an unreachable host. Both are
@@ -247,5 +252,62 @@ mod tests {
         let mut s = String::new();
         f.read_to_string(&mut s).unwrap();
         assert_eq!(s, "nested");
+    }
+
+    /// Serves exactly one HTTP response on a loopback port and returns its base URL. Drains the
+    /// request first so the client is not reset mid-send.
+    fn serve_once(status_line: &'static str, body: &'static str) -> String {
+        use std::io::{BufRead, BufReader, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        std::thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            let mut reader = BufReader::new(stream.try_clone().unwrap());
+            let mut len = 0usize;
+            loop {
+                let mut line = String::new();
+                reader.read_line(&mut line).unwrap();
+                if let Some(v) = line.to_ascii_lowercase().strip_prefix("content-length:") {
+                    len = v.trim().parse().unwrap();
+                }
+                if line == "\r\n" {
+                    break;
+                }
+            }
+            let mut sink = vec![0u8; len];
+            reader.read_exact(&mut sink).unwrap();
+            let mut out = stream;
+            write!(
+                out,
+                "{status_line}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            )
+            .unwrap();
+        });
+        base
+    }
+
+    #[test]
+    fn upload_reads_the_body_of_a_rejected_bundle() {
+        // An error status must still yield its body: the server says *why* it rejected the bundle.
+        let base = serve_once("HTTP/1.1 400 Bad Request", "missing index.html");
+        let err = upload_bundle(&base, "t", b"zip".to_vec(), std::time::Duration::from_secs(5)).unwrap_err();
+        assert_eq!(err, "the server rejected the bundle: missing index.html");
+    }
+
+    #[test]
+    fn upload_maps_a_rejected_token_without_echoing_it() {
+        let base = serve_once("HTTP/1.1 401 Unauthorized", "");
+        let err = upload_bundle(&base, "secret-token", b"zip".to_vec(), std::time::Duration::from_secs(5)).unwrap_err();
+        assert!(err.contains("token was rejected"));
+        assert!(!err.contains("secret-token"));
+    }
+
+    #[test]
+    fn upload_parses_a_successful_publish() {
+        let base = serve_once("HTTP/1.1 200 OK", r#"{"url":"https://example.test/","pageCount":3}"#);
+        let ok = upload_bundle(&base, "t", b"zip".to_vec(), std::time::Duration::from_secs(5)).unwrap();
+        assert_eq!(ok.url, "https://example.test/");
+        assert_eq!(ok.page_count, 3);
     }
 }

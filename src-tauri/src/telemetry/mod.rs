@@ -58,7 +58,7 @@ pub fn emit(event: TelemetryEvent) {
         let facts = EnvFacts::current();
         let body = envelope::build_envelope(&event, &config, &facts, &ts);
         let _ = ureq::post(&config.track_url)
-            .set("Content-Type", "application/json")
+            .header("Content-Type", "application/json")
             .send_json(serde_json::json!([body]));
     });
 }

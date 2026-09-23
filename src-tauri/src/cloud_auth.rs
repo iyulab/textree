@@ -151,16 +151,21 @@ fn run_loopback(listener: TcpListener, expected_state: &str, timeout: Duration) 
 /// Exchanges the code + verifier for a publish token at the api (PKCE back-channel).
 fn exchange_code(api_base: &str, code: &str, verifier: &str) -> Result<String, String> {
     let url = format!("{}/oauth/desktop/token", api_base.trim_end_matches('/'));
+    // Error statuses come back as responses (not errors) so their body can explain the failure.
     match ureq::post(&url)
-        .timeout(EXCHANGE_TIMEOUT)
-        .send_json(ureq::json!({ "code": code, "codeVerifier": verifier }))
+        .config()
+        .timeout_global(Some(EXCHANGE_TIMEOUT))
+        .http_status_as_error(false)
+        .build()
+        .send_json(serde_json::json!({ "code": code, "codeVerifier": verifier }))
     {
-        Ok(resp) => {
-            let body = resp.into_string().map_err(|e| e.to_string())?;
+        Ok(mut resp) if resp.status().is_success() => {
+            let body = resp.body_mut().read_to_string().map_err(|e| e.to_string())?;
             parse_exchange_response(&body)
         }
-        Err(ureq::Error::Status(status, resp)) => {
-            let body = resp.into_string().unwrap_or_default();
+        Ok(mut resp) => {
+            let status = resp.status().as_u16();
+            let body = resp.body_mut().read_to_string().unwrap_or_default();
             Err(map_exchange_error(status, &body))
         }
         Err(e) => Err(format!("couldn't reach app.textree.me ({e}) — check your connection and try again")),

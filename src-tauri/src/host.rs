@@ -364,10 +364,12 @@ fn poll_health(handle: Arc<HostHandle>, base: String, my_gen: u64) {
             return;
         }
         let health = ureq::get(&format!("{base}/health"))
-            .timeout(Duration::from_secs(5))
+            .config()
+            .timeout_global(Some(Duration::from_secs(5)))
+            .build()
             .call()
             .ok()
-            .and_then(|resp| resp.into_string().ok())
+            .and_then(|mut resp| resp.body_mut().read_to_string().ok())
             .and_then(|body| parse_health(&body));
 
         if let Some(h) = &health {
@@ -418,8 +420,10 @@ pub fn shutdown_host(handle: &HostHandle) {
     handle.generation.fetch_add(1, Ordering::SeqCst);
     if let Some(base) = handle.base_url() {
         let _ = ureq::post(&format!("{base}/shutdown"))
-            .timeout(Duration::from_millis(800))
-            .call();
+            .config()
+            .timeout_global(Some(Duration::from_millis(800)))
+            .build()
+            .send_empty();
     }
     let mut guard = handle.child.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(mut child) = guard.take() {
@@ -542,12 +546,17 @@ pub fn test_byo_connection(preset: String, base_url: String, api_key: Option<Str
     }
     let path = if preset.eq_ignore_ascii_case("gpustack") { "/v1-openai/models" } else { "/v1/models" };
     let url = format!("{}{}", base_url.trim_end_matches('/'), path);
-    let mut req = ureq::get(&url).timeout(Duration::from_secs(5));
+    let mut req = ureq::get(&url);
     let key = resolve_test_key(api_key, crate::byo_secret::get_api_key);
     if let Some(key) = key {
-        req = req.set("Authorization", &format!("Bearer {key}"));
+        req = req.header("Authorization", &format!("Bearer {key}"));
     }
-    req.call().map(|_| ()).map_err(|e| e.to_string())
+    req.config()
+        .timeout_global(Some(Duration::from_secs(5)))
+        .build()
+        .call()
+        .map(|_| ())
+        .map_err(|e| e.to_string())
 }
 
 /// Fire-and-forget: bump ask_generation so any in-flight `ask` stream detects the mismatch,
@@ -574,8 +583,10 @@ pub async fn prepare_generation(host: State<'_, Arc<HostHandle>>) -> Result<(), 
     host.set_generator_error(None);
     tauri::async_runtime::spawn_blocking(move || {
         let _ = ureq::post(&format!("{base}/prepare-generation"))
-            .timeout(Duration::from_secs(10))
-            .call();
+            .config()
+            .timeout_global(Some(Duration::from_secs(10)))
+            .build()
+            .send_empty();
     })
     .await
     .map_err(|e| e.to_string())?;
@@ -675,11 +686,13 @@ pub async fn semantic_search(
             "limit": limit,
         });
         match ureq::post(&format!("{base}/search"))
-            .timeout(Duration::from_secs(10))
+            .config()
+            .timeout_global(Some(Duration::from_secs(10)))
+            .build()
             .send_json(payload)
         {
-            Ok(resp) => {
-                let body = resp.into_string().map_err(|e| e.to_string())?;
+            Ok(mut resp) => {
+                let body = resp.body_mut().read_to_string().map_err(|e| e.to_string())?;
                 Ok(parse_search_response(&body).unwrap_or_default())
             }
             Err(e) => Err(e.to_string()),
@@ -809,10 +822,12 @@ pub async fn ask(
     let result = tauri::async_runtime::spawn_blocking(move || {
         let payload = serde_json::json!({ "messages": messages, "stream": true });
         let resp = ureq::post(&format!("{base}/chat"))
-            .timeout(Duration::from_secs(120))
+            .config()
+            .timeout_global(Some(Duration::from_secs(120)))
+            .build()
             .send_json(payload)
             .map_err(|e| e.to_string())?;
-        let reader = BufReader::new(resp.into_reader());
+        let reader = BufReader::new(resp.into_body().into_reader());
         for line in reader.lines() {
             // A newer `ask` has started — abandon this stream.
             // Dropping `reader` closes the TCP connection; the host sees RequestAborted
@@ -859,7 +874,9 @@ pub fn index_note(handle: &HostHandle, vault: &str, path: &str) {
     }
     let payload = serde_json::json!({ "vaultPath": vault, "path": path });
     let _ = ureq::post(&format!("{base}/index"))
-        .timeout(Duration::from_secs(10))
+        .config()
+        .timeout_global(Some(Duration::from_secs(10)))
+        .build()
         .send_json(payload);
 }
 
@@ -872,7 +889,9 @@ pub fn reindex_vault(handle: &HostHandle, vault: &str) {
     }
     let payload = serde_json::json!({ "vaultPath": vault });
     let _ = ureq::post(&format!("{base}/reindex"))
-        .timeout(Duration::from_secs(10))
+        .config()
+        .timeout_global(Some(Duration::from_secs(10)))
+        .build()
         .send_json(payload);
 }
 
