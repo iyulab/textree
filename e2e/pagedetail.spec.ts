@@ -53,6 +53,9 @@ test("title edit Escape -> no change", async () => {
     await page.locator(".title-input").press("Escape");
 
     await expect(page.locator(".note-name")).toHaveText("kept");
+    // A commit on blur after Escape would rename asynchronously: wait before concluding it did not.
+    await page.waitForTimeout(1500);
+    await expect(page.getByRole("treeitem", { name: /renamed/ })).toHaveCount(0);
     expect(existsSync(join(vault, "kept.md"))).toBe(true);
     expect(existsSync(join(vault, "renamed.md"))).toBe(false);
   } finally {

@@ -79,7 +79,8 @@ test("Ctrl+N is suppressed while the palette is open (no layered editor)", async
   // The accelerator must not fire underneath the open palette: the palette panel's keydown
   // stops propagation, so Ctrl+N never reaches the window-level handler. Guards that mechanism.
   await page.keyboard.press("Control+n");
-  await expect(page.locator(".name-input")).toHaveCount(0);
+  // What Ctrl+N does when it fires: a new note with its header title being edited.
+  await expect(page.locator(".title-input")).toHaveCount(0);
   await expect(page.getByTestId("palette-overlay")).toBeVisible();
 
   await page.keyboard.press("Escape");

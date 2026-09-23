@@ -1,4 +1,4 @@
-import { chromium, type Browser, type Page, type Locator } from "@playwright/test";
+import { chromium, expect, type Browser, type Page, type Locator } from "@playwright/test";
 import { resolve, join } from "node:path";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, readdirSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -178,6 +178,14 @@ export async function loadVault(page: Page, vaultPath: string): Promise<void> {
     if (await tryLoad()) return;
   }
   throw new Error("The app did not switch folders: the open note is waiting on an answer.");
+}
+
+/**
+ * Wait until the note named `name` is the open one. Checking the editor's text instead can pass
+ * while the previous note is still open, when both hold the text looked for.
+ */
+export async function expectOpenNote(page: Page, name: string): Promise<void> {
+  await expect(page.locator(".note-name")).toHaveText(name);
 }
 
 /**

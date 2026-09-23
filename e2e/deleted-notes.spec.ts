@@ -86,9 +86,15 @@ test("deleted notes: the open list follows deletions, and does not carry over to
     await expect(panel).toContainText("one");
     await page.getByTestId("deleted-restore").first().click();
     await expect(page.getByTestId("deleted-outcome")).toContainText("Restored");
+    // Leave one deleted note listed, so the switch below has something to drop.
+    const other = page.getByRole("treeitem", { name: /two/ });
+    await other.focus();
+    await page.keyboard.press("Delete");
+    await expect(panel).toContainText("two");
 
     // Another folder: the list is that folder's, and what was said about the first one is gone.
     await loadVault(page, second);
+    await expect(panel).not.toContainText("two");
     await expect(panel).toContainText("Nothing has been deleted");
     await expect(page.getByTestId("deleted-outcome")).toHaveCount(0);
     await page.getByRole("button", { name: "Close deleted notes" }).click();

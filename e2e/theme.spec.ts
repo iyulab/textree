@@ -61,9 +61,13 @@ test("theme toggle: data-theme switch + actual background color change", async (
 });
 
 test("theme selection persists in localStorage", async () => {
+  const html = page.locator("html");
+  const before = await html.getAttribute("data-theme");
+  const after = before === "dark" ? "light" : "dark";
   await toggleTheme(page);
-  const applied = await page.locator("html").getAttribute("data-theme");
+  // The toggle took effect, and it persisted that explicit selection (light/dark) — checked
+  // against the theme it switched to, not merely "stored equals applied", which held before too.
+  await expect(html).toHaveAttribute("data-theme", after);
   const stored = await page.evaluate(() => localStorage.getItem("textree-theme"));
-  // The toggle persists the explicit selection (light/dark) and must match the applied theme.
-  expect(stored).toBe(applied);
+  expect(stored).toBe(after);
 });

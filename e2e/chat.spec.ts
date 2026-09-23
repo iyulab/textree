@@ -739,7 +739,7 @@ test.describe("host-absent: chat degrades calmly, Note mode stays functional", (
       await absentPage.locator(".cm-content").click();
       await absentPage.keyboard.press("Control+End");
       await absentPage.keyboard.type(" host-absent-edit");
-      await expect(absentPage.locator(".title")).toBeVisible({ timeout: 3_000 });
+      await expect.poll(() => readVaultFile(vault, "alpha.md")).toContain("host-absent-edit");
     } finally {
       removeTempVault(vault);
     }

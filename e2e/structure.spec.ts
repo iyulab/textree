@@ -100,6 +100,10 @@ test("editing the first H1 of a NAMED note does not rename it", async () => {
     await page.keyboard.press("Control+Home");
     await page.locator(".cm-content").pressSequentially("# forced-title\n");
     await page.getByRole("button", { name: "New note" }).click(); // blur the editor
+    await expect(page.getByRole("treeitem", { name: /Untitled/ })).toBeVisible();
+    // A wrongful rename would land asynchronously (the renaming tests above wait up to 5 s for
+    // theirs): give it that long before concluding it did not happen.
+    await page.waitForTimeout(2000);
 
     expect(exists(vault, "my-note.md")).toBe(true);
     expect(exists(vault, "forced-title.md")).toBe(false);

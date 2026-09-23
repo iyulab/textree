@@ -5,6 +5,7 @@ import {
   createTempVault,
   removeTempVault,
   readVaultFile,
+  expectOpenNote,
 } from "./helpers";
 
 let browser: Browser;
@@ -88,9 +89,10 @@ test("flush unsaved edits when switching notes", async () => {
     // Switch to note B immediately → flush must persist note A's edit to disk.
     await page.getByRole("treeitem", { name: /note-b/ }).click();
 
-    await expect
-      .poll(() => readVaultFile(vault, "note-a.md"), { timeout: 5000 })
-      .toContain("XYZ");
+    // Note B opens only after note A's edit was written — read straight away, well inside the
+    // 500 ms autosave, so it is the flush that is tested and not the timer.
+    await expectOpenNote(page, "note-b");
+    expect(readVaultFile(vault, "note-a.md")).toContain("XYZ");
   } finally {
     removeTempVault(vault);
   }

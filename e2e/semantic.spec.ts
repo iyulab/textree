@@ -17,6 +17,8 @@ import {
   loadVault,
   createTempVault,
   removeTempVault,
+  readVaultFile,
+  expectOpenNote,
 } from "./helpers";
 
 // ── Profile detection ────────────────────────────────────────────────────────
@@ -209,9 +211,9 @@ test.describe("host-present: semantic search wired end-to-end", () => {
       await expect(async () => {
         // Re-navigate away then back to force the relatedNotes $effect to re-run.
         await page.getByRole("treeitem", { name: /ecosystem/i }).click();
-        await expect(page.locator(".cm-content")).toBeVisible({ timeout: 5_000 });
+        await expectOpenNote(page, "ecosystem");
         await page.getByRole("treeitem", { name: /forest/i }).click();
-        await expect(page.locator(".cm-content")).toBeVisible({ timeout: 5_000 });
+        await expectOpenNote(page, "forest");
 
         // Panel must be visible and contain at least one note.
         await expect(relatedSection).toBeVisible({ timeout: 8_000 });
@@ -400,8 +402,8 @@ test.describe("host-absent: graceful degradation when host is unavailable", () =
       await absentPage.keyboard.press("Control+End");
       await absentPage.keyboard.type(" host-absent-edit");
 
-      // The title bar reflects the note name (sanity check: app didn't crash).
-      await expect(absentPage.locator(".title")).toBeVisible({ timeout: 3_000 });
+      // The edit is saved like any other — the absent host does not stand in the way.
+      await expect.poll(() => readVaultFile(vault, "alpha.md")).toContain("host-absent-edit");
     } finally {
       removeTempVault(vault);
     }
