@@ -34,7 +34,7 @@
     "@tauri-apps/plugin-process": "^2.3.1",
     "@tauri-apps/plugin-updater": "^2.10.1",
     "codemirror": "^6.0.2",
-    "katex": "0.17.0"
+    "katex": "0.18.7"
   },
   "devDependencies": {
     "@playwright/test": "^1.60.0",
@@ -42,7 +42,6 @@
     "@sveltejs/kit": "^2.9.0",
     "@sveltejs/vite-plugin-svelte": "^7.3.0",
     "@tauri-apps/cli": "^2",
-    "@types/katex": "^0.16.7",
     "@types/node": "^26.6.2",
     "svelte": "^5.0.0",
     "svelte-check": "^4.0.0",

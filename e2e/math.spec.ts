@@ -30,6 +30,17 @@ test("inline math renders as KaTeX on an inactive line", async () => {
     await expect(inline).toBeVisible();
     // The raw `$` delimiters are gone from the rendered inline widget.
     await expect(page.locator(".cm-lp-math-inline")).not.toContainText("$");
+    // The stylesheet matches the markup. KaTeX renames its layout classes between versions, so
+    // markup and stylesheet from different versions leave math visible but unlaid-out.
+    const layout = await inline
+      .locator(".katex-base")
+      .first()
+      .evaluate((el) => ({ display: getComputedStyle(el).display, wrap: getComputedStyle(el).whiteSpace }));
+    expect(layout).toEqual({ display: "inline-block", wrap: "nowrap" });
+    // The screen-reader copy stays out of sight rather than rendering the formula twice.
+    expect(await inline.locator(".katex-mathml").first().evaluate((el) => getComputedStyle(el).position)).toBe(
+      "absolute",
+    );
   } finally {
     removeTempVault(vault);
   }
