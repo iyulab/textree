@@ -182,7 +182,7 @@ test("typing while the next note opens: the switch goes ahead and nothing typed 
         await sleep(5);
         editor().focus();
         document.execCommand("insertText", false, "R");
-        typedIntoBeta = editor().textContent?.includes("R") ?? false;
+        typedIntoBeta = /beta/.test(editor().textContent ?? "") && (editor().textContent?.includes("R") ?? false);
       }
       return { typed, typedIntoBeta };
     });

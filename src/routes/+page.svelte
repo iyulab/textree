@@ -237,9 +237,12 @@
    * closing. `asking` means a question about the unsaved edits is still open — which copy wins, or
    * whether to put back a note that was deleted elsewhere: the caller must not leave, because
    * leaving would drop the edits. `failed` means the edits could not be saved; the caller must
-   * not leave either. Either way a banner is drawn to their attention.
+   * not leave either. Either way a banner is drawn to their attention. `busy` means edits are still
+   * arriving: opening another note may go ahead (they are written to this one), but anything that
+   * moves, renames or deletes this note must not — a write landing afterwards would bring the old
+   * path back.
    */
-  async function saveBeforeLeaving(): Promise<"saved" | "asking" | "failed"> {
+  async function saveBeforeLeaving(): Promise<"saved" | "asking" | "failed" | "busy"> {
     await flush();
     // Edits typed while that save ran are pending again without anything having gone wrong:
     // write them too. Bounded, so someone who never stops typing is not held here.
@@ -257,8 +260,13 @@
     }
     // The save failed: the edits exist only in the editor. Leaving would drop them, so the caller
     // stays; the banner offers another try or letting them go.
-    if (saveFailure) void drawAttentionToFailure();
-    return "failed";
+    if (saveFailure) {
+      void drawAttentionToFailure();
+      return "failed";
+    }
+    // Nothing went wrong — the typing simply has not stopped. What is still pending is saved to
+    // this note like any other edit, even after another note opens (see scheduleSave).
+    return "busy";
   }
 
   let conflictAttention = $state(false);
@@ -521,7 +529,7 @@
     if (!node) return;
     const left = await saveBeforeLeaving(); // preserve unsaved edits before rename
     if (left === "asking") return;
-    if (left === "failed") {
+    if (left === "failed" || left === "busy") {
       saveError = friendlyError("Rename canceled — could not save your unsaved edits.");
       return;
     }
@@ -614,7 +622,7 @@
     if (left === "asking") {
       return friendlyError("Rename canceled — first answer the question about the open note.");
     }
-    if (left === "failed") {
+    if (left === "failed" || left === "busy") {
       return friendlyError("Rename canceled — could not save your unsaved edits.");
     }
     try {
@@ -647,7 +655,8 @@
     if (!root) return;
     pendingHeading = null; // a direct open does not scroll to a heading (cleared before the open)
     // preserve unsaved edits of the previous note before navigating anywhere
-    if ((await saveBeforeLeaving()) !== "saved") return;
+    const left = await saveBeforeLeaving();
+    if (left === "asking" || left === "failed") return;
     if (!node.body_path) {
       // A container with no folder note → show only its table; clear any stale open note so an
       // unrelated note doesn't linger above the folder's table.
@@ -761,7 +770,7 @@
     const leaf = selectedNode.path;
     const left = await saveBeforeLeaving(); // preserve current edits before promote
     if (left === "asking") return;
-    if (left === "failed") {
+    if (left === "failed" || left === "busy") {
       opError = friendlyError("Operation canceled — could not save your unsaved edits.");
       return;
     }
@@ -790,7 +799,7 @@
     if (!root) return;
     const left = await saveBeforeLeaving(); // preserve current edits before structure change
     if (left === "asking") return;
-    if (left === "failed") {
+    if (left === "failed" || left === "busy") {
       opError = friendlyError("Operation canceled — could not save your unsaved edits.");
       return;
     }
@@ -820,7 +829,7 @@
     if (!name) return;
     const left = await saveBeforeLeaving(); // preserve current edits before structure change
     if (left === "asking") return;
-    if (left === "failed") {
+    if (left === "failed" || left === "busy") {
       opError = friendlyError("Operation canceled — could not save your unsaved edits.");
       return;
     }
@@ -841,7 +850,7 @@
     const affectsOpen = activePath !== null && pathInside(activePath, target);
     const left = await saveBeforeLeaving();
     if (left === "asking") return;
-    if (left === "failed") {
+    if (left === "failed" || left === "busy") {
       opError = friendlyError("Delete canceled — could not save your unsaved edits.");
       return;
     }
@@ -870,7 +879,7 @@
     }
     const left = await saveBeforeLeaving(); // preserve current edits before move
     if (left === "asking") return;
-    if (left === "failed") {
+    if (left === "failed" || left === "busy") {
       opError = friendlyError("Move canceled — could not save your unsaved edits.");
       return;
     }
@@ -901,7 +910,7 @@
     }
     const left = await saveBeforeLeaving();
     if (left === "asking") return;
-    if (left === "failed") {
+    if (left === "failed" || left === "busy") {
       opError = friendlyError("Operation canceled — could not save your unsaved edits.");
       return;
     }
