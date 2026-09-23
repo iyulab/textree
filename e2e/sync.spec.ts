@@ -6,6 +6,7 @@ import {
   removeTempVault,
   writeVaultFile,
   readVaultFile,
+  listVaultDir,
 } from "./helpers";
 import { rmSync } from "node:fs";
 import { join } from "node:path";
@@ -61,6 +62,66 @@ test("external delete → open note shows moved/deleted indicator", async () => 
     rmSync(join(vault, "delete-target.md"), { force: true });
 
     await expect(page.locator(".status.error")).toContainText("Moved/deleted externally");
+    // Nothing was unsaved, so there is nothing to ask about.
+    await expect(page.getByTestId("removed-banner")).toHaveCount(0);
+  } finally {
+    removeTempVault(vault);
+  }
+});
+
+/** Open `gone.md`, type unsaved edits, then delete the file outside the app before they are saved. */
+async function deleteWhileEditing(vault: string): Promise<void> {
+  await loadVault(page, vault);
+  await page.getByRole("treeitem", { name: /gone/ }).click();
+  await expect(page.locator(".cm-content")).toContainText("before");
+  await page.locator(".cm-content").click();
+  await page.keyboard.press("Control+End");
+  await page.keyboard.type(" typed after");
+  // Well inside the 500 ms save debounce: whether the watcher or the save notices first, the
+  // edits were never written anywhere.
+  rmSync(join(vault, "gone.md"), { force: true });
+  await expect(page.getByTestId("removed-banner")).toBeVisible();
+}
+
+test("deleted outside while editing: the unsaved edits stay and can be put back", async () => {
+  const vault = createTempVault({ "gone.md": "before\n", "other.md": "# other\n" });
+  try {
+    await deleteWhileEditing(vault);
+    await expect(page.locator(".cm-content")).toContainText("before typed after");
+
+    await page.getByRole("button", { name: "Put it back with my edits" }).click();
+
+    await expect(page.getByTestId("removed-banner")).toHaveCount(0);
+    await expect.poll(() => readVaultFile(vault, "gone.md")).toMatch(/^before\s*typed after/);
+    // Back to an ordinary note: further typing is saved into it.
+    await page.locator(".cm-content").click();
+    await page.keyboard.press("Control+End");
+    await page.keyboard.type(" again");
+    await expect.poll(() => readVaultFile(vault, "gone.md")).toMatch(/typed after again/);
+  } finally {
+    removeTempVault(vault);
+  }
+});
+
+test("deleted outside while editing: leaving is refused until I choose, then discarding lets go", async () => {
+  const vault = createTempVault({ "gone.md": "before\n", "other.md": "# other\n" });
+  try {
+    await deleteWhileEditing(vault);
+
+    await page.getByRole("treeitem", { name: /other/ }).click();
+
+    await expect(page.getByTestId("removed-banner")).toHaveClass(/attention/);
+    await expect
+      .poll(() => page.evaluate(() => (document.activeElement as HTMLElement | null)?.dataset.testid))
+      .toBe("removed-banner");
+    await expect(page.locator(".cm-content")).toContainText("before typed after");
+
+    await page.getByRole("button", { name: "Discard my edits" }).click();
+    await expect(page.getByText("This note was moved or deleted externally. Select another note.")).toBeVisible();
+    expect(listVaultDir(vault, ".").filter((f) => f.startsWith("gone"))).toEqual([]);
+
+    await page.getByRole("treeitem", { name: /other/ }).click();
+    await expect(page.locator(".cm-content")).toContainText("other");
   } finally {
     removeTempVault(vault);
   }

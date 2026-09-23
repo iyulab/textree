@@ -32,6 +32,8 @@ export interface SyncHandlers {
   reloadActive: (diskContent: string) => void;
   /** The open note was removed/moved externally. */
   activeRemoved: () => void;
+  /** The open note was read from disk — it exists (again, if it had been reported removed). */
+  activePresent: () => void;
   /** External change while dirty — passes the disk content for non-destructive conflict resolution. */
   conflict: (diskContent: string) => void;
 }
@@ -72,6 +74,7 @@ async function handleChange(handlers: SyncHandlers, payload: FsChange): Promise<
     handlers.activeRemoved(); // read failure = effectively gone
     return;
   }
+  handlers.activePresent();
 
   const action = decideChangeAction(disk, handlers.isDirty(), handlers.synced());
   if (action === "conflict") handlers.conflict(disk); // protect unsaved edits — user chooses
@@ -104,6 +107,7 @@ async function handleRescan(handlers: SyncHandlers): Promise<void> {
     handlers.activeRemoved(); // read failure = effectively gone (same policy as handleChange)
     return;
   }
+  handlers.activePresent();
 
   const action = decideRescanAction(disk, handlers.activeDoc(), handlers.isDirty(), handlers.synced());
   if (action === "conflict") handlers.conflict(disk);
