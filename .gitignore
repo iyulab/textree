@@ -16,6 +16,7 @@ sample-vault/
 
 # Playwright E2E output
 /test-results
+/e2e-results
 /playwright-report
 /blob-report
 /.last-run.json

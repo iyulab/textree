@@ -16,7 +16,8 @@ export default defineConfig({
   // A single webview is shared over one CDP connection, so the suite cannot run in parallel.
   fullyParallel: false,
   workers: 1,
-  reporter: [["list"]],
+  // The history keeps the name of a failure that does not come back on the next run.
+  reporter: [["list"], ["./e2e/run-history-reporter.ts"]],
   timeout: 30_000,
   expect: { timeout: 10_000 },
 });

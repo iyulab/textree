@@ -100,3 +100,7 @@ npm run test:e2e
 - Specs share one running app instance, so app-level state (theme, reading mode) can leak between
   files; tests that care normalize it at their start.
 - The dev bridge is guarded by `import.meta.env.DEV`, so it is tree-shaken out of production bundles.
+- Every run appends a block to `e2e-results/history.log` (gitignored): the time, the totals, and
+  each failed test with its location and first error line. `test-results/` is wiped by the next
+  run and the console scrolls away, so a failure that does not come back on a re-run is only named
+  there — read it before re-running, and across runs to see which tests fail now and then.
