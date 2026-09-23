@@ -195,8 +195,6 @@
     try {
       const outcome = await writeNote(vault, job.path, job.text, job.base);
       if (outcome.kind === "conflict") {
-        saveError = null;
-        saveFailure = null;
         if (job.path !== activePath) {
           // Edits to a note already left (see scheduleSave): there is no banner to ask on.
           saveError = friendlyError(
@@ -204,6 +202,8 @@
           );
           return;
         }
+        saveError = null;
+        saveFailure = null;
         // Answered while this save was in flight (e.g. they took the copy on disk): nothing to ask.
         if (!pending) return;
         if (outcome.disk === null) markActiveRemoved();
@@ -219,8 +219,12 @@
       } else if (pending?.path === job.path) {
         pending.base = job.text; // the newer edit now starts from what this save put on disk
       }
-      saveError = null;
-      saveFailure = null;
+      // Only the open note's own save speaks for it: a note already left saving fine says nothing
+      // about whether the open one's edits are saved.
+      if (job.path === activePath) {
+        saveError = null;
+        saveFailure = null;
+      }
     } catch (e) {
       // Keep pending → retryable. Surface to the user (friendly summary, raw kept for diagnosis).
       saveError = friendlyError(e);
