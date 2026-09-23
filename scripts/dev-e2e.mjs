@@ -153,7 +153,9 @@ writeFileSync(GENERATED_OVERLAY, template.replace(/--remote-debugging-port=\d+/,
 writeFileSync(HANDSHAKE_FILE, JSON.stringify({ endpoint: `http://localhost:${cdpPort}` }), "utf8");
 console.log(`[dev:e2e] CDP endpoint: http://localhost:${cdpPort} (handshake: ${HANDSHAKE_FILE})`);
 
-const child = spawn("tauri", ["dev", "--config", `"${GENERATED_OVERLAY}"`], {
+// One command string rather than an argument list: with a shell, Node concatenates arguments
+// without escaping them and warns about it (DEP0190). The only argument is our own temp path.
+const child = spawn(`tauri dev --config "${GENERATED_OVERLAY}"`, {
   stdio: "inherit",
   shell: true,
   env: {
