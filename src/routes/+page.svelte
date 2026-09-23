@@ -80,6 +80,7 @@
   import { extractFirstH1, isUnnamed, sanitizeForFilename } from "$lib/h1sync.helpers";
   import { NO_VAULT_HINT, NO_VAULT_PROMPT, NO_NOTE_PROMPT } from "$lib/emptyState";
   import { backupStatus } from "$lib/backupStatus.helpers";
+  import { initialNoteSaveState, NoteSave } from "$lib/noteSave";
 
   let root = $state<string | null>(null);
   let updateInfo = $state<UpdateInfo | null>(null);
@@ -88,14 +89,30 @@
   // Live document text — mirrors `content` on note load, then tracks edits so the page header
   // reflects frontmatter changes immediately (the editor owns its own doc; `content` is load-only).
   let liveDoc = $state("");
-  // The last text the editor and disk were known to agree on: every assignment to `content` is a
-  // disk state (a load, a reload, or text just flushed), and each successful save moves it forward.
-  // The external-change reconciliation compares disk against this to tell an edit made elsewhere
-  // from the user's own unsaved typing.
-  let synced = "";
+  // What the page shows about saving the open note; `save` decides it (see noteSave.ts).
+  const saveState = $state(initialNoteSaveState());
+  const save = new NoteSave(saveState, {
+    root: () => root,
+    activePath: () => activePath,
+    write: writeNote,
+    // refresh links from the saved note (relative key, no re-read)
+    saved: (path, text) => backlinks.updateSource(toRelative(path), text),
+    edited: () => {
+      publishNotice = null; // an edit supersedes the last publish notice (the site is now stale)
+    },
+    removed: () => {
+      conflictAttention = false;
+    },
+    ask: (question) => {
+      if (question === "conflict") void drawAttentionToConflict();
+      else if (question === "removed") void drawAttentionToRemoved();
+      else void drawAttentionToFailure();
+    },
+  });
+  // Every assignment to `content` is a disk state (a load, a reload, or text just flushed).
   $effect(() => {
     liveDoc = content;
-    synced = content;
+    save.synced = content;
   });
   let frontmatter = $derived(parseFrontmatter(liveDoc));
   // Reading view toggle (ephemeral, per-session) — clean read-only render vs. live-preview editing.
@@ -105,11 +122,6 @@
   // Heading to scroll to after the next note load (set by a `[[note#heading]]` click; cleared on any
   // other open so a later plain navigation does not re-scroll).
   let pendingHeading = $state<string | null>(null);
-  let dirty = $state(false);
-  let saveError = $state<FriendlyError | null>(null);
-  // The last save of the open note's edits failed and they are still unsaved. Kept apart from
-  // `saveError`, which other failures (a pasted image, a canceled rename) also report through.
-  let saveFailure = $state<FriendlyError | null>(null);
   let startupError = $state<string | null>(null);
   // Path of a previously-opened vault that could not be reopened at startup (moved, deleted, or on a
   // disconnected drive). Set instead of silently creating a new default — that could mask a temporary
@@ -146,8 +158,6 @@
 
   // External change (M3) state.
   let reloadVersion = $state(0); // bump on external reload → force Editor re-creation
-  let removed = $state(false); // open note was externally deleted/moved
-  let conflictDisk = $state<string | null>(null); // disk version on conflict (for banner)
 
   // Structure editing (M4) state.
   let selectedNode = $state<TreeNode | null>(null);
@@ -156,119 +166,6 @@
   let opError = $state<FriendlyError | null>(null);
   // Explicit create-target override (e.g. new container after leaf promote). When set, used instead of selection-based inference.
   let createParent = $state<string | null>(null);
-
-  // Debounced autosave state (no reactivity needed — holds timer/latest draft).
-  let saveTimer: ReturnType<typeof setTimeout> | null = null;
-  // `base` is what the note held when this edit started from it: a save only replaces the note
-  // while it still holds that, so a change made elsewhere in the meantime is never overwritten.
-  let pending: { path: string; text: string; base: string } | null = null;
-  // Saves run one at a time. Two in flight would each be based on the same state, and the second
-  // would mistake the first for a change made elsewhere.
-  let saving: Promise<void> = Promise.resolve();
-  const DEBOUNCE_MS = 500;
-
-  /**
-   * Write the pending save to disk immediately. Called before switching notes or changing vault.
-   * Does not throw on failure; surfaces it via `saveError`. On failure, preserves `pending` so the
-   * next flush can retry. While the note is in conflict with a change on disk, it writes nothing:
-   * the person has been asked which copy wins, and saving would answer for them.
-   */
-  function flush(): Promise<void> {
-    if (saveTimer) {
-      clearTimeout(saveTimer);
-      saveTimer = null;
-    }
-    const run = saving.then(writePending);
-    saving = run.catch(() => {});
-    return run;
-  }
-
-  async function writePending() {
-    if (pending) await writeJob(pending);
-  }
-
-  async function writeJob(job: { path: string; text: string; base: string }) {
-    const vault = root;
-    if (!vault) return;
-    // Not while the open note waits on an answer — which copy wins, or whether to put it back
-    // after it was deleted elsewhere: saving would answer for them.
-    if (job.path === activePath && (conflictDisk !== null || removed)) return;
-    try {
-      const outcome = await writeNote(vault, job.path, job.text, job.base);
-      if (outcome.kind === "conflict") {
-        if (job.path !== activePath) {
-          // Edits to a note already left (see scheduleSave): there is no banner to ask on.
-          saveError = friendlyError(
-            `Your last edits to "${baseName(job.path).replace(/\.md$/i, "")}" were not saved — it changed on disk.`,
-          );
-          return;
-        }
-        saveError = null;
-        saveFailure = null;
-        // Answered while this save was in flight (e.g. they took the copy on disk): nothing to ask.
-        if (!pending) return;
-        if (outcome.disk === null) markActiveRemoved();
-        else conflictDisk = outcome.disk;
-        return;
-      }
-      backlinks.updateSource(toRelative(job.path), job.text); // refresh links from the saved note (relative key, no re-read)
-      // Switch to clean state only if no newer edit accumulated during the save.
-      if (job.path === activePath) synced = job.text;
-      if (pending === job) {
-        pending = null;
-        dirty = false;
-      } else if (pending?.path === job.path) {
-        pending.base = job.text; // the newer edit now starts from what this save put on disk
-      }
-      // Only the open note's own save speaks for it: a note already left saving fine says nothing
-      // about whether the open one's edits are saved.
-      if (job.path === activePath) {
-        saveError = null;
-        saveFailure = null;
-      }
-    } catch (e) {
-      // Keep pending → retryable. Surface to the user (friendly summary, raw kept for diagnosis).
-      saveError = friendlyError(e);
-      if (job.path === activePath) saveFailure = saveError;
-    }
-  }
-
-  /**
-   * Save before leaving the open note — switching to another, changing vault, restructuring, or
-   * closing. `asking` means a question about the unsaved edits is still open — which copy wins, or
-   * whether to put back a note that was deleted elsewhere: the caller must not leave, because
-   * leaving would drop the edits. `failed` means the edits could not be saved; the caller must
-   * not leave either. Either way a banner is drawn to their attention. `busy` means edits are still
-   * arriving: opening another note may go ahead (they are written to this one), but anything that
-   * moves, renames or deletes this note must not — a write landing afterwards would bring the old
-   * path back.
-   */
-  async function saveBeforeLeaving(): Promise<"saved" | "asking" | "failed" | "busy"> {
-    await flush();
-    // Edits typed while that save ran are pending again without anything having gone wrong:
-    // write them too. Bounded, so someone who never stops typing is not held here.
-    for (let i = 0; i < 5 && pending && !saveFailure && conflictDisk === null && !removed; i++) {
-      await flush();
-    }
-    if (!pending) return "saved";
-    if (conflictDisk !== null) {
-      void drawAttentionToConflict();
-      return "asking";
-    }
-    if (removed) {
-      void drawAttentionToRemoved();
-      return "asking";
-    }
-    // The save failed: the edits exist only in the editor. Leaving would drop them, so the caller
-    // stays; the banner offers another try or letting them go.
-    if (saveFailure) {
-      void drawAttentionToFailure();
-      return "failed";
-    }
-    // Nothing went wrong — the typing simply has not stopped. What is still pending is saved to
-    // this note like any other edit, even after another note opens (see scheduleSave).
-    return "busy";
-  }
 
   let conflictAttention = $state(false);
   let conflictBanner = $state<HTMLElement | null>(null);
@@ -302,43 +199,19 @@
     conflictBanner?.focus();
   }
 
-  function scheduleSave(path: string, text: string) {
-    if (pending && pending.path !== path) {
-      // Edits to the note being left, typed while the next one was loading (the editor stays on
-      // the old note until then). They are written, not replaced by the first edit to the new one.
-      const left = pending;
-      pending = null;
-      const run = saving.then(() => writeJob(left));
-      saving = run.catch(() => {});
-    }
-    const base = pending?.path === path ? pending.base : synced;
-    pending = { path, text, base };
-    dirty = true;
-    publishNotice = null; // an edit supersedes the last publish notice (the site is now stale)
-    if (saveTimer) clearTimeout(saveTimer);
-    saveTimer = setTimeout(() => {
-      saveTimer = null;
-      // While the note is in conflict with a change on disk, the user has been asked which copy
-      // wins. Saving on a timer would answer for them — and overwrite the copy on disk. The edit
-      // stays pending until they choose (resolveKeepMine saves it; resolveTakeDisk drops it).
-      if (conflictDisk !== null) return;
-      void flush();
-    }, DEBOUNCE_MS);
-  }
-
   function handleEdit(text: string) {
     liveDoc = text; // keep the page header in sync with in-editor frontmatter edits
     // The note has moved on from the state that was recorded, so what was said about it no
     // longer describes what is on screen.
     versionNotice = null;
-    if (activePath) scheduleSave(activePath, text);
+    if (activePath) save.schedule(activePath, text);
   }
 
   /** Open a vault path and load the tree (separate from the dialog — reused by the test bridge). */
   /** Returns false when the switch did not happen: the open note's edits are not saved yet. */
   async function loadVault(path: string): Promise<boolean> {
     // preserve unsaved edits before switching vault
-    if ((await saveBeforeLeaving()) !== "saved") return false;
+    if ((await save.beforeLeaving()) !== "saved") return false;
     root = path;
     tree = await openVault(path);
     // When the vault changes, the previous vault's selection, open note, and edit-mode context are invalid.
@@ -528,7 +401,7 @@
     if (!root || !activePath || !name || name === activeName) return;
     const node = findByBody(tree, activePath);
     if (!node) return;
-    const left = await saveBeforeLeaving(); // preserve unsaved edits before rename
+    const left = await save.beforeLeaving(); // preserve unsaved edits before rename
     if (left === "asking") return;
     if (left === "failed" || left === "busy") {
       opError = friendlyError(leaveRefusal("Rename", left)); // like its failure below: a refusal is not a failed save
@@ -572,8 +445,8 @@
     // flush/rename, activePath changes — we must not rename (or follow) the wrong note.
     const pathToRename = activePath;
     try {
-      await flush(); // persist the body (including the H1) to the current path before renaming
-      if (pending) return; // unsaved edits could not be saved (or are in conflict) → skip the rename
+      await save.flush(); // persist the body (including the H1) to the current path before renaming
+      if (save.pending) return; // unsaved edits could not be saved (or are in conflict) → skip the rename
       if (activePath !== pathToRename) return; // navigated away during flush → skip
       const newPath = await renameNoteUnique(root, pathToRename, candidate);
       await refreshTree();
@@ -612,7 +485,7 @@
       renamingPath = null; // no-op cancel
       return null;
     }
-    const left = await saveBeforeLeaving(); // preserve unsaved edits before the structure change
+    const left = await save.beforeLeaving(); // preserve unsaved edits before the structure change
     if (left === "asking") {
       return friendlyError("Rename canceled — first answer the question about the open note.");
     }
@@ -649,7 +522,7 @@
     if (!root) return;
     pendingHeading = null; // a direct open does not scroll to a heading (cleared before the open)
     // preserve unsaved edits of the previous note before navigating anywhere
-    const left = await saveBeforeLeaving();
+    const left = await save.beforeLeaving();
     if (left === "asking" || left === "failed") return;
     if (!node.body_path) {
       // A container with no folder note → show only its table; clear any stale open note so an
@@ -657,17 +530,13 @@
       activePath = null;
       activeName = "";
       content = "";
-      dirty = false;
-      removed = false;
-      conflictDisk = null;
+      save.opened();
       return;
     }
     content = await readNote(root, node.body_path);
     activeName = node.name;
     activePath = node.body_path;
-    dirty = false;
-    removed = false;
-    conflictDisk = null;
+    save.opened();
   }
 
   // ── Structure editing (M4) ──────────────────────────────────────────────
@@ -743,14 +612,9 @@
     activePath = null;
     activeName = "";
     content = "";
-    dirty = false;
-    pending = null;
-    // Since we discard the edit context (including unsaved pending), the previous save error is no
-    // longer valid either. If not cleared, a stale error persists after vault switch/note close.
-    saveError = null;
-    saveFailure = null;
-    removed = false;
-    conflictDisk = null;
+    // Discards the edit context (including unsaved edits) and the errors about it, so a stale error
+    // does not outlive a vault switch or a closed note.
+    save.closed();
     // What the last version attempt came to was about the note being left, not this one.
     versionNotice = null;
     relatedNotes.clear();
@@ -774,7 +638,7 @@
   async function startAddChild() {
     if (!root || !selectedNode || selectedNode.kind !== "leaf") return;
     const leaf = selectedNode.path;
-    const left = await saveBeforeLeaving(); // preserve current edits before promote
+    const left = await save.beforeLeaving(); // preserve current edits before promote
     if (left === "asking") return;
     if (left === "failed" || left === "busy") {
       opError = friendlyError(leaveRefusal("Operation", left));
@@ -803,7 +667,7 @@
   /** Create a new "Untitled" note (no dialog), open it, and focus the header title for renaming. */
   async function createNewNote(parent: string) {
     if (!root) return;
-    const left = await saveBeforeLeaving(); // preserve current edits before structure change
+    const left = await save.beforeLeaving(); // preserve current edits before structure change
     if (left === "asking") return;
     if (left === "failed" || left === "busy") {
       opError = friendlyError(leaveRefusal("Operation", left));
@@ -815,8 +679,7 @@
       content = await readNote(root, p);
       activeName = baseName(p).replace(/\.md$/i, "");
       activePath = p;
-      dirty = false;
-      removed = false;
+      save.opened();
       selectedNode = null;
       // Wait for the .title header (and its input) to render before focusing.
       // No focus race: Editor remounts on the new docKey but Editor.svelte calls no
@@ -833,7 +696,7 @@
     if (!root) return;
     const name = nameInput.trim();
     if (!name) return;
-    const left = await saveBeforeLeaving(); // preserve current edits before structure change
+    const left = await save.beforeLeaving(); // preserve current edits before structure change
     if (left === "asking") return;
     if (left === "failed" || left === "busy") {
       opError = friendlyError(leaveRefusal("Operation", left));
@@ -854,7 +717,7 @@
     if (!root || !selectedNode) return;
     const target = selectedNode.path;
     const affectsOpen = activePath !== null && pathInside(activePath, target);
-    const left = await saveBeforeLeaving();
+    const left = await save.beforeLeaving();
     if (left === "asking") return;
     if (left === "failed" || left === "busy") {
       opError = friendlyError(leaveRefusal("Delete", left));
@@ -883,7 +746,7 @@
       opError = friendlyError("Cannot move a node into its own subfolder.");
       return;
     }
-    const left = await saveBeforeLeaving(); // preserve current edits before move
+    const left = await save.beforeLeaving(); // preserve current edits before move
     if (left === "asking") return;
     if (left === "failed" || left === "busy") {
       opError = friendlyError(leaveRefusal("Move", left));
@@ -914,7 +777,7 @@
       opError = friendlyError("Cannot move a node into its own descendant.");
       return;
     }
-    const left = await saveBeforeLeaving();
+    const left = await save.beforeLeaving();
     if (left === "asking") return;
     if (left === "failed" || left === "busy") {
       opError = friendlyError(leaveRefusal("Operation", left));
@@ -948,10 +811,10 @@
     if (!root || !activePath) return null;
     try {
       const rel = await saveAttachment(root, activePath, dataBase64, ext);
-      saveError = null;
+      saveState.saveError = null;
       return `![](${rel})`;
     } catch (e) {
-      saveError = friendlyError(e);
+      saveState.saveError = friendlyError(e);
       return null;
     }
   }
@@ -960,39 +823,16 @@
   function applyReload(diskContent: string) {
     content = diskContent;
     reloadVersion += 1; // trigger Editor re-creation
-    dirty = false;
-    pending = null;
-    saveError = null;
-    saveFailure = null;
-    removed = false; // return to normal state if re-created after external deletion
-  }
-
-  /** The open note was moved or deleted outside the app. */
-  function markActiveRemoved() {
-    removed = true;
-    saveFailure = null; // the note being gone is the question now, not the failed save
-    conflictDisk = null; // avoid showing alongside the conflict banner (deletion takes priority)
-    conflictAttention = false;
-    // Unsaved edits stay in the editor. The file is gone, but what they typed since the last save
-    // exists nowhere else — they decide whether to put the note back with it or let it go.
-    // A note with nothing unsaved has nothing to keep.
-    if (!pending) dirty = false;
-  }
-
-  /** The open note is on disk again (put back elsewhere, or by a sync tool). */
-  function markActivePresent() {
-    if (!removed) return;
-    removed = false;
-    removedAttention = false;
-    if (pending) void flush(); // saves resume against what the note held when it was last saved
+    save.reloaded();
   }
 
   /** Removed-note banner: put the note back where it was, holding the unsaved edits. */
   async function resolvePutBack() {
-    if (!root || !activePath || !pending) return;
+    const edit = save.pending;
+    if (!root || !activePath || !edit) return;
     const vault = root;
     const path = activePath;
-    const text = pending.text;
+    const text = edit.text;
     const stem = baseName(path).replace(/\.md$/i, "");
     try {
       // Never overwrites: if something has taken the name meanwhile, the note comes back beside it.
@@ -1001,58 +841,37 @@
       const created = await createNoteWithContent(vault, parentDir(path), stem, text).catch(() =>
         createNoteWithContent(vault, vault, stem, text),
       );
-      synced = text;
-      if (pending?.text === text) {
-        pending = null;
-        dirty = false;
-      } else if (pending) {
-        pending.base = text; // typed on while it was being put back
-      }
-      removed = false;
+      const moved = !pathInside(created, path);
+      save.putBack(text, moved ? created : null);
       removedAttention = false;
-      saveError = null;
-      if (!pathInside(created, path)) {
-        content = pending?.text ?? text; // the editor is recreated for the new path
+      if (moved) {
+        content = save.pending?.text ?? text; // the editor is recreated for the new path
         activePath = created;
         activeName = baseName(created).replace(/\.md$/i, "");
-        if (pending) pending.path = created;
       }
       await refreshTree();
-      if (pending) void flush();
+      if (save.pending) void save.flush();
     } catch (e) {
-      saveError = friendlyError(e); // the edits stay where they are; the banner stays too
+      saveState.saveError = friendlyError(e); // the edits stay where they are; the banner stays too
     }
   }
 
   /** Save-failure banner: let the unsaved edits go — the note goes back to what it last saved. */
   function resolveDiscardUnsaved() {
-    if (saveTimer) {
-      clearTimeout(saveTimer);
-      saveTimer = null;
-    }
     failureAttention = false;
-    applyReload(synced);
+    applyReload(save.discardUnsaved());
   }
 
   /** Removed-note banner: let the unsaved edits go. */
   function resolveDiscardRemoved() {
-    if (saveTimer) {
-      clearTimeout(saveTimer);
-      saveTimer = null;
-    }
-    pending = null;
-    dirty = false;
+    save.discardRemoved();
     removedAttention = false;
   }
 
   /** Conflict banner: overwrite with the copy on disk, discarding my edits. */
   function resolveTakeDisk() {
-    if (saveTimer) {
-      clearTimeout(saveTimer);
-      saveTimer = null;
-    }
-    if (conflictDisk !== null) applyReload(conflictDisk);
-    conflictDisk = null;
+    const disk = save.takeDisk();
+    if (disk !== null) applyReload(disk);
     conflictAttention = false;
   }
 
@@ -1061,10 +880,8 @@
    * the one the banner showed; if it changed yet again since, the save stops and asks once more.
    */
   function resolveKeepMine() {
-    if (conflictDisk !== null && pending) pending.base = conflictDisk;
-    conflictDisk = null;
+    save.keepMine();
     conflictAttention = false;
-    void flush();
   }
 
   /** Last folder name of the vault root path (for the compact sidebar header). Full path is in the title. */
@@ -1298,10 +1115,10 @@
    * record the wrong thing while looking like it worked.
    */
   async function startAddVersion() {
-    if (!root || !activePath || removed) return; // nothing on disk to record
+    if (!root || !activePath || saveState.removed) return; // nothing on disk to record
     versionNotice = null;
     // A version of what is on disk is only the right version once the disk has it.
-    if (dirty && (await saveBeforeLeaving()) !== "saved") return;
+    if (saveState.dirty && (await save.beforeLeaving()) !== "saved") return;
     showAddVersion = true;
   }
 
@@ -1503,11 +1320,11 @@
 
     const win = getCurrentWindow();
     const unlistenClose = win.onCloseRequested(async (event) => {
-      if (!pending) return; // nothing to save → proceed with default close
+      if (!save.pending) return; // nothing to save → proceed with default close
       event.preventDefault();
       // If the save fails or the note is in conflict, pending remains (saveError or the banner is
       // shown). In that case do not close and keep the window open to prevent data loss.
-      if ((await saveBeforeLeaving()) === "saved") await win.destroy();
+      if ((await save.beforeLeaving()) === "saved") await win.destroy();
     });
 
     // Subscribe to external file changes.
@@ -1515,18 +1332,19 @@
       root: () => root,
       activePath: () => activePath,
       activeDoc: () => liveDoc,
-      isDirty: () => dirty,
-      synced: () => synced,
+      isDirty: () => saveState.dirty,
+      synced: () => save.synced,
       setTree: (t) => {
         tree = t;
       },
       reloadActive: applyReload,
-      activeRemoved: markActiveRemoved,
-      activePresent: markActivePresent,
+      activeRemoved: () => save.markRemoved(),
+      activePresent: () => {
+        if (save.markPresent()) removedAttention = false;
+      },
       conflict: (disk) => {
-        removed = false;
+        save.markConflict(disk);
         removedAttention = false;
-        conflictDisk = disk;
       },
     });
 
@@ -1805,12 +1623,12 @@
             >{activeName}</button>
           {/if}
         </span>
-        {#if saveError}
+        {#if saveState.saveError}
           <span
             class="status error"
-            title={saveError.raw !== saveError.summary ? saveError.raw : undefined}
-          >⚠ Save failed: {saveError.summary}</span>
-        {:else if removed}
+            title={saveState.saveError.raw !== saveState.saveError.summary ? saveState.saveError.raw : undefined}
+          >⚠ Save failed: {saveState.saveError.summary}</span>
+        {:else if saveState.removed}
           <span class="status error">⚠ Moved/deleted externally</span>
         {:else if versionNotice}
           <span class="status" data-testid="version-notice">{versionNotice}</span>
@@ -1820,8 +1638,8 @@
           >{backup.label}</span>
         {/if}
         <div class="title-tools">
-          {#if !saveError && !removed}
-            <span class="status">{dirty ? "● Saving…" : "Saved"}</span>
+          {#if !saveState.saveError && !saveState.removed}
+            <span class="status">{saveState.dirty ? "● Saving…" : "Saved"}</span>
           {/if}
           <button
             class="icon-btn read-toggle"
@@ -1838,7 +1656,7 @@
           ><Icon name="message-square" /></button>
         </div>
       </header>
-      {#if conflictDisk !== null}
+      {#if saveState.conflictDisk !== null}
         <div
           class="banner"
           class:attention={conflictAttention}
@@ -1854,7 +1672,7 @@
           </span>
         </div>
       {/if}
-      {#if saveFailure && dirty && !removed && conflictDisk === null}
+      {#if saveState.saveFailure && saveState.dirty && !saveState.removed && saveState.conflictDisk === null}
         <div
           class="banner"
           class:attention={failureAttention}
@@ -1863,14 +1681,14 @@
           data-testid="save-failed-banner"
           bind:this={failureBanner}
         >
-          <span>Your latest edits could not be saved: {saveFailure.summary}</span>
+          <span>Your latest edits could not be saved: {saveState.saveFailure.summary}</span>
           <span class="banner-actions">
-            <button onclick={() => void flush()}>Try again</button>
+            <button onclick={() => void save.flush()}>Try again</button>
             <button onclick={resolveDiscardUnsaved}>Discard my edits</button>
           </span>
         </div>
       {/if}
-      {#if removed && dirty}
+      {#if saveState.removed && saveState.dirty}
         <div
           class="banner"
           class:attention={removedAttention}
@@ -1886,7 +1704,7 @@
           </span>
         </div>
       {/if}
-      {#if removed && !dirty}
+      {#if saveState.removed && !saveState.dirty}
         <p class="hint">This note was moved or deleted externally. Select another note.</p>
       {:else}
         <PageHeader
@@ -1942,7 +1760,7 @@
       <VersionHistory
         {root}
         path={activePath}
-        {dirty}
+        dirty={saveState.dirty}
         onclose={() => { showVersionHistory = false; }}
         onrestored={() => { if (activePath) void openSavedNote(activePath); }}
       />
