@@ -8,6 +8,7 @@
 
 import { readSidecar, writeSidecar } from "./ipc";
 import { dedupePushFront, RECENT_MAX } from "./nav.helpers";
+import { RetryingWriter } from "./sidecarWriter.helpers";
 
 // Re-export so components can import the order helper alongside from `$lib/nav.svelte`.
 export { mergeOrder } from "./nav.helpers";
@@ -21,9 +22,17 @@ class NavStore {
   order = $state<Record<string, string[]>>({});
   /** Current vault root (target of persist IPC). null means not loaded. */
   private root: string | null = null;
+  // Favorites and order are separate files: a failed write of one is retried when the other is
+  // written, not only when the same one is.
+  private writer = new RetryingWriter(
+    (rel, body) => (this.root === null ? Promise.resolve() : writeSidecar(this.root, rel, body)),
+    // Non-blocking: the in-memory state stays as the person left it.
+    (rel, e) => console.warn(`Sidecar write failed (${rel}):`, e),
+  );
 
   /** Called on vault open/switch — reloads favorites/order from the sidecar. */
   async load(root: string): Promise<void> {
+    this.writer.reset(); // owed writes belong to the folder being left
     this.root = root;
     this.favorites = (await readJson<string[]>(root, "favorites.json")) ?? [];
     this.order = (await readJson<Record<string, string[]>>(root, "order.json")) ?? {};
@@ -37,7 +46,7 @@ class NavStore {
     this.favorites = this.isFavorite(path)
       ? this.favorites.filter((p) => p !== path)
       : [...this.favorites, path];
-    await this.persist("favorites.json", this.favorites);
+    await this.writer.save("favorites.json", () => JSON.stringify(this.favorites));
   }
 
   pushRecent(path: string): void {
@@ -48,18 +57,9 @@ class NavStore {
 
   async setOrder(parent: string, paths: string[]): Promise<void> {
     this.order = { ...this.order, [parent]: paths };
-    await this.persist("order.json", this.order);
+    await this.writer.save("order.json", () => JSON.stringify(this.order));
   }
 
-  private async persist(rel: string, value: unknown): Promise<void> {
-    if (this.root === null) return;
-    try {
-      await writeSidecar(this.root, rel, JSON.stringify(value));
-    } catch (e) {
-      // Non-blocking: keep the in-memory state. Retry recovery on the next write.
-      console.warn(`Sidecar write failed (${rel}):`, e);
-    }
-  }
 }
 
 function loadRecent(): string[] {
