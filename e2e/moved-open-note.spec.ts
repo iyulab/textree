@@ -74,3 +74,24 @@ test("dropping a note onto the open note keeps what was typed in the open note",
     removeTempVault(vault);
   }
 });
+
+test("renaming the open note from its title keeps what was typed on screen and on disk", async () => {
+  const vault = createTempVault({ "Before.md": "first line\n" });
+  try {
+    await loadVault(page, vault);
+    await page.getByRole("treeitem", { name: /Before/ }).click();
+    await expect(page.locator(".cm-content")).toContainText("first line");
+    await typeAndWaitSaved(vault, "Before.md", "typed before the rename");
+
+    await page.locator(".note-name").click();
+    await page.locator(".title-input").fill("After");
+    await page.locator(".title-input").press("Enter");
+    await expect.poll(() => existsSync(join(vault, "After.md"))).toBe(true);
+    await expect(page.locator(".note-name")).toHaveText("After");
+
+    await typeAndWaitSaved(vault, "After.md", " and after");
+    expect(readVaultFile(vault, "After.md")).toContain("typed before the rename and after");
+  } finally {
+    removeTempVault(vault);
+  }
+});

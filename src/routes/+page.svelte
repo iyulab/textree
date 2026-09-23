@@ -538,11 +538,9 @@
       const newNodePath = await renameNode(root, node.path, name);
       await refreshTree();
       // Follow the new body path: leaf=new node path, container note=newfolder/newname.md.
-      activePath =
-        node.kind === "leaf"
-          ? newNodePath
-          : joinPath(newNodePath, `${baseName(newNodePath)}.md`);
-      activeName = name;
+      followOpenNote(
+        node.kind === "leaf" ? newNodePath : joinPath(newNodePath, `${baseName(newNodePath)}.md`),
+      );
       selectedNode = null;
       opError = null;
     } catch (e) {
