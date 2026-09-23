@@ -44,13 +44,13 @@ pub fn parse_connection(raw: &str) -> Option<TelemetryConfig> {
 mod tests {
     use super::*;
 
-    const FULL: &str = "InstrumentationKey=88f1e21d-26f9-48bd-8639-991e55b49378;IngestionEndpoint=https://koreacentral-0.in.applicationinsights.azure.com/;LiveEndpoint=https://x/;ApplicationId=c34cf9f2";
+    const FULL: &str = "InstrumentationKey=00000000-0000-0000-0000-000000000000;IngestionEndpoint=https://region-0.in.applicationinsights.azure.com/;LiveEndpoint=https://x/;ApplicationId=11111111";
 
     #[test]
     fn parses_key_and_builds_track_url() {
         let c = parse_connection(FULL).expect("valid connection string parses");
-        assert_eq!(c.instrumentation_key, "88f1e21d-26f9-48bd-8639-991e55b49378");
-        assert_eq!(c.track_url, "https://koreacentral-0.in.applicationinsights.azure.com/v2/track");
+        assert_eq!(c.instrumentation_key, "00000000-0000-0000-0000-000000000000");
+        assert_eq!(c.track_url, "https://region-0.in.applicationinsights.azure.com/v2/track");
     }
 
     #[test]
