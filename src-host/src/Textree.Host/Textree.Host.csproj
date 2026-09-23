@@ -19,10 +19,4 @@
     <PackageReference Include="sqlite-vec" />
     <PackageReference Include="Microsoft.Data.Sqlite" />
   </ItemGroup>
-  <!-- Not used by this project's code: direct references exist only to lift transitive
-       dependencies out of an advisory's affected range. See Directory.Packages.props. -->
-  <ItemGroup Label="Transitive security pins">
-    <PackageReference Include="AngleSharp" />
-    <PackageReference Include="SQLitePCLRaw.lib.e_sqlite3" />
-  </ItemGroup>
 </Project>

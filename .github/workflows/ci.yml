@@ -64,6 +64,12 @@ jobs:
       - name: No workspace-only text in tracked files
         run: npm run tokens:check
 
+      # The host's fast-moving package families are held to their current line. Falling behind is
+      # silent — restore, build and tests stay green on an old pin — so it is checked here, with
+      # expiring waivers as the only way to carry a known gap.
+      - name: Host package pins within drift threshold
+        run: npm run pins:check
+
       - name: Type check (svelte-check, 0 errors / 0 warnings)
         run: npm run check
 
