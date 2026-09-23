@@ -117,6 +117,11 @@ impl HostHandle {
     /// callers (mount auto-spawn racing the `?`-enable, or a dev eager-spawn racing a manual
     /// trigger) both pass and double-spawn — orphaning the first child (clobbered in `child`) and
     /// leaking its port. Returns true to the single winner, false to everyone else.
+    /// The host's exit status, if the process has exited. Does not wait.
+    fn child_exit(&self) -> Option<std::process::ExitStatus> {
+        let mut guard = self.child.lock().unwrap_or_else(|e| e.into_inner());
+        guard.as_mut().and_then(|child| child.try_wait().ok().flatten())
+    }
     fn try_begin_spawn(&self) -> bool {
         let mut cell = self.status.lock().unwrap_or_else(|e| e.into_inner());
         if matches!(cell.0, HostStatus::Starting | HostStatus::Ready) {
@@ -324,10 +329,21 @@ enum PollAction {
     KeepPolling,
     /// Never reached Ready and the startup ceiling elapsed: mark Unavailable and stop.
     GiveUp,
+    /// The process is gone — during startup or after Ready. Mark Unavailable and stop: no amount
+    /// of polling will bring it back, and until now a crash looked like a slow start for up to the
+    /// full ceiling, or left a dead host reported as Ready.
+    Exited,
 }
 
-fn poll_action(embedder_ready: bool, already_ready: bool, ceiling_exceeded: bool) -> PollAction {
-    if already_ready {
+fn poll_action(
+    exited: bool,
+    embedder_ready: bool,
+    already_ready: bool,
+    ceiling_exceeded: bool,
+) -> PollAction {
+    if exited {
+        PollAction::Exited
+    } else if already_ready {
         // Host is up; keep refreshing generatorReady indefinitely (ceiling no longer applies).
         PollAction::KeepPolling
     } else if embedder_ready {
@@ -363,14 +379,24 @@ fn poll_health(handle: Arc<HostHandle>, base: String, my_gen: u64) {
         if handle.generation.load(Ordering::SeqCst) != my_gen {
             return;
         }
-        let health = ureq::get(&format!("{base}/health"))
-            .config()
-            .timeout_global(Some(Duration::from_secs(5)))
-            .build()
-            .call()
-            .ok()
-            .and_then(|mut resp| resp.body_mut().read_to_string().ok())
-            .and_then(|body| parse_health(&body));
+        // Checked before the request: a dead host would otherwise cost a full request timeout per
+        // tick, and its absence would read as "not ready yet".
+        let exit = handle.child_exit();
+        if let Some(status) = exit {
+            log::warn!("[host] process exited ({status}); marking unavailable");
+        }
+        let health = if exit.is_some() {
+            None
+        } else {
+            ureq::get(&format!("{base}/health"))
+                .config()
+                .timeout_global(Some(Duration::from_secs(5)))
+                .build()
+                .call()
+                .ok()
+                .and_then(|mut resp| resp.body_mut().read_to_string().ok())
+                .and_then(|body| parse_health(&body))
+        };
 
         if let Some(h) = &health {
             // Refresh generatorReady on EVERY poll for the host's lifetime: the generator loads
@@ -384,7 +410,8 @@ fn poll_health(handle: Arc<HostHandle>, base: String, my_gen: u64) {
             handle.set_embedder_error(h.embedder_error.clone());
         }
         let embedder_ready = health.as_ref().map(|h| h.embedder_ready).unwrap_or(false);
-        match poll_action(embedder_ready, ready, start.elapsed() >= HEALTH_CEILING) {
+        let ceiling_exceeded = start.elapsed() >= HEALTH_CEILING;
+        match poll_action(exit.is_some(), embedder_ready, ready, ceiling_exceeded) {
             PollAction::BecomeReady => {
                 ready = true;
                 handle.set_status(HostStatus::Ready);
@@ -394,7 +421,7 @@ fn poll_health(handle: Arc<HostHandle>, base: String, my_gen: u64) {
                     reindex_vault(&handle, &vault);
                 }
             }
-            PollAction::GiveUp => {
+            PollAction::GiveUp | PollAction::Exited => {
                 handle.set_status(HostStatus::Unavailable);
                 return;
             }
@@ -429,7 +456,8 @@ pub fn shutdown_host(handle: &HostHandle) {
     if let Some(mut child) = guard.take() {
         // give graceful shutdown a brief moment, then force.
         std::thread::sleep(Duration::from_millis(300));
-        let _ = child.kill();
+        // The tree first, while the host is still alive: `taskkill /T` finds descendants through
+        // their parent, so once the host is killed whatever it started can no longer be reached.
         #[cfg(windows)]
         {
             let pid = child.id();
@@ -438,6 +466,7 @@ pub fn shutdown_host(handle: &HostHandle) {
             crate::process_ext::no_console_window(&mut tk);
             let _ = tk.output();
         }
+        let _ = child.kill();
         let _ = child.wait();
     }
     handle.set_status(HostStatus::Unavailable);
@@ -1038,24 +1067,69 @@ mod tests {
     }
 
     #[test]
+    fn poll_action_stops_when_the_process_has_exited() {
+        // Whatever /health would have said: during startup (a crash no longer waits out the
+        // 15-minute ceiling), after Ready (a dead host is no longer reported as Ready), and even
+        // with the embedder reported ready by a response that raced the exit.
+        for embedder_ready in [false, true] {
+            for already_ready in [false, true] {
+                for ceiling_exceeded in [false, true] {
+                    assert_eq!(
+                        poll_action(true, embedder_ready, already_ready, ceiling_exceeded),
+                        PollAction::Exited
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_host_that_crashes_during_startup_is_reported_unavailable_within_seconds() {
+        // Before, the poll loop only asked /health: a host that died at startup read as "still
+        // starting" until the 15-minute ceiling.
+        let handle = Arc::new(HostHandle::default());
+        handle.set_status(HostStatus::Starting);
+        let mut cmd = if cfg!(windows) {
+            let mut c = Command::new("cmd");
+            c.args(["/C", "exit 7"]);
+            c
+        } else {
+            let mut c = Command::new("sh");
+            c.args(["-c", "exit 7"]);
+            c
+        };
+        crate::process_ext::no_console_window(&mut cmd);
+        *handle.child.lock().unwrap() = Some(cmd.spawn().expect("spawn a process that exits"));
+
+        let started = Instant::now();
+        let poller = {
+            let handle = handle.clone();
+            std::thread::spawn(move || poll_health(handle, "http://127.0.0.1:9".into(), 0))
+        };
+        poller.join().unwrap();
+        assert!(matches!(handle.status(), HostStatus::Unavailable));
+        assert!(started.elapsed() < Duration::from_secs(10), "waited {:?}", started.elapsed());
+    }
+
+    #[test]
     fn poll_action_becomes_ready_on_embedder_ready() {
-        assert_eq!(poll_action(true, false, false), PollAction::BecomeReady);
+        assert_eq!(poll_action(false, true, false, false), PollAction::BecomeReady);
     }
 
     #[test]
     fn poll_action_embedder_ready_beats_ceiling() {
         // Embedder up right at the ceiling still transitions to Ready (not GiveUp).
-        assert_eq!(poll_action(true, false, true), PollAction::BecomeReady);
+        assert_eq!(poll_action(false, true, false, true), PollAction::BecomeReady);
     }
 
     #[test]
     fn poll_action_keeps_polling_while_starting_within_ceiling() {
-        assert_eq!(poll_action(false, false, false), PollAction::KeepPolling);
+        assert_eq!(poll_action(false, false, false, false), PollAction::KeepPolling);
     }
 
     #[test]
     fn poll_action_gives_up_when_never_ready_past_ceiling() {
-        assert_eq!(poll_action(false, false, true), PollAction::GiveUp);
+        assert_eq!(poll_action(false, false, false, true), PollAction::GiveUp);
     }
 
     #[test]
@@ -1064,9 +1138,9 @@ mod tests {
         // embedder blips or the startup ceiling — never GiveUp (that would mark a healthy host
         // dead). This is the invariant that fixes the frozen-generatorReady bug: the loop must
         // keep observing /health after embedder_ready so the lazily-loaded generator is seen.
-        assert_eq!(poll_action(true, true, true), PollAction::KeepPolling);
-        assert_eq!(poll_action(false, true, true), PollAction::KeepPolling);
-        assert_eq!(poll_action(false, true, false), PollAction::KeepPolling);
+        assert_eq!(poll_action(false, true, true, true), PollAction::KeepPolling);
+        assert_eq!(poll_action(false, false, true, true), PollAction::KeepPolling);
+        assert_eq!(poll_action(false, false, true, false), PollAction::KeepPolling);
     }
 
     #[test]
