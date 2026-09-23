@@ -1763,11 +1763,15 @@
       <MigrationNotice moved={movedOut} onclose={() => { movedOut = null; }} />
     {/if}
     {#if showDeletedNotes && root}
-      <DeletedNotes
-        {root}
-        onclose={() => { showDeletedNotes = false; }}
-        onrestored={refreshTree}
-      />
+      <!-- Keyed on the folder: what the panel said about another folder does not carry over. -->
+      {#key root}
+        <DeletedNotes
+          {root}
+          {tree}
+          onclose={() => { showDeletedNotes = false; }}
+          onrestored={refreshTree}
+        />
+      {/key}
     {/if}
     <!-- No `&& root` guard (unlike the other panels): Settings is usable with no vault open — the Vault section's "Open vault" path needs it. -->
     {#if showSettings}

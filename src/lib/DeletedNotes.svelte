@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { deletedNotes, restoreDeleted, type DeletedNote } from "./ipc";
+  import { deletedNotes, restoreDeleted, type DeletedNote, type TreeNode } from "./ipc";
   import { friendlyError, type FriendlyError } from "./friendlyError.helpers";
   import {
     containingFolder,
@@ -14,18 +14,24 @@
   interface Props {
     /** Absolute vault root path. */
     root: string;
+    /**
+     * The vault's tree as the sidebar shows it. The list is read again whenever it changes, so a
+     * note deleted while the panel is open shows up in it.
+     */
+    tree: TreeNode[];
     /** Close the panel. */
     onclose: () => void;
     /** Called after a note is back, so the caller can refresh the tree. */
     onrestored: () => void;
   }
-  let { root, onclose, onrestored }: Props = $props();
+  let { root, tree, onclose, onrestored }: Props = $props();
 
   let notes = $state<DeletedNote[]>([]);
   let failure = $state<FriendlyError | null>(null);
   let outcome = $state<string | null>(null);
 
   $effect(() => {
+    void tree; // re-read when the folder changes
     void load(root);
   });
 

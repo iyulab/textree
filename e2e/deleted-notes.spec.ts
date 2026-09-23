@@ -66,3 +66,34 @@ test("deleted notes: delete a note → it is listed → restoring returns it to 
     removeTempVault(vault);
   }
 });
+
+test("deleted notes: the open list follows deletions, and does not carry over to another folder", async () => {
+  const first = createTempVault({ "one.md": "one\n", "two.md": "two\n" });
+  const second = createTempVault({ "other.md": "other\n" });
+  try {
+    await loadVault(page, first);
+    await page.keyboard.press("Control+p");
+    await page.getByTestId("palette-input").fill(">deleted");
+    await expect(page.getByTestId("palette-item").first()).toContainText("Deleted notes");
+    await page.keyboard.press("Enter");
+    const panel = page.getByTestId("deleted-notes");
+    await expect(panel).toContainText("Nothing has been deleted");
+
+    // Deleted while the list is open: it appears without reopening the list.
+    const target = page.getByRole("treeitem", { name: /one/ });
+    await target.focus();
+    await page.keyboard.press("Delete");
+    await expect(panel).toContainText("one");
+    await page.getByTestId("deleted-restore").first().click();
+    await expect(page.getByTestId("deleted-outcome")).toContainText("Restored");
+
+    // Another folder: the list is that folder's, and what was said about the first one is gone.
+    await loadVault(page, second);
+    await expect(panel).toContainText("Nothing has been deleted");
+    await expect(page.getByTestId("deleted-outcome")).toHaveCount(0);
+    await page.getByRole("button", { name: "Close deleted notes" }).click();
+  } finally {
+    removeTempVault(first);
+    removeTempVault(second);
+  }
+});
