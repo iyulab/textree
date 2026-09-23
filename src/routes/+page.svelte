@@ -103,16 +103,19 @@
     removed: () => {
       conflictAttention = false;
     },
+    moved: (remap) => {
+      if (!activePath) return;
+      const to = remap(activePath);
+      if (to !== activePath) followOpenNote(to);
+    },
     ask: (question) => {
       if (question === "conflict") void drawAttentionToConflict();
       else if (question === "removed") void drawAttentionToRemoved();
       else void drawAttentionToFailure();
     },
   });
-  // Every assignment to `content` is a disk state (a load, a reload, or text just flushed).
   $effect(() => {
     liveDoc = content;
-    save.synced = content;
   });
   let frontmatter = $derived(parseFrontmatter(liveDoc));
   // Reading view toggle (ephemeral, per-session) — clean read-only render vs. live-preview editing.
@@ -448,12 +451,14 @@
       await save.flush(); // persist the body (including the H1) to the current path before renaming
       if (save.pending) return; // unsaved edits could not be saved (or are in conflict) → skip the rename
       if (activePath !== pathToRename) return; // navigated away during flush → skip
-      const newPath = await renameNoteUnique(root, pathToRename, candidate);
+      let newPath = pathToRename;
+      const vault = root;
+      await save.move(async () => {
+        newPath = await renameNoteUnique(vault, pathToRename, candidate);
+        return (p) => (samePath(p, pathToRename) ? newPath : p);
+      });
       await refreshTree();
-      if (activePath === pathToRename) {
-        followOpenNote(newPath); // still on the renamed note
-        selectedNode = null;
-      }
+      if (activePath === newPath) selectedNode = null; // still on the renamed note
       opError = null;
     } catch (e) {
       opError = friendlyError(e);
@@ -530,13 +535,13 @@
       activePath = null;
       activeName = "";
       content = "";
-      save.opened();
+      save.opened("");
       return;
     }
     content = await readNote(root, node.body_path);
     activeName = node.name;
     activePath = node.body_path;
-    save.opened();
+    save.opened(content);
   }
 
   // ── Structure editing (M4) ──────────────────────────────────────────────
@@ -644,12 +649,16 @@
       opError = friendlyError(leaveRefusal("Operation", left));
       return;
     }
-    const wasActive = activePath !== null && samePath(activePath, leaf);
     try {
-      const newDir = await promoteNode(root, leaf);
+      const vault = root;
+      let newDir = leaf;
+      await save.move(async () => {
+        newDir = await promoteNode(vault, leaf);
+        // The promoted leaf's body moved to newDir/<stem>.md.
+        const body = joinPath(newDir, `${baseName(newDir)}.md`);
+        return (p) => (samePath(p, leaf) ? body : p);
+      });
       await refreshTree();
-      // If the promoted leaf was the open note, its body moved to newDir/<stem>.md → follow it.
-      if (wasActive) followOpenNote(joinPath(newDir, `${baseName(newDir)}.md`));
       selectedNode = null;
       void createNewNote(newDir); // target the new container
     } catch (e) {
@@ -679,7 +688,7 @@
       content = await readNote(root, p);
       activeName = baseName(p).replace(/\.md$/i, "");
       activePath = p;
-      save.opened();
+      save.opened(content);
       selectedNode = null;
       // Wait for the .title header (and its input) to render before focusing.
       // No focus race: Editor remounts on the new docKey but Editor.svelte calls no
@@ -752,12 +761,13 @@
       opError = friendlyError(leaveRefusal("Move", left));
       return;
     }
-    const affectsOpen = activePath !== null && pathInside(activePath, src);
     try {
-      const newPath = await moveNode(root, src, destDir);
+      const vault = root;
+      await save.move(async () => {
+        const newPath = await moveNode(vault, src, destDir);
+        return (p) => (pathInside(p, src) ? newPath + p.slice(src.length) : p);
+      });
       await refreshTree();
-      // If the open note is inside the moved subtree, follow the new path (content same, path only changed).
-      if (affectsOpen && activePath) followOpenNote(newPath + activePath.slice(src.length));
       selectedNode = null;
       opError = null;
     } catch (e) {
@@ -783,19 +793,17 @@
       opError = friendlyError(leaveRefusal("Operation", left));
       return;
     }
-    const wasActiveLeaf = activePath !== null && samePath(activePath, leaf);
-    const wasActiveSrc = activePath !== null && pathInside(activePath, src);
     try {
-      const movedPath = await adoptNode(root, src, leaf);
+      const vault = root;
+      await save.move(async () => {
+        const movedPath = await adoptNode(vault, src, leaf);
+        // The promoted new container = the parent of the moved node; the leaf's body moved into it.
+        const newDir = parentDir(movedPath);
+        const body = joinPath(newDir, `${baseName(newDir)}.md`);
+        return (p) =>
+          samePath(p, leaf) ? body : pathInside(p, src) ? movedPath + p.slice(src.length) : p;
+      });
       await refreshTree();
-      // The promoted new container = the parent of the moved node.
-      const newDir = parentDir(movedPath);
-      if (wasActiveLeaf) {
-        // The promoted leaf body moved to newDir/<stem>.md.
-        followOpenNote(joinPath(newDir, `${baseName(newDir)}.md`));
-      } else if (wasActiveSrc && activePath) {
-        followOpenNote(movedPath + activePath.slice(src.length));
-      }
       selectedNode = null;
       opError = null;
     } catch (e) {
@@ -823,7 +831,7 @@
   function applyReload(diskContent: string) {
     content = diskContent;
     reloadVersion += 1; // trigger Editor re-creation
-    save.reloaded();
+    save.reloaded(diskContent);
   }
 
   /** Removed-note banner: put the note back where it was, holding the unsaved edits. */

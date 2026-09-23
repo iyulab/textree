@@ -29,6 +29,9 @@ function harness(opts: { active?: string } = {}) {
         });
       }),
     ask: (q) => asked.push(q),
+    moved: (remap) => {
+      if (active) active = remap(active);
+    },
     removed: () => removedCount++,
   });
   return {
@@ -37,9 +40,9 @@ function harness(opts: { active?: string } = {}) {
     calls,
     asked,
     removedCount: () => removedCount,
-    open(path: string | null) {
+    open(path: string | null, text = "") {
       active = path;
-      save.opened();
+      save.opened(text);
     },
   };
 }
@@ -57,7 +60,7 @@ afterEach(() => vi.useRealTimers());
 describe("NoteSave — autosave", () => {
   it("saves after a pause in typing, from what the note held when the edit began", async () => {
     const h = harness();
-    h.save.synced = "old";
+    h.save.opened("old");
     h.save.schedule("A.md", "n");
     h.save.schedule("A.md", "ne");
     h.save.schedule("A.md", "new");
@@ -74,7 +77,7 @@ describe("NoteSave — autosave", () => {
 
   it("an edit made while a save runs starts from what that save put on disk", async () => {
     const h = harness();
-    h.save.synced = "0";
+    h.save.opened("0");
     h.save.schedule("A.md", "1");
     void h.save.flush();
     await settle();
@@ -103,7 +106,7 @@ describe("NoteSave — autosave", () => {
 describe("NoteSave — switching notes", () => {
   it("edits typed into the note being left are written, not replaced by the first edit to the next", async () => {
     const h = harness();
-    h.save.synced = "a0";
+    h.save.opened("a0");
     h.save.schedule("A.md", "a1");
     const leaving = h.save.beforeLeaving();
     await settle();
@@ -112,8 +115,7 @@ describe("NoteSave — switching notes", () => {
 
     // The next note is still loading, so the editor on screen is still the old one.
     h.save.schedule("A.md", "a2");
-    h.open("B.md");
-    h.save.synced = "b0";
+    h.open("B.md", "b0");
     h.save.schedule("B.md", "b1");
     await settle();
 
@@ -217,7 +219,7 @@ describe("NoteSave — answers", () => {
     h.save.schedule("A.md", "mine");
     h.save.markConflict("theirs");
     expect(h.save.takeDisk()).toBe("theirs");
-    h.save.reloaded();
+    h.save.reloaded("theirs");
     vi.advanceTimersByTime(1000);
     await settle();
     expect(h.calls).toHaveLength(0);
@@ -244,5 +246,62 @@ describe("NoteSave — answers", () => {
     expect(h.save.markPresent()).toBe(true);
     await settle();
     expect(h.calls[0]).toMatchObject({ text: "mine" });
+  });
+});
+
+describe("NoteSave — moving the open note", () => {
+  const into = (dir: string) => (p: string) => (p.startsWith("A.md") ? `${dir}/A.md` : p);
+
+  it("a save scheduled during a move waits for it and lands at the new path", async () => {
+    const h = harness();
+    h.save.opened("a0");
+    let finishMove!: () => void;
+    const moving = h.save.move(
+      () => new Promise((resolve) => (finishMove = () => resolve(into("dest")))),
+    );
+    h.save.schedule("A.md", "typed while moving");
+    vi.advanceTimersByTime(500);
+    await settle();
+    expect(h.calls).toHaveLength(0); // nothing written to the old path mid-move
+
+    finishMove();
+    await moving;
+    await settle();
+    expect(h.calls.map((c) => [c.path, c.text, c.expected])).toEqual([
+      ["dest/A.md", "typed while moving", "a0"],
+    ]);
+  });
+
+  it("a save already running finishes before the move starts", async () => {
+    const h = harness();
+    h.save.schedule("A.md", "1");
+    void h.save.flush();
+    await settle();
+    let relocated = false;
+    const moving = h.save.move(async () => {
+      relocated = true;
+      return into("dest");
+    });
+    await settle();
+    expect(relocated).toBe(false);
+    h.calls[0].settle(written);
+    await moving;
+    expect(relocated).toBe(true);
+  });
+
+  it("the disk reference point is not moved by what the editor shows, only by loads and saves", async () => {
+    const h = harness();
+    h.save.opened("on disk");
+    h.save.schedule("A.md", "unsaved");
+    await h.save.move(async () => into("dest"));
+    expect(h.save.synced).toBe("on disk");
+    expect(h.save.pending).toMatchObject({ path: "dest/A.md", text: "unsaved", base: "on disk" });
+  });
+
+  it("a failed move leaves the edit where it was", async () => {
+    const h = harness();
+    h.save.schedule("A.md", "kept");
+    await expect(h.save.move(() => Promise.reject(new Error("in use")))).rejects.toThrow("in use");
+    expect(h.save.pending?.path).toBe("A.md");
   });
 });

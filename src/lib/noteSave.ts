@@ -44,6 +44,9 @@ export function initialNoteSaveState(): NoteSaveState {
  */
 export type LeaveOutcome = "saved" | "asking" | "failed" | "busy";
 
+/** Where a structure change put a path; a path it did not move comes back unchanged. */
+export type Remap = (path: string) => string;
+
 /** Which banner a refusal to leave points at. */
 export type LeaveQuestion = "conflict" | "removed" | "failure";
 
@@ -59,6 +62,8 @@ export interface NoteSaveDeps {
   edited?: () => void;
   /** The open note was found gone. */
   removed?: () => void;
+  /** A structure change moved paths (see `move`); the open note may be among them. */
+  moved?: (remap: Remap) => void;
   /** Leaving was refused; the named banner should be brought to the person's attention. */
   ask?: (question: LeaveQuestion) => void;
   debounceMs?: number;
@@ -70,12 +75,7 @@ const DEFAULT_DEBOUNCE_MS = 500;
 const MAX_TRAILING_SAVES = 5;
 
 export class NoteSave {
-  /**
-   * The last text the editor and disk were known to agree on. Moved forward by every load and every
-   * successful save of the open note; the external-change reconciliation compares disk against it
-   * to tell an edit made elsewhere from the person's own unsaved typing.
-   */
-  synced = "";
+  #synced = "";
 
   #pending: PendingEdit | null = null;
   // Saves run one at a time. Two in flight would each be based on the same state, and the second
@@ -89,6 +89,15 @@ export class NoteSave {
     private readonly deps: NoteSaveDeps,
   ) {
     this.#debounceMs = deps.debounceMs ?? DEFAULT_DEBOUNCE_MS;
+  }
+
+  /**
+   * The last text the editor and disk were known to agree on. Set by every load and moved forward by
+   * every successful save of the open note; the external-change reconciliation compares disk against
+   * it to tell an edit made elsewhere from the person's own unsaved typing.
+   */
+  get synced(): string {
+    return this.#synced;
   }
 
   /** The edit not yet on disk, if any. */
@@ -105,7 +114,7 @@ export class NoteSave {
       this.#pending = null;
       this.#enqueue(() => this.#write(left));
     }
-    const base = this.#pending?.path === path ? this.#pending.base : this.synced;
+    const base = this.#pending?.path === path ? this.#pending.base : this.#synced;
     this.#pending = { path, text, base };
     this.state.dirty = true;
     this.deps.edited?.();
@@ -160,8 +169,12 @@ export class NoteSave {
     return "busy";
   }
 
-  /** A note (or none) was opened. An edit still pending for the one left keeps its own path. */
-  opened(): void {
+  /**
+   * A note holding `text` on disk was opened (or none, with ""). An edit still pending for the one
+   * left keeps its own path.
+   */
+  opened(text: string): void {
+    this.#synced = text;
     this.state.dirty = false;
     this.state.removed = false;
     this.state.conflictDisk = null;
@@ -171,6 +184,7 @@ export class NoteSave {
   closed(): void {
     this.#cancelTimer();
     this.#pending = null;
+    this.#synced = "";
     this.state.dirty = false;
     // The edit context is gone, so the errors about it are too.
     this.state.saveError = null;
@@ -179,8 +193,9 @@ export class NoteSave {
     this.state.conflictDisk = null;
   }
 
-  /** The editor was reloaded from disk; anything unsaved is gone. */
-  reloaded(): void {
+  /** The editor was reloaded with `text` from disk; anything unsaved is gone. */
+  reloaded(text: string): void {
+    this.#synced = text;
     this.#pending = null;
     this.state.dirty = false;
     this.state.saveError = null;
@@ -231,7 +246,7 @@ export class NoteSave {
   /** Save failure: let the unsaved edits go. Returns what the note last saved, to reload with. */
   discardUnsaved(): string {
     this.#cancelTimer();
-    return this.synced;
+    return this.#synced;
   }
 
   /** Removed note: let the unsaved edits go. */
@@ -246,7 +261,7 @@ export class NoteSave {
    * path. Edits typed while that ran stay pending, now on top of what was put back.
    */
   putBack(text: string, movedTo: string | null): void {
-    this.synced = text;
+    this.#synced = text;
     if (this.#pending?.text === text) {
       this.#pending = null;
       this.state.dirty = false;
@@ -256,6 +271,20 @@ export class NoteSave {
     if (movedTo !== null && this.#pending) this.#pending.path = movedTo;
     this.state.removed = false;
     this.state.saveError = null;
+  }
+
+  /**
+   * Move notes on disk — the open one, or a folder holding it. `relocate` does the move and says
+   * where paths went. It runs between saves, never alongside one: a save landing on the old path
+   * mid-move would bring the note back there, or report it gone. An edit made while it ran is
+   * carried to where its note went.
+   */
+  move(relocate: () => Promise<Remap>): Promise<void> {
+    return this.#enqueue(async () => {
+      const remap = await relocate();
+      if (this.#pending) this.#pending.path = remap(this.#pending.path);
+      this.deps.moved?.(remap);
+    });
   }
 
   #enqueue(job: () => Promise<void>): Promise<void> {
@@ -297,7 +326,7 @@ export class NoteSave {
         return;
       }
       this.deps.saved?.(job.path, job.text);
-      if (job.path === active) this.synced = job.text;
+      if (job.path === active) this.#synced = job.text;
       if (this.#pending === job) {
         this.#pending = null;
         s.dirty = false;
