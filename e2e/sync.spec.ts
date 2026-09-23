@@ -5,6 +5,7 @@ import {
   createTempVault,
   removeTempVault,
   writeVaultFile,
+  readVaultFile,
 } from "./helpers";
 import { rmSync } from "node:fs";
 import { join } from "node:path";
@@ -106,11 +107,24 @@ test("external modify during unsaved edit → conflict banner + resolution butto
 test("conflict resolution: load the copy on disk → editor replaced with disk content", async () => {
   const vault = createTempVault({ "clash.md": "initial\n" });
   try {
-    const external = await triggerConflict(vault);
+    await triggerConflict(vault);
     await page.getByRole("button", { name: "Load the copy on disk" }).click();
 
     await expect(page.locator(".banner")).toHaveCount(0);
-    await expect(page.locator(".cm-content")).toContainText(external);
+    // The editor ends up showing what is on disk. Not a specific write: the retry loop that raised
+    // the conflict can land one more external write after the one that raised the banner, and
+    // either is a correct "copy on disk" — what must not happen is the editor settling on anything
+    // other than the file's current content.
+    await expect
+      .poll(
+        async () => {
+          const shown = (await page.locator(".cm-content").innerText()).trim();
+          return shown === readVaultFile(vault, "clash.md").trim() ? "matches disk" : shown;
+        },
+        { timeout: 5000 },
+      )
+      .toBe("matches disk");
+    await expect(page.locator(".cm-content")).toContainText("overwritten outside");
     // My edit ("x") is discarded.
     await expect(page.locator(".cm-content")).not.toContainText("initialx");
   } finally {
