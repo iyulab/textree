@@ -83,11 +83,18 @@ jobs:
       # requires BOTH resources/canopy AND resources/host to exist — otherwise the
       # build script fails with "resource path doesn't exist". Assemble both sidecars
       # before cargo, mirroring release.yml (without that step this job was permanently red).
+      # The pinned canopy commit lives in .github/canopy-ref, read by both CI and release, so the
+      # canopy that CI tests is the canopy that ships. Bump it deliberately, in that one file.
+      - name: Read pinned canopy commit
+        id: canopy
+        shell: bash
+        run: echo "ref=$(tr -d '[:space:]' < .github/canopy-ref)" >> "$GITHUB_OUTPUT"
+
       - name: Checkout canopy (pinned)
         uses: actions/checkout@v4
         with:
           repository: iyulab/canopy
-          ref: 26bb78813a6bbfe420d2405f88f88e5015f9f263 # pin; keep in sync with release.yml
+          ref: ${{ steps.canopy.outputs.ref }}
           path: canopy-src
 
       - name: Assemble canopy sidecar

@@ -32,11 +32,18 @@ jobs:
 
       # Acquire canopy at a pinned commit so the sidecar payload is reproducible.
       # Bump the ref deliberately when picking up new canopy features.
+      # The pinned canopy commit lives in .github/canopy-ref, read by both CI and release, so the
+      # canopy that CI tests is the canopy that ships. Bump it deliberately, in that one file.
+      - name: Read pinned canopy commit
+        id: canopy
+        shell: bash
+        run: echo "ref=$(tr -d '[:space:]' < .github/canopy-ref)" >> "$GITHUB_OUTPUT"
+
       - name: Checkout canopy (pinned)
         uses: actions/checkout@v4
         with:
           repository: iyulab/canopy
-          ref: 6b3a09b72df3c1e73f53f2c0b2e0f831bd77f246 # pin; bump deliberately
+          ref: ${{ steps.canopy.outputs.ref }}
           path: canopy-src
 
       # Builds canopy and copies the output into src-tauri/resources/canopy/
