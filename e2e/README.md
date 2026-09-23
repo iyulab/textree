@@ -20,9 +20,16 @@ to `node` as-is, and under `tauri dev` the app process's working directory is `s
 path relative to this folder silently fails to spawn and publish reports
 "The publishing tool couldn't finish".
 
-`dev:e2e` runs `scripts/dev-e2e.mjs`, which starts `tauri dev --config
-src-tauri/tauri.e2e.conf.json`: the overlay injects `--remote-debugging-port=9222` via the window's
+`dev:e2e` runs `scripts/dev-e2e.mjs`, which starts `tauri dev` with the overlay
+`src-tauri/tauri.e2e.conf.json`: the overlay injects `--remote-debugging-port` via the window's
 `additionalBrowserArgs` (the programmatic `CoreWebView2EnvironmentOptions` path).
+
+The launcher owns the port. It uses 9222 when free; when something else already holds 9222 (a
+browser or an Electron app with remote debugging on), it picks a free port instead and says so.
+Set `TEXTREE_E2E_CDP_PORT` to demand a specific port — the launcher then fails immediately, naming
+the occupant, if that port is taken. The chosen endpoint is written to `textree-e2e-cdp.json` in the
+temp directory, and `e2e/helpers.ts` reads it, so the specs need no configuration of their own.
+`TEXTREE_E2E_CDP` still overrides the endpoint the specs connect to.
 
 The launcher also points `TEXTREE_DEFAULT_VAULT_BASE` at a temp directory it recreates on every
 start. Specs that exercise the first-run flow open whatever folder the app resolves as its default

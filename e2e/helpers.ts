@@ -3,11 +3,23 @@ import { resolve, join } from "node:path";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, readdirSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 
-// 9222 by default, matching the port injected in tauri.e2e.conf.json. Overridable because that
-// port is a popular default: anything else already debugging on it (a browser, another harness)
-// silently takes it, and the app then comes up with no CDP at all. Point both the app config and
-// TEXTREE_E2E_CDP at a free port to work around that.
-const CDP_ENDPOINT = process.env.TEXTREE_E2E_CDP ?? "http://localhost:9222";
+/**
+ * Handshake file scripts/dev-e2e.mjs writes with the CDP endpoint it launched the app on.
+ * Keep in sync with HANDSHAKE_FILE there. The launcher owns the port (it may fall back from an
+ * occupied 9222 to a free one), so the specs read its decision rather than assuming a number.
+ */
+export const E2E_CDP_HANDSHAKE = join(tmpdir(), "textree-e2e-cdp.json");
+
+function cdpEndpoint(): string {
+  if (process.env.TEXTREE_E2E_CDP) return process.env.TEXTREE_E2E_CDP;
+  if (existsSync(E2E_CDP_HANDSHAKE)) {
+    const { endpoint } = JSON.parse(readFileSync(E2E_CDP_HANDSHAKE, "utf8")) as { endpoint?: string };
+    if (endpoint) return endpoint;
+  }
+  return "http://localhost:9222";
+}
+
+const CDP_ENDPOINT = cdpEndpoint();
 const APP_URL_FRAGMENT = "localhost:1420";
 
 /**
@@ -137,8 +149,8 @@ export async function connectToApp(): Promise<{ browser: Browser; page: Page }> 
   await browser.close();
   throw new Error(
     `Could not find the Textree app page via CDP (${CDP_ENDPOINT}). ` +
-      `Make sure the app is running with 'npm run dev:e2e' (tauri dev --config src-tauri/tauri.e2e.conf.json), ` +
-      `and that nothing else is already listening on that debugging port (set TEXTREE_E2E_CDP to move it).`,
+      `Make sure the app is running with 'npm run dev:e2e' — it picks the CDP port and records it in ` +
+      `${E2E_CDP_HANDSHAKE}, which this reads unless TEXTREE_E2E_CDP overrides the endpoint.`,
   );
 }
 
@@ -167,7 +179,10 @@ export function createTempVault(files: Record<string, string>): string {
 }
 
 export function removeTempVault(vaultPath: string): void {
-  rmSync(vaultPath, { recursive: true, force: true });
+  // The app still has this vault open when a spec tears it down, and on Windows a write it lands
+  // mid-removal (a version, the watcher's canary) makes the directory ENOTEMPTY/EBUSY. rmSync's
+  // own retries are the documented remedy for exactly those codes.
+  rmSync(vaultPath, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 }
 
 /** Read a file inside the vault directly from disk (to verify what the app wrote). */

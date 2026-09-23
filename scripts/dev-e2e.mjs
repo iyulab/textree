@@ -13,7 +13,8 @@
  */
 
 import { spawn } from "node:child_process";
-import { rmSync, mkdirSync, writeFileSync } from "node:fs";
+import { rmSync, mkdirSync, writeFileSync, readFileSync } from "node:fs";
+import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -80,7 +81,79 @@ console.log(`[dev:e2e] default vault base: ${DEFAULT_VAULT_BASE}`);
 console.log(`[dev:e2e] personal settings base: ${PERSONAL_BASE}`);
 console.log(`[dev:e2e] sample vault seeded: ${sampleVault}`);
 
-const child = spawn("tauri", ["dev", "--config", "src-tauri/tauri.e2e.conf.json"], {
+/**
+ * The CDP port is decided here and nowhere else. The overlay config keeps 9222 as its default, the
+ * launcher rewrites it into a generated copy, and the chosen endpoint is written to a handshake file
+ * that e2e/helpers.ts reads — so the app and the specs cannot disagree about where to meet.
+ *
+ * 9222 is a popular default: anything already debugging on it (a browser, an Electron app) takes
+ * it, and the app then comes up with no CDP at all. With no port requested explicitly, an occupied
+ * 9222 falls back to a free port; an explicitly requested port that is taken fails right here,
+ * naming the occupant, instead of surfacing later as "could not find the app page".
+ */
+const DEFAULT_CDP_PORT = 9222;
+const HANDSHAKE_FILE = join(tmpdir(), "textree-e2e-cdp.json");
+const OVERLAY_TEMPLATE = join(REPO, "src-tauri", "tauri.e2e.conf.json");
+const GENERATED_OVERLAY = join(tmpdir(), "textree-e2e.conf.json");
+
+function isFree(port) {
+  return new Promise((done) => {
+    const server = createServer();
+    server.once("error", () => done(false));
+    server.listen(port, "127.0.0.1", () => server.close(() => done(true)));
+  });
+}
+
+function freePort() {
+  return new Promise((done, fail) => {
+    const server = createServer();
+    server.once("error", fail);
+    server.listen(0, "127.0.0.1", () => {
+      const { port } = server.address();
+      server.close(() => done(port));
+    });
+  });
+}
+
+async function occupant(port) {
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/json/version`, { signal: AbortSignal.timeout(1000) });
+    const info = await res.json();
+    return info["User-Agent"] ?? info.Browser ?? "unknown";
+  } catch {
+    return "a process that is not a CDP endpoint";
+  }
+}
+
+async function chooseCdpPort() {
+  const requested = process.env.TEXTREE_E2E_CDP_PORT;
+  if (requested !== undefined) {
+    const port = Number(requested);
+    if (!Number.isInteger(port) || port < 1 || port > 65535) {
+      throw new Error(`TEXTREE_E2E_CDP_PORT must be a port number, got "${requested}"`);
+    }
+    if (!(await isFree(port))) {
+      throw new Error(`CDP port ${port} (TEXTREE_E2E_CDP_PORT) is already in use by: ${await occupant(port)}`);
+    }
+    return port;
+  }
+  if (await isFree(DEFAULT_CDP_PORT)) return DEFAULT_CDP_PORT;
+  const port = await freePort();
+  console.log(`[dev:e2e] CDP port ${DEFAULT_CDP_PORT} is in use by: ${await occupant(DEFAULT_CDP_PORT)}`);
+  console.log(`[dev:e2e] using free port ${port} instead`);
+  return port;
+}
+
+const cdpPort = await chooseCdpPort();
+const template = readFileSync(OVERLAY_TEMPLATE, "utf8");
+if (!/--remote-debugging-port=\d+/.test(template)) {
+  throw new Error(`${OVERLAY_TEMPLATE} no longer carries --remote-debugging-port; the launcher cannot set the port`);
+}
+writeFileSync(GENERATED_OVERLAY, template.replace(/--remote-debugging-port=\d+/, `--remote-debugging-port=${cdpPort}`), "utf8");
+writeFileSync(HANDSHAKE_FILE, JSON.stringify({ endpoint: `http://localhost:${cdpPort}` }), "utf8");
+console.log(`[dev:e2e] CDP endpoint: http://localhost:${cdpPort} (handshake: ${HANDSHAKE_FILE})`);
+
+const child = spawn("tauri", ["dev", "--config", `"${GENERATED_OVERLAY}"`], {
   stdio: "inherit",
   shell: true,
   env: {

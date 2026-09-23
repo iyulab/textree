@@ -8,7 +8,7 @@
  *   (default)       Both groups skip if the var is unset — prevents accidental noise in
  *                   the normal suite.
  *
- * Tests connect to the already-running Tauri app via CDP (port 9222) exactly as
+ * Tests connect to the already-running Tauri app via CDP (the port dev:e2e chose) exactly as
  * all other E2E specs do. The ChatView only renders when Chat mode is active; every
  * test must open a vault, click a treeitem, and enter Chat mode first.
  *
