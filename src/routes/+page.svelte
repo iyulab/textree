@@ -71,6 +71,7 @@
   import { checkForUpdate, type UpdateInfo } from "$lib/updater";
   import UpdateBanner from "$lib/UpdateBanner.svelte";
   import { detectSyncConflicts } from "$lib/syncConflict.helpers";
+  import { leaveRefusal } from "$lib/leaveRefusal.helpers";
   import { buildFolderTable, type FolderTable } from "$lib/folderTable.helpers";
   import { views } from "$lib/views.svelte";
   import FolderTableView from "$lib/FolderTable.svelte";
@@ -530,7 +531,7 @@
     const left = await saveBeforeLeaving(); // preserve unsaved edits before rename
     if (left === "asking") return;
     if (left === "failed" || left === "busy") {
-      saveError = friendlyError("Rename canceled — could not save your unsaved edits.");
+      saveError = friendlyError(leaveRefusal("Rename", left));
       return;
     }
     try {
@@ -623,7 +624,7 @@
       return friendlyError("Rename canceled — first answer the question about the open note.");
     }
     if (left === "failed" || left === "busy") {
-      return friendlyError("Rename canceled — could not save your unsaved edits.");
+      return friendlyError(leaveRefusal("Rename", left));
     }
     try {
       const target = node.path;
@@ -771,7 +772,7 @@
     const left = await saveBeforeLeaving(); // preserve current edits before promote
     if (left === "asking") return;
     if (left === "failed" || left === "busy") {
-      opError = friendlyError("Operation canceled — could not save your unsaved edits.");
+      opError = friendlyError(leaveRefusal("Operation", left));
       return;
     }
     const wasActive = activePath !== null && samePath(activePath, leaf);
@@ -800,7 +801,7 @@
     const left = await saveBeforeLeaving(); // preserve current edits before structure change
     if (left === "asking") return;
     if (left === "failed" || left === "busy") {
-      opError = friendlyError("Operation canceled — could not save your unsaved edits.");
+      opError = friendlyError(leaveRefusal("Operation", left));
       return;
     }
     try {
@@ -830,7 +831,7 @@
     const left = await saveBeforeLeaving(); // preserve current edits before structure change
     if (left === "asking") return;
     if (left === "failed" || left === "busy") {
-      opError = friendlyError("Operation canceled — could not save your unsaved edits.");
+      opError = friendlyError(leaveRefusal("Operation", left));
       return;
     }
     try {
@@ -851,7 +852,7 @@
     const left = await saveBeforeLeaving();
     if (left === "asking") return;
     if (left === "failed" || left === "busy") {
-      opError = friendlyError("Delete canceled — could not save your unsaved edits.");
+      opError = friendlyError(leaveRefusal("Delete", left));
       return;
     }
     try {
@@ -880,7 +881,7 @@
     const left = await saveBeforeLeaving(); // preserve current edits before move
     if (left === "asking") return;
     if (left === "failed" || left === "busy") {
-      opError = friendlyError("Move canceled — could not save your unsaved edits.");
+      opError = friendlyError(leaveRefusal("Move", left));
       return;
     }
     const affectsOpen = activePath !== null && pathInside(activePath, src);
@@ -911,7 +912,7 @@
     const left = await saveBeforeLeaving();
     if (left === "asking") return;
     if (left === "failed" || left === "busy") {
-      opError = friendlyError("Operation canceled — could not save your unsaved edits.");
+      opError = friendlyError(leaveRefusal("Operation", left));
       return;
     }
     const wasActiveLeaf = activePath !== null && samePath(activePath, leaf);
