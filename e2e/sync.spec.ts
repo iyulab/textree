@@ -8,7 +8,7 @@ import {
   readVaultFile,
   listVaultDir,
 } from "./helpers";
-import { rmSync } from "node:fs";
+import { chmodSync, rmSync } from "node:fs";
 import { join } from "node:path";
 
 let browser: Browser;
@@ -145,6 +145,64 @@ test("deleted outside while editing: leaving is refused until I choose, then dis
     await page.getByRole("treeitem", { name: /other/ }).click();
     await expect(page.locator(".cm-content")).toContainText("other");
   } finally {
+    removeTempVault(vault);
+  }
+});
+
+/** Open `stuck.md`, make it unwritable, and type — the save fails and the edits exist only on screen. */
+async function failWhileEditing(vault: string): Promise<void> {
+  await loadVault(page, vault);
+  await page.getByRole("treeitem", { name: /stuck/ }).click();
+  await expect(page.locator(".cm-content")).toContainText("before");
+  chmodSync(join(vault, "stuck.md"), 0o444);
+  await page.locator(".cm-content").click();
+  await page.keyboard.press("Control+End");
+  await page.keyboard.type(" typed after");
+  await expect(page.getByTestId("save-failed-banner")).toBeVisible();
+}
+
+test("a failed save: leaving is refused, and trying again once it can be written saves the edits", async () => {
+  const vault = createTempVault({ "stuck.md": "before\n", "other.md": "# other\n" });
+  try {
+    await failWhileEditing(vault);
+
+    await page.getByRole("treeitem", { name: /other/ }).click();
+
+    await expect(page.getByTestId("save-failed-banner")).toHaveClass(/attention/);
+    await expect
+      .poll(() => page.evaluate(() => (document.activeElement as HTMLElement | null)?.dataset.testid))
+      .toBe("save-failed-banner");
+    await expect(page.locator(".cm-content")).toContainText("before typed after");
+    expect(readVaultFile(vault, "stuck.md")).toBe("before\n");
+
+    chmodSync(join(vault, "stuck.md"), 0o644);
+    await page.getByRole("button", { name: "Try again" }).click();
+
+    await expect(page.getByTestId("save-failed-banner")).toHaveCount(0);
+    await expect.poll(() => readVaultFile(vault, "stuck.md")).toMatch(/^before\s*typed after/);
+    await page.getByRole("treeitem", { name: /other/ }).click();
+    await expect(page.locator(".cm-content")).toContainText("other");
+  } finally {
+    chmodSync(join(vault, "stuck.md"), 0o644);
+    removeTempVault(vault);
+  }
+});
+
+test("a failed save: discarding the edits goes back to what was saved and lets me leave", async () => {
+  const vault = createTempVault({ "stuck.md": "before\n", "other.md": "# other\n" });
+  try {
+    await failWhileEditing(vault);
+
+    await page.getByRole("button", { name: "Discard my edits" }).click();
+
+    await expect(page.getByTestId("save-failed-banner")).toHaveCount(0);
+    await expect(page.locator(".cm-content")).toContainText("before");
+    await expect(page.locator(".cm-content")).not.toContainText("typed after");
+    await page.getByRole("treeitem", { name: /other/ }).click();
+    await expect(page.locator(".cm-content")).toContainText("other");
+    expect(readVaultFile(vault, "stuck.md")).toBe("before\n");
+  } finally {
+    chmodSync(join(vault, "stuck.md"), 0o644);
     removeTempVault(vault);
   }
 });

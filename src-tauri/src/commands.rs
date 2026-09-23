@@ -376,6 +376,11 @@ pub fn write_note(
 ) -> Result<WriteOutcome, String> {
     let root = PathBuf::from(root);
     let path = PathBuf::from(path);
+    // The whole folder is gone — the note with it. Nothing can be written, nothing is.
+    if !root.is_dir() {
+        log::info!("write_note: the folder {} is gone; not written", root.display());
+        return Ok(WriteOutcome::Conflict { disk: None });
+    }
     // Not `is_within`: that needs the note to exist, and a note deleted outside the app (with or
     // without its folder) must come back as "gone" below, not as an error about where it is.
     if crate::pathsafe::rel_within(&root, &path).is_none() {

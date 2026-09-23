@@ -106,6 +106,9 @@
   let pendingHeading = $state<string | null>(null);
   let dirty = $state(false);
   let saveError = $state<FriendlyError | null>(null);
+  // The last save of the open note's edits failed and they are still unsaved. Kept apart from
+  // `saveError`, which other failures (a pasted image, a canceled rename) also report through.
+  let saveFailure = $state<FriendlyError | null>(null);
   let startupError = $state<string | null>(null);
   // Path of a previously-opened vault that could not be reopened at startup (moved, deleted, or on a
   // disconnected drive). Set instead of silently creating a new default — that could mask a temporary
@@ -188,6 +191,7 @@
       const outcome = await writeNote(root, job.path, job.text, job.base);
       if (outcome.kind === "conflict") {
         saveError = null;
+        saveFailure = null;
         // Answered while this save was in flight (e.g. they took the copy on disk): nothing to ask.
         if (job.path !== activePath || !pending) return;
         if (outcome.disk === null) markActiveRemoved();
@@ -204,9 +208,11 @@
         pending.base = job.text; // the newer edit now starts from what this save put on disk
       }
       saveError = null;
+      saveFailure = null;
     } catch (e) {
       // Keep pending → retryable. Surface to the user (friendly summary, raw kept for diagnosis).
       saveError = friendlyError(e);
+      saveFailure = saveError;
     }
   }
 
@@ -214,7 +220,8 @@
    * Save before leaving the open note — switching to another, changing vault, restructuring, or
    * closing. `asking` means a question about the unsaved edits is still open — which copy wins, or
    * whether to put back a note that was deleted elsewhere: the caller must not leave, because
-   * leaving would drop the edits. The banner is drawn to their attention.
+   * leaving would drop the edits. `failed` means the edits could not be saved; the caller must
+   * not leave either. Either way a banner is drawn to their attention.
    */
   async function saveBeforeLeaving(): Promise<"saved" | "asking" | "failed"> {
     await flush();
@@ -227,11 +234,24 @@
       void drawAttentionToRemoved();
       return "asking";
     }
+    // The save failed: the edits exist only in the editor. Leaving would drop them, so the caller
+    // stays; the banner offers another try or letting them go.
+    void drawAttentionToFailure();
     return "failed";
   }
 
   let conflictAttention = $state(false);
   let conflictBanner = $state<HTMLElement | null>(null);
+
+  let failureAttention = $state(false);
+  let failureBanner = $state<HTMLElement | null>(null);
+
+  async function drawAttentionToFailure() {
+    failureAttention = false;
+    await tick();
+    failureAttention = true;
+    failureBanner?.focus();
+  }
 
   let removedAttention = $state(false);
   let removedBanner = $state<HTMLElement | null>(null);
@@ -277,10 +297,10 @@
   }
 
   /** Open a vault path and load the tree (separate from the dialog — reused by the test bridge). */
-  /** Returns false when the switch did not happen: the open note is waiting on an answer. */
+  /** Returns false when the switch did not happen: the open note's edits are not saved yet. */
   async function loadVault(path: string): Promise<boolean> {
     // preserve unsaved edits before switching vault
-    if ((await saveBeforeLeaving()) === "asking") return false;
+    if ((await saveBeforeLeaving()) !== "saved") return false;
     root = path;
     tree = await openVault(path);
     // When the vault changes, the previous vault's selection, open note, and edit-mode context are invalid.
@@ -598,7 +618,7 @@
     if (!root) return;
     pendingHeading = null; // a direct open does not scroll to a heading (cleared before the open)
     // preserve unsaved edits of the previous note before navigating anywhere
-    if ((await saveBeforeLeaving()) === "asking") return;
+    if ((await saveBeforeLeaving()) !== "saved") return;
     if (!node.body_path) {
       // A container with no folder note → show only its table; clear any stale open note so an
       // unrelated note doesn't linger above the folder's table.
@@ -684,6 +704,7 @@
     // Since we discard the edit context (including unsaved pending), the previous save error is no
     // longer valid either. If not cleared, a stale error persists after vault switch/note close.
     saveError = null;
+    saveFailure = null;
     removed = false;
     conflictDisk = null;
     // What the last version attempt came to was about the note being left, not this one.
@@ -898,12 +919,14 @@
     dirty = false;
     pending = null;
     saveError = null;
+    saveFailure = null;
     removed = false; // return to normal state if re-created after external deletion
   }
 
   /** The open note was moved or deleted outside the app. */
   function markActiveRemoved() {
     removed = true;
+    saveFailure = null; // the note being gone is the question now, not the failed save
     conflictDisk = null; // avoid showing alongside the conflict banner (deletion takes priority)
     conflictAttention = false;
     // Unsaved edits stay in the editor. The file is gone, but what they typed since the last save
@@ -955,6 +978,16 @@
     } catch (e) {
       saveError = friendlyError(e); // the edits stay where they are; the banner stays too
     }
+  }
+
+  /** Save-failure banner: let the unsaved edits go — the note goes back to what it last saved. */
+  function resolveDiscardUnsaved() {
+    if (saveTimer) {
+      clearTimeout(saveTimer);
+      saveTimer = null;
+    }
+    failureAttention = false;
+    applyReload(synced);
   }
 
   /** Removed-note banner: let the unsaved edits go. */
@@ -1774,6 +1807,22 @@
           <span class="banner-actions">
             <button onclick={resolveTakeDisk}>Load the copy on disk</button>
             <button onclick={resolveKeepMine}>Keep my edits</button>
+          </span>
+        </div>
+      {/if}
+      {#if saveFailure && dirty && !removed && conflictDisk === null}
+        <div
+          class="banner"
+          class:attention={failureAttention}
+          role="alert"
+          tabindex="-1"
+          data-testid="save-failed-banner"
+          bind:this={failureBanner}
+        >
+          <span>Your latest edits could not be saved: {saveFailure.summary}</span>
+          <span class="banner-actions">
+            <button onclick={() => void flush()}>Try again</button>
+            <button onclick={resolveDiscardUnsaved}>Discard my edits</button>
           </span>
         </div>
       {/if}

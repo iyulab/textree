@@ -155,19 +155,29 @@ export async function connectToApp(): Promise<{ browser: Browser; page: Page }> 
 }
 
 /**
- * Open a vault via the dev bridge, bypassing the dialog. Fails loudly when the app refused to
- * switch — it does while the open note waits on a conflict answer, and a test that left one open
- * would otherwise make the next test run against the wrong folder.
+ * Open a vault via the dev bridge, bypassing the dialog.
+ *
+ * The app refuses to switch while the open note's edits are unsaved and a question about them is
+ * open. A spec that tears its vault down with edits still pending leaves exactly that behind — the
+ * note (the whole folder) is gone, or the save into it failed — so those two are answered here by
+ * letting the edits go: they belonged to a folder that no longer exists. A conflict left open is a
+ * different matter — a spec forgot to answer it — and fails loudly, since the next test would
+ * otherwise run against the wrong folder.
  */
 export async function loadVault(page: Page, vaultPath: string): Promise<void> {
-  const switched = await page.evaluate(
-    (v) =>
-      (window as unknown as { __textreeTest: { loadVault: (p: string) => Promise<boolean> } }).__textreeTest.loadVault(v),
-    vaultPath,
-  );
-  if (!switched) {
-    throw new Error("The app did not switch folders: the open note is waiting on a conflict answer.");
+  const tryLoad = () =>
+    page.evaluate(
+      (v) =>
+        (window as unknown as { __textreeTest: { loadVault: (p: string) => Promise<boolean> } }).__textreeTest.loadVault(v),
+      vaultPath,
+    );
+  if (await tryLoad()) return;
+  const leftover = page.locator('[data-testid="removed-banner"], [data-testid="save-failed-banner"]');
+  if ((await leftover.count()) > 0) {
+    await leftover.getByRole("button", { name: "Discard my edits" }).click();
+    if (await tryLoad()) return;
   }
+  throw new Error("The app did not switch folders: the open note is waiting on an answer.");
 }
 
 /**
