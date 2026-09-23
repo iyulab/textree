@@ -305,3 +305,33 @@ describe("NoteSave — moving the open note", () => {
     expect(h.save.pending?.path).toBe("A.md");
   });
 });
+
+describe("NoteSave — unsaved marker", () => {
+  it("reopening the open note while its edits are still saving keeps it marked unsaved", async () => {
+    const h = harness();
+    h.save.opened("a0");
+    h.save.schedule("A.md", "a1");
+    h.open("A.md", "a0"); // opened again before the save ran
+    expect(h.state.dirty).toBe(true);
+    void h.save.flush();
+    await settle();
+    h.calls[0].settle(written);
+    await settle();
+    expect(h.state.dirty).toBe(false);
+  });
+
+  it("an edit to the note being left does not mark the next one unsaved", async () => {
+    const h = harness();
+    h.save.schedule("A.md", "a1");
+    h.open("B.md", "b0");
+    expect(h.state.dirty).toBe(false);
+    expect(h.save.pending?.path).toBe("A.md");
+  });
+
+  it("follows the open note through a move", async () => {
+    const h = harness();
+    h.save.schedule("A.md", "a1");
+    await h.save.move(async () => (p) => (p === "A.md" ? "dest/A.md" : p));
+    expect(h.state.dirty).toBe(true);
+  });
+});

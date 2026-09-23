@@ -819,13 +819,13 @@
         createNoteWithContent(vault, vault, stem, text),
       );
       const moved = !pathInside(created, path);
-      save.putBack(text, moved ? created : null);
-      removedAttention = false;
       if (moved) {
         content = save.pending?.text ?? text; // the editor is recreated for the new path
         activePath = created;
         activeName = noteStem(created);
       }
+      save.putBack(text, moved ? created : null); // after the path: it follows the open note
+      removedAttention = false;
       await refreshTree();
       if (save.pending) void save.flush();
     } catch (e) {

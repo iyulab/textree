@@ -20,7 +20,7 @@ export interface PendingEdit {
 
 /** What the page shows about the open note's saving. */
 export interface NoteSaveState {
-  /** The open note has edits that are not on disk yet. */
+  /** The open note has edits that are not on disk yet. Follows the pending edit — never set apart. */
   dirty: boolean;
   /** The last failure to report — a save, but also anything else the page reports through it. */
   saveError: FriendlyError | null;
@@ -117,7 +117,7 @@ export class NoteSave {
     }
     const base = this.#pending?.path === path ? this.#pending.base : this.#synced;
     this.#pending = { path, text, base };
-    this.state.dirty = true;
+    this.#syncDirty();
     this.deps.edited?.();
     this.#cancelTimer();
     this.#timer = setTimeout(() => {
@@ -176,9 +176,9 @@ export class NoteSave {
    */
   opened(text: string): void {
     this.#synced = text;
-    this.state.dirty = false;
     this.state.removed = false;
     this.state.conflictDisk = null;
+    this.#syncDirty(); // an edit still pending for this very note keeps it unsaved
   }
 
   /** The editor was closed and its unsaved edits with it. */
@@ -186,7 +186,7 @@ export class NoteSave {
     this.#cancelTimer();
     this.#pending = null;
     this.#synced = "";
-    this.state.dirty = false;
+    this.#syncDirty();
     // The edit context is gone, so the errors about it are too.
     this.state.saveError = null;
     this.state.saveFailure = null;
@@ -198,7 +198,7 @@ export class NoteSave {
   reloaded(text: string): void {
     this.#synced = text;
     this.#pending = null;
-    this.state.dirty = false;
+    this.#syncDirty();
     this.state.saveError = null;
     this.state.saveFailure = null;
     this.state.removed = false; // back to normal if it was re-created after being deleted
@@ -211,7 +211,7 @@ export class NoteSave {
     this.state.conflictDisk = null; // deletion takes priority over a conflict
     // Unsaved edits stay in the editor. The file is gone, but what they typed since the last save
     // exists nowhere else — they decide whether to put the note back with it or let it go.
-    if (!this.#pending) this.state.dirty = false;
+    this.#syncDirty();
     this.deps.removed?.();
   }
 
@@ -254,7 +254,7 @@ export class NoteSave {
   discardRemoved(): void {
     this.#cancelTimer();
     this.#pending = null;
-    this.state.dirty = false;
+    this.#syncDirty();
   }
 
   /**
@@ -265,11 +265,11 @@ export class NoteSave {
     this.#synced = text;
     if (this.#pending?.text === text) {
       this.#pending = null;
-      this.state.dirty = false;
     } else if (this.#pending) {
       this.#pending.base = text;
     }
     if (movedTo !== null && this.#pending) this.#pending.path = movedTo;
+    this.#syncDirty();
     this.state.removed = false;
     this.state.saveError = null;
   }
@@ -285,7 +285,13 @@ export class NoteSave {
       const remap = await relocate();
       if (this.#pending) this.#pending.path = remap(this.#pending.path);
       this.deps.moved?.(remap);
+      this.#syncDirty();
     });
+  }
+
+  #syncDirty(): void {
+    const open = this.deps.activePath();
+    this.state.dirty = this.#pending !== null && open !== null && this.#pending.path === open;
   }
 
   #enqueue(job: () => Promise<void>): Promise<void> {
@@ -330,7 +336,7 @@ export class NoteSave {
       if (job.path === active) this.#synced = job.text;
       if (this.#pending === job) {
         this.#pending = null;
-        s.dirty = false;
+        this.#syncDirty();
       } else if (this.#pending?.path === job.path) {
         this.#pending.base = job.text; // the newer edit now starts from what this save put on disk
       }
