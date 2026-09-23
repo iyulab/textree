@@ -335,20 +335,54 @@ pub fn read_note(root: String, path: String) -> Result<String, String> {
     std::fs::read_to_string(&path).map_err(|e| e.to_string())
 }
 
+/// What became of a save.
+#[derive(Debug, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum WriteOutcome {
+    /// The note now holds the new content.
+    Written,
+    /// The note no longer held what the save was based on, so nothing was written. `disk` is what
+    /// it holds instead, or `None` when it is gone.
+    Conflict { disk: Option<String> },
+}
+
+/// Why a save would not replace the note, if it would not: the note must still hold `expected`,
+/// the content the editor and disk last agreed on. Anything else means someone changed it since,
+/// and writing would silently throw that change away.
+///
+/// The check and the rename are not one atomic step — nothing on an ordinary filesystem offers
+/// that — but they are microseconds apart in one process, instead of the round trip between the
+/// editor reading a note and its next save arriving.
+fn stale_base(path: &Path, expected: &str) -> io::Result<Option<WriteOutcome>> {
+    match std::fs::read_to_string(path) {
+        Ok(disk) if disk == expected => Ok(None),
+        Ok(disk) => Ok(Some(WriteOutcome::Conflict { disk: Some(disk) })),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => {
+            Ok(Some(WriteOutcome::Conflict { disk: None }))
+        }
+        Err(e) => Err(e),
+    }
+}
+
 #[tauri::command]
 pub fn write_note(
     root: String,
     path: String,
     content: String,
+    expected: String,
     self_writes: State<'_, Arc<SelfWrites>>,
     index: State<'_, Arc<IndexHandle>>,
     host: State<'_, Arc<host::HostHandle>>,
-) -> Result<(), String> {
+) -> Result<WriteOutcome, String> {
     let root = PathBuf::from(root);
     let path = PathBuf::from(path);
     if !is_within(&root, &path) {
         log::warn!("write_note: rejected unsafe path: {}", path.display());
         return Err("path is outside the vault".into());
+    }
+    if let Some(conflict) = stale_base(&path, &expected).map_err(|e| e.to_string())? {
+        log::info!("write_note: {} changed since it was loaded; not written", path.display());
+        return Ok(conflict);
     }
     // Must register "just before" writing: if the watcher receives the event before
     // record runs right after the write hits disk, an echo loop forms (design §4.1).
@@ -368,7 +402,7 @@ pub fn write_note(
             tauri::async_runtime::spawn_blocking(move || {
                 host::index_note(&host_arc, &v, &p);
             });
-            Ok(())
+            Ok(WriteOutcome::Written)
         }
         Err(e) => {
             // On write failure the disk did not change, so remove the stale registration
@@ -1468,6 +1502,48 @@ pub fn restore_deleted(root: String, rel: String) -> Result<RestoredNote, String
 mod tests {
     use super::*;
     use tempfile::TempDir;
+
+    #[test]
+    fn stale_base_allows_a_save_while_the_note_still_holds_its_base() {
+        let tmp = TempDir::new().unwrap();
+        let note = tmp.path().join("a.md");
+        std::fs::write(&note, "loaded
+").unwrap();
+        assert_eq!(stale_base(&note, "loaded
+").unwrap(), None);
+    }
+
+    #[test]
+    fn stale_base_refuses_a_save_over_a_change_made_elsewhere() {
+        let tmp = TempDir::new().unwrap();
+        let note = tmp.path().join("a.md");
+        std::fs::write(&note, "changed elsewhere").unwrap();
+        assert_eq!(
+            stale_base(&note, "loaded").unwrap(),
+            Some(WriteOutcome::Conflict { disk: Some("changed elsewhere".into()) })
+        );
+    }
+
+    #[test]
+    fn stale_base_reports_a_note_that_is_gone() {
+        let tmp = TempDir::new().unwrap();
+        assert_eq!(
+            stale_base(&tmp.path().join("gone.md"), "loaded").unwrap(),
+            Some(WriteOutcome::Conflict { disk: None })
+        );
+    }
+
+    #[test]
+    fn write_outcome_crosses_the_boundary_as_a_tagged_object() {
+        assert_eq!(
+            serde_json::to_value(WriteOutcome::Written).unwrap(),
+            serde_json::json!({ "kind": "written" })
+        );
+        assert_eq!(
+            serde_json::to_value(WriteOutcome::Conflict { disk: None }).unwrap(),
+            serde_json::json!({ "kind": "conflict", "disk": null })
+        );
+    }
 
     fn seed_note(root: &Path, rel: &str, body: &str) -> String {
         let target = root.join(rel);

@@ -40,12 +40,23 @@ export async function readNote(root: string, path: string): Promise<string> {
   return invoke<string>("read_note", { root, path });
 }
 
+/**
+ * What became of a save. `conflict` means nothing was written: the note no longer held `expected`
+ * (someone changed it since), and `disk` is what it holds now — or `null` when it is gone.
+ */
+export type WriteOutcome = { kind: "written" } | { kind: "conflict"; disk: string | null };
+
+/**
+ * Replaces a note's content, but only while it still holds `expected` — the content the editor
+ * and disk last agreed on. A save never overwrites a change it has not seen.
+ */
 export async function writeNote(
   root: string,
   path: string,
   content: string,
-): Promise<void> {
-  return invoke<void>("write_note", { root, path, content });
+  expected: string,
+): Promise<WriteOutcome> {
+  return invoke<WriteOutcome>("write_note", { root, path, content, expected });
 }
 
 /**
