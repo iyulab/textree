@@ -347,10 +347,76 @@ pub(crate) fn place_restored(root: &Path, rel: &str) -> io::Result<PathBuf> {
     Ok(unique_in(parent, file_name, false))
 }
 
+/// Answers "is this file there?" for many files by listing each folder once, instead of asking
+/// the filesystem about every file. On Windows a per-file check costs tens of microseconds, so
+/// ten thousand of them cost the better part of a second — while the folders holding them list in
+/// a few milliseconds.
+///
+/// Names are compared the way the platform's filesystem compares them by default: ignoring case
+/// on Windows and macOS, exactly elsewhere — so the answer is the one a per-file check would give.
+#[derive(Default)]
+pub(crate) struct PresentFiles {
+    folders: std::collections::HashMap<PathBuf, Option<std::collections::HashSet<String>>>,
+}
+
+impl PresentFiles {
+    fn key(name: &std::ffi::OsStr) -> String {
+        let name = name.to_string_lossy();
+        if cfg!(any(windows, target_os = "macos")) {
+            name.to_lowercase()
+        } else {
+            name.into_owned()
+        }
+    }
+
+    /// Whether a file (not a folder) is at `path`.
+    pub(crate) fn contains(&mut self, path: &Path) -> bool {
+        let (Some(folder), Some(name)) = (path.parent(), path.file_name()) else {
+            return path.is_file();
+        };
+        let listing = self.folders.entry(folder.to_path_buf()).or_insert_with(|| {
+            let entries = std::fs::read_dir(folder).ok()?;
+            Some(
+                entries
+                    .flatten()
+                    .filter(|e| e.file_type().map(|t| !t.is_dir()).unwrap_or(false))
+                    .map(|e| Self::key(&e.file_name()))
+                    .collect(),
+            )
+        });
+        listing.as_ref().is_some_and(|names| names.contains(&Self::key(name)))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use tempfile::TempDir;
+
+    #[test]
+    fn present_files_agrees_with_a_per_file_check() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join("a/b")).unwrap();
+        std::fs::write(root.join("a/one.md"), "").unwrap();
+        std::fs::write(root.join("a/b/two.md"), "").unwrap();
+        std::fs::write(root.join("Mixed.md"), "").unwrap();
+
+        let mut present = PresentFiles::default();
+        for rel in [
+            "a/one.md",
+            "a/b/two.md",
+            "Mixed.md",
+            "mixed.md",
+            "a/missing.md",
+            "gone/folder.md",
+            "a/b",
+            "a/b/two.md/deeper.md",
+        ] {
+            let path = root.join(rel);
+            assert_eq!(present.contains(&path), path.is_file(), "{rel}");
+        }
+    }
 
     #[test]
     fn place_restored_creates_nothing_when_the_destination_is_refused() {

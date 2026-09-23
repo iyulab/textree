@@ -1139,6 +1139,7 @@ pub fn deleted_notes(root: String) -> Result<Vec<DeletedNote>, String> {
     // asked anything, and only about those — the ones still in the folder have no question to
     // answer, and there are usually far more of them.
     let mut missing: Vec<(String, String)> = Vec::new();
+    let mut present = crate::fs_ops::PresentFiles::default();
     for in_repo in recorded_paths.iter().cloned().chain(
         crate::git_engine::tip_paths(repo, crate::git_engine::SNAPSHOT_REF)
             .map_err(|e| e.message().to_string())?,
@@ -1147,7 +1148,7 @@ pub fn deleted_notes(root: String) -> Result<Vec<DeletedNote>, String> {
             // Something the enclosing repository holds outside this folder.
             continue;
         };
-        if root_p.join(&rel).exists() {
+        if present.contains(&root_p.join(&rel)) {
             continue;
         }
         missing.push((in_repo, rel.to_string_lossy().replace('\\', "/")));

@@ -179,3 +179,105 @@ fn asking_about_a_note_named_by_both_references_still_stops_early() {
         "the newest revisions hold the answer, so the walk should stop within a few of them;          it visited {visited} of 41"
     );
 }
+
+/// A vault holding `notes` notes, `per_folder` to a folder, all recorded in one revision.
+fn vault_of_size(notes: usize, per_folder: usize) -> TempDir {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path();
+    let repo = Repository::init(root).unwrap();
+    let (author, committer) = commit_identities(&repo).unwrap();
+    let mut entries = Vec::with_capacity(notes);
+    for note in 0..notes {
+        let rel = PathBuf::from(format!("folder-{}", note / per_folder)).join(format!("note-{note}.md"));
+        let body = format!("# note {note}\n\nsome text\n").into_bytes();
+        std::fs::create_dir_all(root.join(rel.parent().unwrap())).unwrap();
+        std::fs::write(root.join(&rel), &body).unwrap();
+        entries.push((rel, body));
+    }
+    commit_paths(&repo, NOTES_REF, &entries, "everything", &author, &committer, WhenUnchanged::Skip)
+        .unwrap();
+    tmp
+}
+
+/// The other axis: how the foreground grows with how many notes the vault holds. The history is
+/// one revision here, so what is measured is the size of the tree alone.
+#[test]
+#[ignore = "reports timings rather than asserting; run with --ignored to take the numbers"]
+fn measure_foreground_against_tree_size() {
+    println!("notes | per folder | list_tree | read_note | add version | note_versions | deleted_notes");
+    for (notes, per_folder) in [
+        (1_000usize, 100usize),
+        (5_000, 100),
+        (10_000, 100),
+        (1_000, 1_000),
+        (5_000, 5_000),
+        (10_000, 10_000),
+    ] {
+        let tmp = vault_of_size(notes, per_folder);
+        let root = tmp.path().to_string_lossy().to_string();
+        let one = tmp.path().join("folder-0").join("note-0.md");
+        let one_s = one.to_string_lossy().to_string();
+        crate::commands::delete_node(
+            root.clone(),
+            tmp.path().join("folder-0").join("note-1.md").to_string_lossy().to_string(),
+        )
+        .unwrap();
+
+        let listing = millis(|| {
+            crate::commands::list_tree(root.clone()).unwrap();
+        });
+        let read = millis(|| {
+            crate::commands::read_note(root.clone(), one_s.clone()).unwrap();
+        });
+        let add = millis(|| {
+            let repo = Repository::open(tmp.path()).unwrap();
+            let (author, committer) = commit_identities(&repo).unwrap();
+            let rel = PathBuf::from("folder-0").join("note-0.md");
+            commit_paths(
+                &repo,
+                NOTES_REF,
+                &[(rel, b"# note 0\n\nchanged\n".to_vec())],
+                "one note",
+                &author,
+                &committer,
+                WhenUnchanged::Skip,
+            )
+            .unwrap();
+        });
+        let history = millis(|| {
+            note_versions(root.clone(), one_s.clone()).unwrap();
+        });
+        let deleted = millis(|| {
+            deleted_notes(root.clone()).unwrap();
+        });
+        println!(
+            "{notes:>5} | {per_folder:>10} | {listing:>9} | {read:>9} | {add:>11} | {history:>13} | {deleted:>13}"
+        );
+    }
+}
+
+#[test]
+#[ignore = "reports timings rather than asserting; run with --ignored to take the numbers"]
+fn measure_where_the_deleted_list_spends_its_time() {
+    let tmp = vault_of_size(10_000, 100);
+    let repo = Repository::open(tmp.path()).unwrap();
+    let mut paths = Vec::new();
+    let walk = millis(|| {
+        paths = crate::git_engine::tip_paths(&repo, NOTES_REF).unwrap();
+    });
+    let stat = millis(|| {
+        for p in &paths {
+            let _ = tmp.path().join(p).exists();
+        }
+    });
+    let listing = millis(|| {
+        let mut seen = 0usize;
+        for dir in std::fs::read_dir(tmp.path()).unwrap().flatten() {
+            if dir.path().is_dir() {
+                seen += std::fs::read_dir(dir.path()).unwrap().count();
+            }
+        }
+        assert!(seen >= 10_000);
+    });
+    println!("tip_paths walk {walk} ms · exists() x{} {stat} ms · read_dir per folder {listing} ms", paths.len());
+}
