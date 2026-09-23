@@ -531,7 +531,7 @@
     const left = await saveBeforeLeaving(); // preserve unsaved edits before rename
     if (left === "asking") return;
     if (left === "failed" || left === "busy") {
-      saveError = friendlyError(leaveRefusal("Rename", left));
+      opError = friendlyError(leaveRefusal("Rename", left)); // like its failure below: a refusal is not a failed save
       return;
     }
     try {
