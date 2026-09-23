@@ -31,14 +31,14 @@ notify-debouncer-full = "0.7.0"
 base64 = "0.22"
 # Full-text index over note bodies. An n-gram tokenizer gives partial matches in scripts
 # that do not separate words with spaces.
-tantivy = "0.22"
+tantivy = "0.26"
 # Hashes the vault root path into an index directory name, and builds the PKCE S256 challenge.
 sha2 = "0.10"
 # In-app web-publish auth (slice 2c): CSPRNG for the PKCE code_verifier + loopback state nonce.
 getrandom = "0.2"
 tauri-plugin-process = "2.3.1"
 # Lightweight blocking HTTP for loopback sidecar health-check; no TLS needed.
-ureq = { version = "2.10", features = ["json"] }
+ureq = { version = "3", features = ["json"] }
 # Windows Credential Manager for BYO API keys - never written to disk in plaintext.
 keyring = "4.2"
 # Structured logging to the OS app log directory (app_log_dir). The `log` facade
@@ -48,7 +48,7 @@ tauri-plugin-log = "2"
 # Zip the locally-rendered canopy bundle before uploading it to api.textree.me/publish (slice 2b).
 # Deflate-only: we just Deflate-compress the bundle, so drop the default features (bzip2/lzma/zstd/aes,
 # some needing a native toolchain) to keep the supply-chain/attack surface minimal.
-zip = { version = "2", default-features = false, features = ["deflate"] }
+zip = { version = "8", default-features = false, features = ["deflate"] }
 # Embedded git engine. The C library is vendored and statically linked into the executable;
 # it is never shipped as a separate artifact. The feature set is deliberately minimal — no
 # `https` and no `ssh` — so no TLS or SSH native libraries enter the binary. The

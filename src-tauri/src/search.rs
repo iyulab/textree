@@ -147,7 +147,7 @@ pub fn search(index: &Index, f: &Fields, query: &str, limit: usize) -> tantivy::
     let Ok(q) = parser.parse_query(query) else {
         return Ok(Vec::new());
     };
-    let top = searcher.search(&q, &TopDocs::with_limit(limit))?;
+    let top = searcher.search(&q, &TopDocs::with_limit(limit).order_by_score())?;
     let mut snippet_gen = SnippetGenerator::create(&searcher, &q, f.body)?;
     snippet_gen.set_max_num_chars(160);
 
