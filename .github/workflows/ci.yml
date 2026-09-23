@@ -46,6 +46,12 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # Gate on what ships: runtime dependencies end up in the app bundle, dev tooling does not.
+      # Known advisories in dev tooling are reported by `npm audit` locally but do not fail CI;
+      # a high-severity advisory in a runtime dependency does.
+      - name: No high-severity advisories in runtime dependencies
+        run: npm audit --omit=dev --audit-level=high
+
       # Third-party notices are generated from the shipped dependency graphs, so they
       # go stale the moment a dependency is added or bumped. This reads metadata only
       # (no build), which is why it can run first and fail fast.
