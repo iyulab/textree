@@ -1,5 +1,5 @@
-//! Shared plumbing for the OS credential store: store initialisation and the namespacing that
-//! keeps non-shipping builds off a real user's secrets.
+//! Shared plumbing for the OS credential store: the namespacing that keeps non-shipping builds off
+//! a real user's secrets.
 //!
 //! Secrets live under one fixed entry per kind, so anything that writes or clears an entry writes
 //! or clears *the* entry — the one the installed app uses. That is a data-safety problem well
@@ -24,33 +24,6 @@ const TEST_NAMESPACE: &str = "test";
 
 /// Namespace every non-shipping build compiles against, `tauri dev` included.
 const DEV_NAMESPACE: &str = "dev";
-
-/// Work around a confirmed upstream bug in `keyring` 4.1.3's `v1` convenience shim: its
-/// `Entry::new()` is supposed to lazily call an internal `set_credential_store()` on first use
-/// (mirroring this exact init), but the guard that gates that call is
-/// `AtomicBool::compare_exchange(false, true, ..) == Ok(true)` — which can never be `true`
-/// (a successful swap returns `Ok(<previous value>)`, i.e. `Ok(false)` on the first call, and a
-/// failed one returns `Err(true)` on every call after). So the branch is dead code and no
-/// default store is ever installed: bare `keyring::Entry::new/get_password/set_password` fail
-/// on every platform with `Error::NoDefaultStore` ("No default store has been set"). Confirmed
-/// empirically in this environment (both round-trip tests failed with that exact message) and
-/// by isolating the `compare_exchange` call in a standalone repro. Fixed keyring release: none
-/// as of 4.1.3 (latest on the `4` line at the time of writing).
-///
-/// We replicate the shim's own (otherwise-correct) init body ourselves, once per process.
-/// Windows-only: textree ships on Windows only (see the windows-gated deps elsewhere in this
-/// crate, e.g. `tauri-plugin-updater` in `lib.rs`), and `windows-native-keyring-store` is a
-/// `cfg(windows)`-only Cargo dependency. On a hypothetical non-Windows build this is a no-op,
-/// leaving `keyring::Entry` to surface the same upstream `NoDefaultStore` error it does today.
-pub(crate) fn ensure_store() {
-    static INIT: std::sync::Once = std::sync::Once::new();
-    INIT.call_once(|| {
-        #[cfg(windows)]
-        if let Ok(store) = windows_native_keyring_store::Store::new() {
-            keyring_core::set_default_store(store);
-        }
-    });
-}
 
 /// Appends a namespace to a service name. `None` and blank namespaces leave the name untouched,
 /// so the shipped app keeps using the entry it has always used.

@@ -178,7 +178,7 @@ distributed.
 | `json-patch` | 3.0.1 | MIT/Apache-2.0 | https://github.com/idubrov/json-patch |
 | `jsonptr` | 0.6.3 | MIT OR Apache-2.0 | https://github.com/chanced/jsonptr |
 | `keyboard-types` | 0.7.0 | MIT OR Apache-2.0 | https://github.com/pyfisch/keyboard-types |
-| `keyring` | 4.1.3 | MIT OR Apache-2.0 | https://github.com/open-source-cooperative/keyring-rs |
+| `keyring` | 4.2.0 | MIT OR Apache-2.0 | https://github.com/open-source-cooperative/keyring-rs |
 | `keyring-core` | 1.0.0 | MIT OR Apache-2.0 | https://github.com/open-source-cooperative/keyring-core.git |
 | `levenshtein_automata` | 0.2.1 | MIT | https://github.com/tantivy-search/levenshtein-automata |
 | `libc` | 0.2.186 | MIT OR Apache-2.0 | https://github.com/rust-lang/libc |

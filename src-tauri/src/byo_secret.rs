@@ -1,4 +1,4 @@
-use crate::secret_store::{ensure_store, service_name};
+use crate::secret_store::service_name;
 use keyring::Entry;
 
 const SERVICE: &str = "com.textree.byo";
@@ -13,14 +13,12 @@ fn service() -> String {
 /// Store the BYO API key in the OS credential store. Never touches disk in plaintext (
 /// secrets are not written to `.md`/sidecar JSON/localStorage).
 pub fn set_api_key(key: &str) -> Result<(), String> {
-    ensure_store();
     let entry = Entry::new(&service(), ACCOUNT).map_err(|e| e.to_string())?;
     entry.set_password(key).map_err(|e| e.to_string())
 }
 
 /// Delete the stored key, if any. No-op-safe when nothing is stored.
 pub fn clear_api_key() -> Result<(), String> {
-    ensure_store();
     let entry = Entry::new(&service(), ACCOUNT).map_err(|e| e.to_string())?;
     match entry.delete_credential() {
         Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
@@ -37,7 +35,6 @@ pub fn has_api_key() -> bool {
 /// Retrieve the plaintext key for internal use only (spawning the host with it as an env var).
 /// Not exposed as a Tauri command — callers are Rust-side only (see host.rs restart/prepare).
 pub fn get_api_key() -> Option<String> {
-    ensure_store();
     let entry = Entry::new(&service(), ACCOUNT).ok()?;
     entry.get_password().ok()
 }

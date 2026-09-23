@@ -2330,9 +2330,9 @@ dependencies = [
 
 [[package]]
 name = "keyring"
-version = "4.1.3"
+version = "4.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d1daef93704e6f6506d5b273175189bf8a5e00371930387fb77fd871e15c0d94"
+checksum = "2270074a3d26bcac93c1dc5d2845eb4c089e8d761ccf6e0ea266a16004640627"
 dependencies = [
  "apple-native-keyring-store",
  "keyring-core",
@@ -5023,7 +5023,6 @@ dependencies = [
  "getrandom 0.2.17",
  "git2",
  "keyring",
- "keyring-core",
  "log",
  "notify-debouncer-full",
  "serde",
@@ -5039,7 +5038,6 @@ dependencies = [
  "tauri-plugin-updater",
  "tempfile",
  "ureq",
- "windows-native-keyring-store",
  "zip 2.4.2",
 ]
 

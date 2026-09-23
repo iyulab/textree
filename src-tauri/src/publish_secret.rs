@@ -2,7 +2,7 @@
 //! Mirrors `byo_secret.rs`; both sit on `secret_store` for store init and namespacing. Distinct
 //! (SERVICE, ACCOUNT) entry so it never collides with the BYO key.
 
-use crate::secret_store::{ensure_store, service_name};
+use crate::secret_store::service_name;
 use keyring::Entry;
 
 const SERVICE: &str = "com.textree.publish";
@@ -16,14 +16,12 @@ fn service() -> String {
 
 /// Store the publish token in the OS credential store.
 pub fn set_token(token: &str) -> Result<(), String> {
-    ensure_store();
     let entry = Entry::new(&service(), ACCOUNT).map_err(|e| e.to_string())?;
     entry.set_password(token).map_err(|e| e.to_string())
 }
 
 /// Delete the stored token, if any. No-op-safe when nothing is stored.
 pub fn clear_token() -> Result<(), String> {
-    ensure_store();
     let entry = Entry::new(&service(), ACCOUNT).map_err(|e| e.to_string())?;
     match entry.delete_credential() {
         Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
@@ -39,7 +37,6 @@ pub fn has_token() -> bool {
 /// Retrieve the plaintext token for internal use only (the uploader). Not a Tauri command —
 /// callers are Rust-side only (see cloud_publish / commands::publish_to_cloud).
 pub fn get_token() -> Option<String> {
-    ensure_store();
     let entry = Entry::new(&service(), ACCOUNT).ok()?;
     entry.get_password().ok()
 }
