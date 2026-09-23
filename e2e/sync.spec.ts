@@ -103,6 +103,28 @@ test("deleted outside while editing: the unsaved edits stay and can be put back"
   }
 });
 
+test("deleted outside with its folder while editing: the note comes back at the top", async () => {
+  const vault = createTempVault({ "box/gone.md": "before\n", "other.md": "# other\n" });
+  try {
+    await page.evaluate(() => localStorage.removeItem("textree-tree-collapsed"));
+    await loadVault(page, vault);
+    await page.getByRole("treeitem", { name: /gone/ }).click();
+    await expect(page.locator(".cm-content")).toContainText("before");
+    await page.locator(".cm-content").click();
+    await page.keyboard.press("Control+End");
+    await page.keyboard.type(" typed after");
+    rmSync(join(vault, "box"), { recursive: true, force: true });
+    await expect(page.getByTestId("removed-banner")).toBeVisible();
+
+    await page.getByRole("button", { name: "Put it back with my edits" }).click();
+
+    await expect(page.getByTestId("removed-banner")).toHaveCount(0);
+    await expect.poll(() => readVaultFile(vault, "gone.md")).toMatch(/^before\s*typed after/);
+  } finally {
+    removeTempVault(vault);
+  }
+});
+
 test("deleted outside while editing: leaving is refused until I choose, then discarding lets go", async () => {
   const vault = createTempVault({ "gone.md": "before\n", "other.md": "# other\n" });
   try {

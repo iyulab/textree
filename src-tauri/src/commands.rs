@@ -376,7 +376,9 @@ pub fn write_note(
 ) -> Result<WriteOutcome, String> {
     let root = PathBuf::from(root);
     let path = PathBuf::from(path);
-    if !is_within(&root, &path) {
+    // Not `is_within`: that needs the note to exist, and a note deleted outside the app (with or
+    // without its folder) must come back as "gone" below, not as an error about where it is.
+    if crate::pathsafe::rel_within(&root, &path).is_none() {
         log::warn!("write_note: rejected unsafe path: {}", path.display());
         return Err("path is outside the vault".into());
     }
@@ -1530,6 +1532,15 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         assert_eq!(
             stale_base(&tmp.path().join("gone.md"), "loaded").unwrap(),
+            Some(WriteOutcome::Conflict { disk: None })
+        );
+    }
+
+    #[test]
+    fn stale_base_reports_a_note_whose_folder_is_gone() {
+        let tmp = TempDir::new().unwrap();
+        assert_eq!(
+            stale_base(&tmp.path().join("box").join("gone.md"), "loaded").unwrap(),
             Some(WriteOutcome::Conflict { disk: None })
         );
     }

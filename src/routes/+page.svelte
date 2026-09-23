@@ -923,15 +923,16 @@
   /** Removed-note banner: put the note back where it was, holding the unsaved edits. */
   async function resolvePutBack() {
     if (!root || !activePath || !pending) return;
+    const vault = root;
     const path = activePath;
     const text = pending.text;
+    const stem = baseName(path).replace(/\.md$/i, "");
     try {
       // Never overwrites: if something has taken the name meanwhile, the note comes back beside it.
-      const created = await createNoteWithContent(
-        root,
-        parentDir(path),
-        baseName(path).replace(/\.md$/i, ""),
-        text,
+      // When its folder went with it, the note comes back at the top of the vault instead — the
+      // edits matter more than the place.
+      const created = await createNoteWithContent(vault, parentDir(path), stem, text).catch(() =>
+        createNoteWithContent(vault, vault, stem, text),
       );
       synced = text;
       if (pending?.text === text) {
@@ -944,7 +945,7 @@
       removedAttention = false;
       saveError = null;
       if (!pathInside(created, path)) {
-        content = text;
+        content = pending?.text ?? text; // the editor is recreated for the new path
         activePath = created;
         activeName = baseName(created).replace(/\.md$/i, "");
         if (pending) pending.path = created;
