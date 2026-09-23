@@ -77,6 +77,7 @@
   import { friendlyError, type FriendlyError } from "$lib/friendlyError.helpers";
   import { extractFirstH1, isUnnamed, sanitizeForFilename } from "$lib/h1sync.helpers";
   import { NO_VAULT_HINT, NO_VAULT_PROMPT, NO_NOTE_PROMPT } from "$lib/emptyState";
+  import { backupStatus } from "$lib/backupStatus.helpers";
 
   let root = $state<string | null>(null);
   let updateInfo = $state<UpdateInfo | null>(null);
@@ -120,6 +121,8 @@
   let movedOut = $state<MoveOut | null>(null);
   /** What the last attempt to add a version came to. Not an error — it can also say nothing changed. */
   let versionNotice = $state<string | null>(null);
+  // Nothing sends versions anywhere yet; only a remote that receives refs/textree/* can make this true.
+  const backup = backupStatus(false);
   let showSettings = $state(false);
 
   // Sync-conflict surfacing — derived from the live tree (no IPC). Non-destructive: we only
@@ -1585,6 +1588,10 @@
         {:else if versionNotice}
           <span class="status" data-testid="version-notice">{versionNotice}</span>
         {/if}
+        {#if backup}
+          <span class="status backup-status" data-testid="backup-status" title={backup.tooltip}
+          >{backup.label}</span>
+        {/if}
         <div class="title-tools">
           {#if !saveError && !removed}
             <span class="status">{dirty ? "● Saving…" : "Saved"}</span>
@@ -1880,6 +1887,13 @@
     font-size: var(--font-size-smallest);
     font-weight: var(--font-weight-normal);
     color: var(--text-muted);
+  }
+  /* Outside the hover-revealed tools on purpose: a missing backup has to stay in view. */
+  .backup-status {
+    margin-left: auto;
+  }
+  .backup-status + .title-tools {
+    margin-left: 0;
   }
   .status.error {
     color: var(--text-error);
