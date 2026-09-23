@@ -9,6 +9,7 @@
 
 import { friendlyError, type FriendlyError } from "./friendlyError.helpers";
 import type { WriteOutcome } from "./ipc";
+import { noteStem } from "./vaultPaths.helpers";
 
 /** An edit not yet on disk. `base` is what the note held when the edit started from it. */
 export interface PendingEdit {
@@ -313,7 +314,7 @@ export class NoteSave {
         if (job.path !== active) {
           // Edits to a note already left: there is no banner to ask on.
           s.saveError = friendlyError(
-            `Your last edits to "${stem(job.path)}" were not saved — it changed on disk.`,
+            `Your last edits to "${noteStem(job.path)}" were not saved — it changed on disk.`,
           );
           return;
         }
@@ -345,9 +346,4 @@ export class NoteSave {
       if (job.path === this.deps.activePath()) s.saveFailure = s.saveError;
     }
   }
-}
-
-function stem(path: string): string {
-  const i = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
-  return (i >= 0 ? path.slice(i + 1) : path).replace(/\.md$/i, "");
 }

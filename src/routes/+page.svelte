@@ -81,6 +81,17 @@
   import { NO_VAULT_HINT, NO_VAULT_PROMPT, NO_NOTE_PROMPT } from "$lib/emptyState";
   import { backupStatus } from "$lib/backupStatus.helpers";
   import { initialNoteSaveState, NoteSave } from "$lib/noteSave";
+  import {
+    baseName,
+    noteStem,
+    parentDir,
+    pathInside,
+    remapAdopted,
+    remapMoved,
+    remapPromoted,
+    remapRenamed,
+    samePath,
+  } from "$lib/vaultPaths.helpers";
 
   let root = $state<string | null>(null);
   let updateInfo = $state<UpdateInfo | null>(null);
@@ -411,12 +422,11 @@
       return;
     }
     try {
-      const newNodePath = await renameNode(root, node.path, name);
-      await refreshTree();
-      // Follow the new body path: leaf=new node path, container note=newfolder/newname.md.
-      followOpenNote(
-        node.kind === "leaf" ? newNodePath : joinPath(newNodePath, `${baseName(newNodePath)}.md`),
+      const vault = root;
+      await save.move(async () =>
+        remapRenamed(node.path, await renameNode(vault, node.path, name), node.kind !== "leaf"),
       );
+      await refreshTree();
       selectedNode = null;
       opError = null;
     } catch (e) {
@@ -455,7 +465,7 @@
       const vault = root;
       await save.move(async () => {
         newPath = await renameNoteUnique(vault, pathToRename, candidate);
-        return (p) => (samePath(p, pathToRename) ? newPath : p);
+        return remapRenamed(pathToRename, newPath, false);
       });
       await refreshTree();
       if (activePath === newPath) selectedNode = null; // still on the renamed note
@@ -498,12 +508,12 @@
       return friendlyError(leaveRefusal("Rename", left));
     }
     try {
-      const target = node.path;
-      const affectsOpen = activePath !== null && pathInside(activePath, target);
-      await renameNode(root, target, name);
+      const vault = root;
+      // The open note, if it is the renamed one or inside it, stays open at its new path.
+      await save.move(async () =>
+        remapRenamed(node.path, await renameNode(vault, node.path, name), node.kind !== "leaf"),
+      );
       await refreshTree();
-      // If the open note is inside the renamed node, its path changed → close + prompt re-selection.
-      if (affectsOpen) closeEditor();
       selectedNode = null;
       renamingPath = null; // success → exit edit mode
       return null;
@@ -545,15 +555,6 @@
   }
 
   // ── Structure editing (M4) ──────────────────────────────────────────────
-  /** Normalized path comparison: is child equal to or below ancestor.
-   *  Windows is case-insensitive, so normalize to lowercase (Windows-first). */
-  function pathInside(child: string, ancestor: string): boolean {
-    const n = (p: string) => p.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
-    const c = n(child);
-    const a = n(ancestor);
-    return c === a || c.startsWith(a + "/");
-  }
-
   /**
    * The open note now lives at `path` — it, or a folder holding it, was moved or renamed. A new
    * path recreates the editor from `content`, so `content` must hold what is on screen now: left at
@@ -563,31 +564,7 @@
   function followOpenNote(path: string) {
     content = liveDoc;
     activePath = path;
-    activeName = baseName(path).replace(/\.md$/i, "");
-  }
-
-  /** Parent directory of a path (separator preserved). */
-  function parentDir(p: string): string {
-    const i = Math.max(p.lastIndexOf("/"), p.lastIndexOf("\\"));
-    return i >= 0 ? p.slice(0, i) : p;
-  }
-
-  /** Last component of a path (file/folder name). */
-  function baseName(p: string): string {
-    const i = Math.max(p.lastIndexOf("/"), p.lastIndexOf("\\"));
-    return i >= 0 ? p.slice(i + 1) : p;
-  }
-
-  /** Join child onto dir (preserving dir's existing separator style). */
-  function joinPath(dir: string, child: string): string {
-    const sep = dir.includes("\\") ? "\\" : "/";
-    return `${dir}${sep}${child}`;
-  }
-
-  /** Normalized equality comparison (absorbs separator, trailing slash, case; same policy as pathInside). */
-  function samePath(a: string, b: string): boolean {
-    const n = (p: string) => p.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
-    return n(a) === n(b);
+    activeName = noteStem(path);
   }
 
   async function refreshTree() {
@@ -654,9 +631,7 @@
       let newDir = leaf;
       await save.move(async () => {
         newDir = await promoteNode(vault, leaf);
-        // The promoted leaf's body moved to newDir/<stem>.md.
-        const body = joinPath(newDir, `${baseName(newDir)}.md`);
-        return (p) => (samePath(p, leaf) ? body : p);
+        return remapPromoted(leaf, newDir);
       });
       await refreshTree();
       selectedNode = null;
@@ -686,7 +661,7 @@
       const p = await createUntitledNote(root, parent);
       await refreshTree();
       content = await readNote(root, p);
-      activeName = baseName(p).replace(/\.md$/i, "");
+      activeName = noteStem(p);
       activePath = p;
       save.opened(content);
       selectedNode = null;
@@ -764,8 +739,7 @@
     try {
       const vault = root;
       await save.move(async () => {
-        const newPath = await moveNode(vault, src, destDir);
-        return (p) => (pathInside(p, src) ? newPath + p.slice(src.length) : p);
+        return remapMoved(src, await moveNode(vault, src, destDir));
       });
       await refreshTree();
       selectedNode = null;
@@ -796,12 +770,7 @@
     try {
       const vault = root;
       await save.move(async () => {
-        const movedPath = await adoptNode(vault, src, leaf);
-        // The promoted new container = the parent of the moved node; the leaf's body moved into it.
-        const newDir = parentDir(movedPath);
-        const body = joinPath(newDir, `${baseName(newDir)}.md`);
-        return (p) =>
-          samePath(p, leaf) ? body : pathInside(p, src) ? movedPath + p.slice(src.length) : p;
+        return remapAdopted(src, leaf, await adoptNode(vault, src, leaf));
       });
       await refreshTree();
       selectedNode = null;
@@ -841,7 +810,7 @@
     const vault = root;
     const path = activePath;
     const text = edit.text;
-    const stem = baseName(path).replace(/\.md$/i, "");
+    const stem = noteStem(path);
     try {
       // Never overwrites: if something has taken the name meanwhile, the note comes back beside it.
       // When its folder went with it, the note comes back at the top of the vault instead — the
@@ -855,7 +824,7 @@
       if (moved) {
         content = save.pending?.text ?? text; // the editor is recreated for the new path
         activePath = created;
-        activeName = baseName(created).replace(/\.md$/i, "");
+        activeName = noteStem(created);
       }
       await refreshTree();
       if (save.pending) void save.flush();

@@ -95,3 +95,53 @@ test("renaming the open note from its title keeps what was typed on screen and o
     removeTempVault(vault);
   }
 });
+
+async function renameInTree(item: RegExp, name: string) {
+  await page.getByRole("treeitem", { name: item }).click();
+  await page.getByRole("button", { name: "Rename", exact: true }).click();
+  await page.locator(".tree-rename-input").fill(name);
+  await page.locator(".tree-rename-input").press("Enter");
+}
+
+test("renaming the open note in the tree keeps it open with what was typed", async () => {
+  const vault = createTempVault({ "tree-old.md": "first line\n" });
+  try {
+    await loadVault(page, vault);
+    await page.getByRole("treeitem", { name: /tree-old/ }).click();
+    await typeAndWaitSaved(vault, "tree-old.md", "typed before the rename");
+
+    await renameInTree(/tree-old/, "tree-new");
+    await expect.poll(() => existsSync(join(vault, "tree-new.md"))).toBe(true);
+    await expect(page.locator(".note-name")).toHaveText("tree-new");
+
+    await typeAndWaitSaved(vault, "tree-new.md", " and after");
+    expect(readVaultFile(vault, "tree-new.md")).toContain("typed before the rename and after");
+  } finally {
+    removeTempVault(vault);
+  }
+});
+
+test("renaming the folder that holds the open note keeps it open at its new place", async () => {
+  const vault = createTempVault({ "box/inner.md": "first line\n" });
+  try {
+    await page.evaluate(() => localStorage.removeItem("textree-tree-collapsed"));
+    await loadVault(page, vault);
+    await page.getByRole("treeitem", { name: /inner/ }).click();
+    await typeAndWaitSaved(vault, "box/inner.md", "typed before the rename");
+
+    // By keyboard: clicking the folder would open it and leave the note.
+    await page.getByRole("treeitem", { name: /box/ }).focus();
+    await page.keyboard.press("F2");
+    await page.locator(".tree-rename-input").fill("crate");
+    await page.locator(".tree-rename-input").press("Enter");
+    await expect.poll(() => existsSync(join(vault, "crate", "inner.md"))).toBe(true);
+    await expect(page.locator(".note-name")).toHaveText("inner");
+
+    await typeAndWaitSaved(vault, "crate/inner.md", " and after");
+    expect(readVaultFile(vault, "crate/inner.md")).toContain("typed before the rename and after");
+    expect(existsSync(join(vault, "box"))).toBe(false);
+  } finally {
+    await page.evaluate(() => localStorage.removeItem("textree-tree-collapsed"));
+    removeTempVault(vault);
+  }
+});
