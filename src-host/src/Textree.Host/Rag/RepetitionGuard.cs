@@ -13,6 +13,10 @@ namespace Textree.Host.Rag;
 /// ordinary prose, lists, and repeated function words stay well clear; the guard errs toward NOT
 /// firing to keep any trade-off off good answers.
 /// </summary>
+/// <remarks>
+/// TODO(upstream: iron-prow — a built-in degeneration guard for its guard slot; the default is a
+/// no-op, so this check and the two tail loops that call it live here until one ships).
+/// </remarks>
 public static class RepetitionGuard
 {
     private const int Window = 240;     // chars of tail to inspect

@@ -107,6 +107,8 @@ public sealed class VaultManager : IDisposable
 
             var provider = services.BuildServiceProvider();
 
+            // TODO(upstream: FluxIndex FileVault — an initialization path that does not assume a
+            // Generic Host; remove this manual start once one ships).
             // Run registered hosted services (e.g. the SQLite vec-table migration) — a bare
             // ServiceProvider has no Host to start them, so the vec table would never be created.
             foreach (var hosted in provider.GetServices<Microsoft.Extensions.Hosting.IHostedService>())
@@ -134,6 +136,8 @@ public sealed class VaultManager : IDisposable
         var vault = EnsureVault(vaultPath);
         var fullPath = Path.GetFullPath(filePath);
 
+        // TODO(upstream: FluxIndex FileVault — an atomic upsert, and a synchronous memorize that
+        // awaits a terminal stage; remove the get→remove→add and the polling below once they ship).
         // Upsert semantics: if an entry already exists, remove it first so that re-memorizing
         // the same file does not accumulate duplicate chunks in the vector store. Without this,
         // repeated ReindexAsync calls grow the result set linearly with the reindex count.

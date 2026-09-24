@@ -16,6 +16,7 @@
     "notices:check": "node scripts/generate-third-party-notices.mjs --check",
     "tokens:check": "node scripts/check-forbidden-tokens.mjs",
     "pins:check": "node scripts/check-pin-drift.mjs",
+    "host:smoke": "node scripts/host-smoke.mjs",
     "tauri": "tauri"
   },
   "license": "GPL-3.0-only",

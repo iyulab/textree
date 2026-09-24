@@ -13,6 +13,9 @@ const gb = (n: number) => (n / GB).toFixed(1);
 /**
  * Pure: snapshot → display strings + 0..1 bar ratio. null passthrough when not downloading.
  *
+ * TODO(upstream: LMSupply — OverallPercentComplete should be the cumulative share; remove the
+ * byte-based recomputation below once a release reports it that way).
+ *
  * Percent and ratio derive from the cumulative byte counters (bytesDownloaded / totalBytes),
  * NOT from the snapshot's overallPercent: LMSupply's OverallPercentComplete can disagree with
  * its own byte totals (e.g. it reported 18% while bytes showed 4.0 / 4.9 GB ≈ 82%, likely a

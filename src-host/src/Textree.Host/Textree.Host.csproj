@@ -6,14 +6,13 @@
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.ApplicationInsights" />
-    <PackageReference Include="FluxIndex.SDK" />
     <PackageReference Include="FluxIndex.Core" />
     <PackageReference Include="FluxIndex.Storage.SQLite" />
     <PackageReference Include="FluxIndex.Extensions.FileVault" />
     <PackageReference Include="FileFlux" />
-    <PackageReference Include="FluxCurator" />
     <PackageReference Include="LMSupply.Embedder" />
     <PackageReference Include="LMSupply.Generator" />
+    <PackageReference Include="LMSupply.Generator.Onnx" />
     <PackageReference Include="IronProw.LMSupply" />
     <PackageReference Include="IronProw.IronHive" />
     <PackageReference Include="sqlite-vec" />

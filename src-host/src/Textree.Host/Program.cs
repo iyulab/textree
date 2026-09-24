@@ -21,6 +21,11 @@ var status = new ModelStatus();
 // and /search returning "warming" until the background load finishes.
 var embedder = new LmSupplyEmbeddingService();
 
+// The local model (phi-4-mini) is an ONNX Runtime GenAI model. LMSupply.Generator ships the
+// GGUF path only; the ONNX backend is its own package and has to be registered before any
+// model loads, or loading fails with an error naming the missing registration.
+LMSupply.Generator.Onnx.OnnxGeneratorBackend.Register();
+
 var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddSingleton(opts);
 builder.Services.AddSingleton(status);
