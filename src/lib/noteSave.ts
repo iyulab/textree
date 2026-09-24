@@ -87,6 +87,7 @@ export class NoteSave {
   // Edits to a note already left whose write failed. Nothing on screen holds them any more, so they
   // are kept here — with the vault they belong to — and tried again before every save until they land.
   #stranded = new Map<string, { root: string; edit: PendingEdit }>();
+  #warnedOnClose = false;
   // Saves run one at a time. Two in flight would each be based on the same state, and the second
   // would mistake the first for a change made elsewhere.
   #saving: Promise<void> = Promise.resolve();
@@ -146,8 +147,9 @@ export class NoteSave {
   flush(): Promise<void> {
     this.#cancelTimer();
     return this.#enqueue(async () => {
-      for (const { root, edit } of [...this.#stranded.values()]) await this.#write(edit, root);
+      // The open note's own edits first: kept edits for a note already left must not hold them up.
       if (this.#pending) await this.#write(this.#pending);
+      for (const { root, edit } of [...this.#stranded.values()]) await this.#write(edit, root);
     });
   }
 
@@ -182,6 +184,25 @@ export class NoteSave {
     // Nothing went wrong — the typing simply has not stopped. What is still pending is saved to this
     // note like any other edit, even after another note opens (see schedule).
     return "busy";
+  }
+
+  /**
+   * The app is about to close. `stay`: something is unsaved and the person has been shown why.
+   * Edits kept for a note already left live only in memory, so the first close that finds them
+   * still unwritten stays open and warns; the next one closes without them — a disk that never
+   * takes them must not keep the app from closing.
+   */
+  async beforeClosing(): Promise<"close" | "stay"> {
+    if (!this.#pending && this.#stranded.size === 0) return "close";
+    if ((await this.beforeLeaving()) !== "saved") return "stay";
+    if (this.#stranded.size > 0 && !this.#warnedOnClose) {
+      this.#warnedOnClose = true;
+      this.state.saveError = friendlyError(
+        "Some edits to a note you left are still not saved. Close again to quit without them.",
+      );
+      return "stay";
+    }
+    return "close";
   }
 
   /**
@@ -310,9 +331,10 @@ export class NoteSave {
     try {
       if (!this.deps.keepCopy) throw new Error("no place to keep them");
       const copy = await this.deps.keepCopy(root, job.path, job.text);
-      if (this.#stranded.size === 0 && !s.saveFailure) s.saveError = null;
-      s.saveError ??= friendlyError(
-        `"${name}" changed on disk after you left it, so your last edits to it were kept as "${noteStem(copy)}".`,
+      // Said even over another warning — the copy is news — and the other warning is carried along.
+      const others = this.#stranded.size > 0 ? " Other edits are still waiting to be saved." : "";
+      s.saveError = friendlyError(
+        `"${name}" changed on disk before your earlier edits to it could be saved, so they were kept as "${noteStem(copy)}".${others}`,
       );
     } catch (e) {
       this.#stranded.set(job.path, { root, edit: job });

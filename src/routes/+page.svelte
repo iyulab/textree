@@ -554,12 +554,15 @@
       save.opened("");
       return;
     }
+    const reopened = activePath !== null && samePath(node.body_path, activePath);
+    // The note already open, with its edits still being written: the screen is ahead of disk and is
+    // what counts. Re-reading would rebuild the editor from older text.
+    if (reopened && save.pending) return;
     const text = await readNote(root, node.body_path);
     // Opening the note already open keeps its editor (same key), so the screen would go on showing
     // the old text while the save baseline moved to disk — the next keystroke would write the old
     // text back over what is there now (a version just restored, say). When disk differs from what
     // is on screen, the editor is rebuilt from disk.
-    const reopened = activePath !== null && samePath(node.body_path, activePath);
     if (reopened && text !== liveDoc) reloadVersion += 1;
     content = text;
     activeName = node.name;
@@ -1310,11 +1313,10 @@
 
     const win = getCurrentWindow();
     const unlistenClose = win.onCloseRequested(async (event) => {
-      if (!save.pending) return; // nothing to save → proceed with default close
+      if (!save.pending && save.stranded === 0) return; // nothing to save → proceed with default close
       event.preventDefault();
-      // If the save fails or the note is in conflict, pending remains (saveError or the banner is
-      // shown). In that case do not close and keep the window open to prevent data loss.
-      if ((await save.beforeLeaving()) === "saved") await win.destroy();
+      // Unsaved edits keep the window open, with the banner or warning saying why (see beforeClosing).
+      if ((await save.beforeClosing()) === "close") await win.destroy();
     });
 
     // Subscribe to external file changes.

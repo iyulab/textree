@@ -268,14 +268,14 @@ describe("NoteSave — switching notes", () => {
     expect(h.state.saveError?.summary).toContain('"A"');
     expect(h.state.saveFailure).toBeNull(); // the open note has nothing wrong with it
 
-    // The next save tries the kept edits first, in the vault they belong to.
+    // The next save writes the open note's edits, then tries the kept ones again.
     vi.advanceTimersByTime(500);
     await settle();
-    expect(h.calls[1]).toMatchObject({ path: "A.md", text: "a2", expected: "a0" });
-    h.calls[1].settle(new Error("disk full"));
+    expect(h.calls[1]).toMatchObject({ path: "B.md", text: "b1" });
+    h.calls[1].settle(written);
     await settle();
-    expect(h.calls[2]).toMatchObject({ path: "B.md", text: "b1" });
-    h.calls[2].settle(written);
+    expect(h.calls[2]).toMatchObject({ path: "A.md", text: "a2", expected: "a0" });
+    h.calls[2].settle(new Error("disk full"));
     await settle();
     // The open note saving fine does not hide that the other one's edits are still not on disk.
     expect(h.save.stranded).toBe(1);
@@ -284,13 +284,82 @@ describe("NoteSave — switching notes", () => {
     h.save.schedule("B.md", "b2");
     vi.advanceTimersByTime(500);
     await settle();
-    expect(h.calls[3]).toMatchObject({ path: "A.md", text: "a2", expected: "a0" });
     h.calls[3].settle(written);
     await settle();
+    expect(h.calls[4]).toMatchObject({ path: "A.md", text: "a2", expected: "a0" });
     h.calls[4].settle(written);
     await settle();
     expect(h.save.stranded).toBe(0);
     expect(h.state.saveError).toBeNull();
+  });
+
+  it("a retry of kept edits that never finishes does not hold up the open note's save", async () => {
+    const h = harness();
+    h.save.opened("a0");
+    h.save.schedule("A.md", "a1");
+    h.open("B.md", "b0");
+    h.save.schedule("B.md", "b1");
+    await settle();
+    h.calls[0].settle(new Error("disk full"));
+    await settle();
+    h.save.schedule("B.md", "b2");
+    vi.advanceTimersByTime(500);
+    await settle();
+    // The open note is written before the kept edits are tried; the retry may hang for all it likes.
+    expect(h.calls[1]).toMatchObject({ path: "B.md", text: "b2" });
+    h.calls[1].settle(written);
+    await settle();
+    expect(h.calls[2]).toMatchObject({ path: "A.md", text: "a1" });
+    expect(h.state.dirty).toBe(false);
+  });
+
+  it("a copy made for one note says so even while another note's edits still wait", async () => {
+    const h = harness({ active: "C.md" });
+    h.save.opened("c0");
+    // Two notes left with edits that did not land.
+    for (const [path, text] of [["A.md", "a1"], ["B.md", "b1"]] as const) {
+      h.save.schedule(path, text);
+    }
+    h.save.schedule("C.md", "c1");
+    await settle();
+    h.calls[0].settle(new Error("disk full"));
+    await settle();
+    h.calls[1].settle(new Error("disk full"));
+    await settle();
+    expect(h.save.stranded).toBe(2);
+    void h.save.flush();
+    await settle();
+    h.calls[2].settle(written); // C
+    await settle();
+    h.calls[3].settle({ kind: "conflict", disk: "elsewhere" }); // A: kept as a copy
+    await settle();
+    expect(h.state.saveError?.summary).toContain('"A (2)"');
+    expect(h.state.saveError?.summary).toContain("Other edits are still waiting");
+  });
+
+  it("closing with kept edits still unwritten stays open once and warns, then lets the app close", async () => {
+    const h = harness();
+    h.save.opened("a0");
+    h.save.schedule("A.md", "a1");
+    h.open("B.md", "b0");
+    h.save.schedule("B.md", "b1");
+    await settle();
+    h.calls[0].settle(new Error("disk full"));
+    await settle();
+    expect(h.save.stranded).toBe(1);
+
+    const first = h.save.beforeClosing();
+    await settle();
+    h.calls[1].settle(written); // the open note's own edits
+    await settle();
+    h.calls[2].settle(new Error("disk full")); // the kept edits, tried again
+    expect(await first).toBe("stay");
+    expect(h.state.saveError?.summary).toContain("Close again");
+
+    const second = h.save.beforeClosing();
+    await settle();
+    h.calls[3].settle(new Error("disk full"));
+    expect(await second).toBe("close");
   });
 
   it("kept edits are written into the vault they were typed in, even after another vault opens", async () => {
