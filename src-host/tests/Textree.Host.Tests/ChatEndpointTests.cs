@@ -22,7 +22,7 @@ public sealed class ChatEndpointTests
         var client = factory.CreateClient();
 
         var resp = await client.PostAsJsonAsync("/chat",
-            new { messages = new[] { new { role = "user", content = "hi" } }, stream = true });
+            new { messages = new[] { new { role = "user", content = "hi" } } });
 
         Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
         Assert.Equal("text/event-stream", resp.Content.Headers.ContentType!.MediaType);
@@ -42,7 +42,7 @@ public sealed class ChatEndpointTests
         var client = factory.CreateClient();
 
         var resp = await client.PostAsJsonAsync("/chat",
-            new { messages = Array.Empty<object>(), stream = true });
+            new { messages = Array.Empty<object>() });
 
         Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
     }
@@ -58,13 +58,13 @@ public sealed class ChatEndpointTests
 
         // Explicit value: expect it forwarded verbatim.
         await client.PostAsJsonAsync("/chat",
-            new { messages = new[] { new { role = "user", content = "hi" } }, maxTokens = 64, stream = true });
+            new { messages = new[] { new { role = "user", content = "hi" } }, maxTokens = 64 });
         Assert.Equal(64, stub.LastMaxTokens);
 
         // Omitted value: expect the ?? 512 default applied by the endpoint.
         stub.Reset();
         await client.PostAsJsonAsync("/chat",
-            new { messages = new[] { new { role = "user", content = "hi" } }, stream = true });
+            new { messages = new[] { new { role = "user", content = "hi" } } });
         Assert.Equal(512, stub.LastMaxTokens);
     }
 
@@ -118,7 +118,7 @@ public sealed class ChatEndpointTests
         var req = new HttpRequestMessage(HttpMethod.Post, "/chat")
         {
             Content = JsonContent.Create(
-                new { messages = new[] { new { role = "user", content = "hi" } }, stream = true }),
+                new { messages = new[] { new { role = "user", content = "hi" } } }),
         };
 
         // Start streaming; read headers only. The generator is now mid-stream, blocked after

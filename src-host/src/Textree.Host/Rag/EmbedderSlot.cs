@@ -15,6 +15,7 @@ namespace Textree.Host.Rag;
 public sealed class EmbedderSlot
 {
     private volatile LMSupplyEmbeddingService? _service;
+    private volatile IEmbeddingModel? _model;
 
     /// <summary>Whether the model has loaded and the service exists.</summary>
     public bool Ready => _service is not null;
@@ -27,6 +28,10 @@ public sealed class EmbedderSlot
     public void Set(IEmbeddingModel model)
     {
         ArgumentNullException.ThrowIfNull(model);
+        _model = model;
         _service = new LMSupplyEmbeddingService(model);
     }
+
+    /// <summary>What the loaded model actually runs on, as the runtime reports it; null until loaded.</summary>
+    public IReadOnlyList<string>? ActiveProviders => _model?.ActiveProviders?.Select(p => p.ToString()).ToList();
 }

@@ -102,6 +102,7 @@ try {
     await sleep(2000);
   }
   console.log("[host:smoke] embedder and generator ready");
+  console.log(`[host:smoke] runs on — embedder: ${JSON.stringify(h.embedderProviders)}, generator: ${JSON.stringify(h.generatorProviders)}`);
 
   for (const name of ["garden.md", "taxes.md"]) {
     const r = await post("/index", { vaultPath: slashed, path: `${slashed}/${name}` });
@@ -115,7 +116,6 @@ try {
 
   const chat = await post("/chat", {
     messages: [{ role: "user", content: "Reply with exactly one word: pong" }],
-    stream: false,
     maxTokens: 16,
   });
   const text = await chat.text();

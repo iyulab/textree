@@ -27,15 +27,16 @@ namespace Textree.Host.Rag;
 //   3. LMSupply.Generator exposes a first-class IAsyncEnumerable<string> streaming chat
 //      API (GenerateChatAsync) that maps 1:1 to the SSE token stream we need — no extra
 //      RAG/completion-service indirection.
-// Execution provider is pinned to CPU: DirectML (the default Auto provider) crashes on
-// *inference* on this hardware ("LayerNormalization DmlExecutionProvider 0x80070057") and
-// does NOT auto-fall-back to CPU. Same lesson the embedder startup already encodes.
+// Execution provider: Auto. It used to be pinned to CPU because DirectML crashed on inference
+// ("LayerNormalization DmlExecutionProvider 0x80070057") without falling back; the ONNX Runtime
+// line in use no longer ships DirectML at all, and Auto now picks CUDA or CoreML when present,
+// else CPU, keeping CPU as the fallback. /health reports what was actually picked.
 // Default model: the LMSupply "phi-4-mini" alias (Microsoft Phi-4 Mini, 3.8B, MIT,
 // multilingual, ONNX CPU-int4). We pin this alias rather than "default" on purpose:
 // "default" does hardware-aware auto-selection that, on a CPU machine, routes to a Gemma-4
 // GGUF served via an out-of-process llama-server — a heavier, less deterministic backend.
-// "phi-4-mini" pins the in-process ONNX Runtime GenAI path that matches our CPU-pinned,
-// self-contained host model. This is NOT a locked production choice — model selection is a
+// "phi-4-mini" pins the in-process ONNX Runtime GenAI path that matches our self-contained host
+// model. This is NOT a locked production choice — model selection is a
 // later decision; Step 8 only measures feasibility.
 
 /// <summary>
@@ -64,6 +65,9 @@ public sealed class LocalTextGenerator : ITextGenerator, IAsyncDisposable
     public LocalTextGenerator(ModelStatus status) => _status = status;
 
     public bool Ready => Volatile.Read(ref _model) is not null;
+
+    public IReadOnlyList<string>? ActiveProviders =>
+        Volatile.Read(ref _model)?.ActiveProviders?.Select(p => p.ToString()).ToList();
     public string? LastError => Volatile.Read(ref _lastError);
 
     /// <summary>Idempotent: loads the model once; subsequent calls are no-ops.</summary>
@@ -87,10 +91,10 @@ public sealed class LocalTextGenerator : ITextGenerator, IAsyncDisposable
                 // actual phase even if download progress callbacks never fire (cached model).
                 _status.SetGeneratorPhase(ModelPhase.Downloading);
 
-                // Pin CPU: DirectML crashes on inference here and does not fall back. See header.
+                // Auto: CUDA/CoreML when present, else CPU. See header.
                 var model = await LocalGenerator.LoadAsync(
                     ModelId,
-                    new GeneratorOptions { Provider = ExecutionProvider.Cpu },
+                    new GeneratorOptions { Provider = ExecutionProvider.Auto },
                     progress: _status.GeneratorProgress,
                     cancellationToken: ct);
 

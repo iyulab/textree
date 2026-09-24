@@ -130,6 +130,8 @@ app.MapGet("/health", (ITextGenerator gen, ModelStatus modelStatus) =>
         embedderError = modelStatus.Embedder.Error,
         embedderDownload = Dl(modelStatus.Embedder),
         generatorDownload = Dl(modelStatus.Generator),
+        embedderProviders = embedder.ActiveProviders,
+        generatorProviders = gen.ActiveProviders,
     });
 });
 

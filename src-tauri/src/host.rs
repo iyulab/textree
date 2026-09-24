@@ -854,7 +854,7 @@ pub async fn ask(
     let on_event_inner = on_event.clone();
 
     let result = tauri::async_runtime::spawn_blocking(move || {
-        let payload = serde_json::json!({ "messages": messages, "stream": true });
+        let payload = serde_json::json!({ "messages": messages });
         let resp = ureq::post(&format!("{base}/chat"))
             .config()
             .timeout_global(Some(Duration::from_secs(120)))

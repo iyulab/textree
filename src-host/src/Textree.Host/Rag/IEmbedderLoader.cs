@@ -20,9 +20,9 @@ public interface IEmbedderLoader
 }
 
 /// <summary>
-/// Production implementation: delegates directly to <see cref="LocalEmbedder.LoadAsync"/>.
-/// Forces the CPU execution provider because DirectML crashes on the target hardware during
-/// inference and does not fall back automatically (see Program.cs note on ExecutionProvider.Cpu).
+/// Production implementation: delegates directly to <see cref="LocalEmbedder.LoadAsync"/>, letting
+/// the runtime pick the hardware (<see cref="ExecutionProvider.Auto"/>: CUDA or CoreML when
+/// present, else CPU). What it picked is reported on /health.
 /// </summary>
 public sealed class DefaultEmbedderLoader : IEmbedderLoader
 {
@@ -32,7 +32,7 @@ public sealed class DefaultEmbedderLoader : IEmbedderLoader
         CancellationToken ct)
         => LocalEmbedder.LoadAsync(
             modelId,
-            new EmbedderOptions { Provider = ExecutionProvider.Cpu },
+            new EmbedderOptions { Provider = ExecutionProvider.Auto },
             progress,
             ct);
 }

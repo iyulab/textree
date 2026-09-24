@@ -12,9 +12,8 @@ public class VaultManagerScopeTests
         {
             IndexRoot = Path.Combine(Path.GetTempPath(), "textree-test", Guid.NewGuid().ToString("n"))
         };
-        // Force CPU execution provider: DirectML crashes on this machine's GPU driver.
-        // The product uses ExecutionProvider.Auto (GPU-when-available) at runtime; this
-        // test-only override lets the integration tests run in any environment.
+        // CPU here on purpose: results must not depend on which GPU the machine running the
+        // tests has. The product lets the runtime pick (ExecutionProvider.Auto).
         var model = await LocalEmbedder.LoadAsync(
             opts.EmbeddingModel,
             new EmbedderOptions { Provider = LMSupply.ExecutionProvider.Cpu });
