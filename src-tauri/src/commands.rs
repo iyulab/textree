@@ -23,13 +23,13 @@ const LEGACY_TEMP_DIR: [&str; 2] = [".textree", "tmp"];
 /// Repository storage is the right home for it: it is on the same volume as the target (so
 /// `persist` is still an atomic rename), it is not part of anyone's working tree (so transient
 /// `.tmpXXXX` files never show up as changes, not even when the folder sits inside a
-/// repository someone else uses), and it leaves no trace in the folder itself. A folder with no
-/// repository at all falls back to the older location so writing still works.
-fn temp_dir(root: &Path) -> PathBuf {
-    match crate::git_engine::git_dir(root) {
-        Some(git) => git.join(TEMP_DIR_NAME),
-        None => root.join(LEGACY_TEMP_DIR[0]).join(LEGACY_TEMP_DIR[1]),
-    }
+/// repository someone else uses), and it leaves no trace in the folder itself.
+///
+/// A folder no repository governs has no such place, and gets none: making a directory in it
+/// would be the one thing the folder is promised never to hold: anything but notes. Writes there stage
+/// beside their target instead — see [`atomic_write_bytes`].
+fn temp_dir(root: &Path) -> Option<PathBuf> {
+    crate::git_engine::git_dir(root).map(|git| git.join(TEMP_DIR_NAME))
 }
 
 /// Best-effort removal of orphaned temp files — e.g. a crash or power loss between create and
@@ -39,7 +39,7 @@ fn temp_dir(root: &Path) -> PathBuf {
 /// The older location is swept as well, so upgrading leaves nothing behind.
 fn clear_temp_dir(root: &Path) {
     let legacy = root.join(LEGACY_TEMP_DIR[0]).join(LEGACY_TEMP_DIR[1]);
-    for dir in [temp_dir(root), legacy] {
+    for dir in temp_dir(root).into_iter().chain([legacy]) {
         if let Ok(entries) = std::fs::read_dir(&dir) {
             for entry in entries.flatten() {
                 let _ = std::fs::remove_file(entry.path());
@@ -69,16 +69,21 @@ fn atomic_bytes_beside(path: &Path, content: &[u8]) -> io::Result<()> {
     Ok(())
 }
 
-/// Atomic file write: write to a temp file under `<root>/.textree/tmp/`, then rename to the target.
-/// Even if a crash/power loss happens mid-write, the target file is not truncated ("the FS is the truth").
-fn atomic_write(root: &Path, path: &Path, content: &str) -> io::Result<()> {
+/// Atomic file write: write to a temp file in repository storage (or beside the target when no
+/// repository governs the folder), then rename onto the target. Even if a crash or power loss
+/// happens mid-write, the target file is not truncated ("the FS is the truth").
+pub(crate) fn atomic_write(root: &Path, path: &Path, content: &str) -> io::Result<()> {
     atomic_write_bytes(root, path, content.as_bytes())
 }
 
 /// The same guarantee for content that is not necessarily text — a restored file can be
 /// anything that was kept alongside the notes.
 fn atomic_write_bytes(root: &Path, path: &Path, content: &[u8]) -> io::Result<()> {
-    let dir = temp_dir(root);
+    // No repository: stage beside the target. The temp file is a dot-file that exists only
+    // until the rename a moment later, and nothing is left in the folder afterwards.
+    let Some(dir) = temp_dir(root) else {
+        return atomic_bytes_beside(path, content);
+    };
     std::fs::create_dir_all(&dir)?;
     let mut tmp = NamedTempFile::new_in(&dir)?;
     tmp.write_all(content)?;
@@ -2897,7 +2902,7 @@ mod tests {
     fn temp_dir_lives_in_repository_storage() {
         let root = TempDir::new().unwrap();
         let repo = git2::Repository::init(root.path()).unwrap();
-        assert_eq!(temp_dir(root.path()), repo.path().join(TEMP_DIR_NAME));
+        assert_eq!(temp_dir(root.path()), Some(repo.path().join(TEMP_DIR_NAME)));
     }
 
     #[test]
@@ -2910,15 +2915,32 @@ mod tests {
         let inner = root.path().join("docs");
         std::fs::create_dir_all(&inner).unwrap();
 
-        assert_eq!(temp_dir(&inner), repo.path().join(TEMP_DIR_NAME));
-        assert!(!temp_dir(&inner).starts_with(&inner));
+        assert_eq!(temp_dir(&inner), Some(repo.path().join(TEMP_DIR_NAME)));
+        assert!(!temp_dir(&inner).unwrap().starts_with(&inner));
     }
 
     #[test]
-    fn temp_dir_falls_back_when_no_repository_governs_the_folder() {
-        // Writing must keep working before a repository exists.
-        let root = Path::new("/nowhere-that-exists");
-        assert_eq!(temp_dir(root), root.join(".textree").join("tmp"));
+    fn a_folder_no_repository_governs_gets_no_staging_directory() {
+        // Making one would put something of ours in a folder that holds only notes.
+        assert_eq!(temp_dir(Path::new("/nowhere-that-exists")), None);
+    }
+
+    #[test]
+    fn writing_before_anything_was_recorded_leaves_only_the_note() {
+        // A first-run default folder, or any folder opened before its first version: writing
+        // must still be atomic, and must still leave the folder holding only notes.
+        let root = TempDir::new().unwrap();
+        let f = root.path().join("welcome.md");
+        atomic_write(root.path(), &f, "first").unwrap();
+        atomic_write(root.path(), &f, "second").unwrap();
+
+        assert_eq!(std::fs::read_to_string(&f).unwrap(), "second");
+        let names: Vec<String> = std::fs::read_dir(root.path())
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .collect();
+        assert_eq!(names, vec!["welcome.md".to_string()], "no directory, no temp, no repository");
     }
 
     #[test]
@@ -2935,7 +2957,7 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&f).unwrap(), "body");
         let entries: Vec<_> = std::fs::read_dir(&notes).unwrap().flatten().collect();
         assert_eq!(entries.len(), 1, "only foo.md, no temp litter");
-        assert!(temp_dir(root.path()).is_dir());
+        assert!(temp_dir(root.path()).unwrap().is_dir());
         assert!(
             !root.path().join(".textree").exists(),
             "nothing of ours is left in the folder itself"
@@ -2959,7 +2981,8 @@ mod tests {
     fn clear_temp_dir_removes_orphaned_temps() {
         // A crash mid-write can orphan a temp; it would otherwise sync forever. Cleared on open.
         let root = TempDir::new().unwrap();
-        let tmp = temp_dir(root.path());
+        git2::Repository::init(root.path()).unwrap();
+        let tmp = temp_dir(root.path()).unwrap();
         std::fs::create_dir_all(&tmp).unwrap();
         std::fs::write(tmp.join(".tmpOrphan"), "stale").unwrap();
         clear_temp_dir(root.path());

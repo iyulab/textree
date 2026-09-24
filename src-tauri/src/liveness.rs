@@ -2,9 +2,18 @@
 //!
 //! On Windows a buffer overflow makes `notify` unwatch and go silent — no callback
 //! signal reaches either debounce arm, so the tree/index silently go stale. This
-//! module actively probes the watcher with a canary file in `.textree/tmp/`: a live
-//! watcher surfaces the canary write back as an event; a dead one does not. Two
-//! consecutive unobserved probes ⇒ the watcher is recreated.
+//! module actively probes the watcher with a canary file: a live watcher surfaces the
+//! canary write back as an event; a dead one does not. Two consecutive unobserved
+//! probes ⇒ the watcher is recreated.
+//!
+//! The canary has to be written somewhere the watcher sees, and nothing may be written
+//! into the notes folder itself, nor into the working tree of a repository someone else
+//! works in. The one place inside the watched folder that is the application's to write
+//! is the repository storage, when the folder is a repository's root — so the canary
+//! lives there, and only there (see [`canary_dir`]). A folder without one (nothing
+//! recorded yet, or a folder inside a larger repository whose storage sits outside it)
+//! is not probed: going unprobed costs a slower recovery from a silent watcher, while
+//! writing into the folder would break the promise the folder is kept by.
 
 use crate::search::IndexHandle;
 use crate::self_write::SelfWrites;
@@ -83,7 +92,25 @@ impl LivenessState {
 /// watchdog's own probes — recognized so they can be observed and never surfaced.
 const CANARY_PREFIX: &str = ".watcher-canary-";
 
-/// Path of the canary for `token`, inside the vault's `.textree/tmp/` dir.
+/// Directory, inside repository storage, that holds the canary.
+const CANARY_DIR_NAME: &str = "textree-canary";
+
+/// Where the canary for the folder at `root` goes, if anywhere.
+///
+/// Only inside repository storage that itself sits inside the watched folder — the folder is a
+/// repository's root. Anywhere else the watcher cannot see the write (the storage is outside
+/// the folder) or the write would land in the person's folder. Checked on every probe, since a
+/// folder becomes a repository when something is first recorded in it.
+pub(crate) fn canary_dir(root: &Path) -> Option<PathBuf> {
+    let storage = crate::git_engine::git_dir(root)?;
+    let storage_c = std::fs::canonicalize(&storage).ok()?;
+    let root_c = std::fs::canonicalize(root).ok()?;
+    storage_c
+        .starts_with(&root_c)
+        .then(|| storage.join(CANARY_DIR_NAME))
+}
+
+/// Path of the canary for `token`, inside `tmp_dir`.
 pub(crate) fn canary_path(tmp_dir: &Path, token: u64) -> PathBuf {
     tmp_dir.join(format!("{CANARY_PREFIX}{token}"))
 }
@@ -157,6 +184,18 @@ pub(crate) fn arm_once(
 /// churn or slow detection).
 const BACKUP_INTERVAL: Duration = Duration::from_secs(300);
 
+/// The probe cadence in use: [`BACKUP_INTERVAL`], unless `TEXTREE_WATCHDOG_INTERVAL_MS` says
+/// otherwise. The override exists so an end-to-end run can watch whole probe cycles without
+/// waiting minutes for each; nothing else sets it.
+fn probe_interval() -> Duration {
+    std::env::var("TEXTREE_WATCHDOG_INTERVAL_MS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .filter(|ms| *ms > 0)
+        .map(Duration::from_millis)
+        .unwrap_or(BACKUP_INTERVAL)
+}
+
 /// Consecutive unobserved probes before the watcher is judged dead.
 const MISS_THRESHOLD: u32 = 2;
 
@@ -165,7 +204,6 @@ const MISS_THRESHOLD: u32 = 2;
 pub(crate) struct Shared {
     pub(crate) app: AppHandle,
     pub(crate) root: PathBuf,
-    pub(crate) tmp_dir: PathBuf,
     pub(crate) self_writes: Arc<SelfWrites>,
     pub(crate) index: Arc<IndexHandle>,
     liveness: Mutex<LivenessState>,
@@ -200,7 +238,7 @@ fn run_thread(shared: Arc<Shared>) {
             let guard = shared.shutdown.lock().unwrap_or_else(|e| e.into_inner());
             let (mut guard, _timeout) = shared
                 .shutdown_cv
-                .wait_timeout_while(guard, BACKUP_INTERVAL, |flag| {
+                .wait_timeout_while(guard, probe_interval(), |flag| {
                     !*flag && !shared.stop.load(Ordering::SeqCst)
                 })
                 .unwrap_or_else(|e| e.into_inner());
@@ -209,7 +247,11 @@ fn run_thread(shared: Arc<Shared>) {
         if shared.stop.load(Ordering::SeqCst) {
             break;
         }
-        let verdict = arm_once(&shared.liveness, &shared.counter, &shared.tmp_dir);
+        // Nowhere the watcher can see that is ours to write: not probed this cycle.
+        let Some(canary_dir) = canary_dir(&shared.root) else {
+            continue;
+        };
+        let verdict = arm_once(&shared.liveness, &shared.counter, &canary_dir);
         if verdict == Verdict::Dead {
             log::warn!("watchdog: watcher unresponsive to canary probes — recreating");
             recreate(&shared);
@@ -249,11 +291,9 @@ impl Watchdog {
         self_writes: Arc<SelfWrites>,
         index: Arc<IndexHandle>,
     ) -> Result<Watchdog, String> {
-        let tmp_dir = root.join(".textree").join("tmp");
         let shared = Arc::new(Shared {
             app,
             root: root.to_path_buf(),
-            tmp_dir,
             self_writes,
             index,
             liveness: Mutex::new(LivenessState::new(MISS_THRESHOLD)),
@@ -292,7 +332,9 @@ impl Drop for Watchdog {
             let _ = t.join();
         }
         *self.shared.debouncer.lock().unwrap_or_else(|e| e.into_inner()) = None;
-        clear_canaries(&self.shared.tmp_dir);
+        if let Some(dir) = canary_dir(&self.shared.root) {
+            clear_canaries(&dir);
+        }
     }
 }
 
@@ -300,6 +342,29 @@ impl Drop for Watchdog {
 mod tests {
     use super::*;
     use std::path::PathBuf;
+
+    #[test]
+    fn the_canary_lives_in_repository_storage_inside_the_folder() {
+        let tmp = TempDir::new().unwrap();
+        let repo = git2::Repository::init(tmp.path()).unwrap();
+        let dir = canary_dir(tmp.path()).unwrap();
+        assert!(dir.starts_with(repo.path()), "inside repository storage: {}", dir.display());
+    }
+
+    #[test]
+    fn a_folder_with_no_place_of_ours_inside_it_is_not_probed() {
+        // Nothing recorded yet: no repository, and the folder itself is not ours to write in.
+        let plain = TempDir::new().unwrap();
+        assert_eq!(canary_dir(plain.path()), None);
+
+        // A folder inside someone's larger repository: its storage is outside what is watched,
+        // and nothing is ever written into someone else's working tree.
+        let outer = TempDir::new().unwrap();
+        git2::Repository::init(outer.path()).unwrap();
+        let inner = outer.path().join("docs");
+        std::fs::create_dir_all(&inner).unwrap();
+        assert_eq!(canary_dir(&inner), None);
+    }
 
     #[test]
     fn first_arm_is_alive() {
@@ -410,7 +475,7 @@ mod tests {
     }
 
     // Real-OS proof of the core mechanism WITHOUT an AppHandle: a canary written to
-    // .textree/tmp must be surfaced by the live watcher and observed, keeping the
+    // repository storage must be surfaced by the live watcher and observed, keeping the
     // liveness Alive across cycles. Mirrors build_debouncer's observe pre-pass with a
     // raw debouncer (AppHandle is unavailable in a cargo test). Timing-dependent → #[ignore].
     // Run: cargo test --manifest-path src-tauri/Cargo.toml -- --ignored canary_round_trips
@@ -422,7 +487,8 @@ mod tests {
         use std::sync::Arc;
 
         let vault = TempDir::new().unwrap();
-        let tmp_dir = vault.path().join(".textree").join("tmp");
+        git2::Repository::init(vault.path()).unwrap();
+        let tmp_dir = canary_dir(vault.path()).expect("a repository root has a canary place");
         std::fs::create_dir_all(&tmp_dir).unwrap();
         let liveness = Arc::new(Mutex::new(LivenessState::new(2)));
         let counter = AtomicU64::new(0);
@@ -470,7 +536,8 @@ mod tests {
         use std::sync::Arc;
 
         let vault = TempDir::new().unwrap();
-        let tmp_dir = vault.path().join(".textree").join("tmp");
+        git2::Repository::init(vault.path()).unwrap();
+        let tmp_dir = canary_dir(vault.path()).expect("a repository root has a canary place");
         std::fs::create_dir_all(&tmp_dir).unwrap();
         let liveness = Arc::new(Mutex::new(LivenessState::new(2)));
         let counter = AtomicU64::new(0);

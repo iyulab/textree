@@ -57,6 +57,9 @@ const DEFAULT_VAULT_BASE = join(tmpdir(), "textree-e2e-default-vault");
  */
 const PERSONAL_BASE = join(tmpdir(), "textree-e2e-personal");
 
+/** Keep in sync with E2E_WATCHDOG_INTERVAL_MS in e2e/helpers.ts. */
+const WATCHDOG_INTERVAL_MS = "3000";
+
 // Only ever recreate a directory we own: inside the temp dir and under our own name.
 for (const [owned, expected] of [
   [DEFAULT_VAULT_BASE, join(tmpdir(), "textree-e2e-default-vault")],
@@ -162,6 +165,9 @@ const child = spawn(`tauri dev --config "${GENERATED_OVERLAY}"`, {
     ...process.env,
     TEXTREE_DEFAULT_VAULT_BASE: DEFAULT_VAULT_BASE,
     TEXTREE_PERSONAL_BASE: PERSONAL_BASE,
+    // The watchdog probes every few seconds instead of every five minutes, so a spec can watch
+    // whole probe cycles (e2e/lifetime.spec.ts) — and every other spec runs with it probing.
+    TEXTREE_WATCHDOG_INTERVAL_MS: WATCHDOG_INTERVAL_MS,
   },
 });
 

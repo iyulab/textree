@@ -37,6 +37,12 @@ export const E2E_DEFAULT_VAULT_BASE = join(tmpdir(), "textree-e2e-default-vault"
 export const E2E_PERSONAL_BASE = join(tmpdir(), "textree-e2e-personal");
 
 /**
+ * How often the app's watcher watchdog probes under `npm run dev:e2e` (production: five minutes).
+ * Keep in sync with WATCHDOG_INTERVAL_MS in scripts/dev-e2e.mjs.
+ */
+export const E2E_WATCHDOG_INTERVAL_MS = 3000;
+
+/**
  * Directory holding the settings the app keeps for one vault.
  *
  * Settings live outside the notes folder, keyed per folder, so a spec cannot read them at a path

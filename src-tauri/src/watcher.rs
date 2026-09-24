@@ -155,7 +155,7 @@ fn changes_from_events(
 
 /// Collapses a debounce batch into at most one change per path.
 ///
-/// A single logical write goes through `atomic_write` (temp in `.textree/tmp/` → rename onto the
+/// A single logical write goes through `atomic_write` (temp in repository storage → rename onto the
 /// note), which the OS surfaces as MULTIPLE events on the same final path — on Windows a rename that
 /// overwrites an existing file yields Remove + Create + Modify. Processing each event separately
 /// defeats the consume-once self-write suppression: the first matching event consumes the
