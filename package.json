@@ -20,11 +20,13 @@
     "test:unit": "vitest run",
     "test:e2e": "playwright test",
     "dev:e2e": "node scripts/dev-e2e.mjs",
+    "e2e:run": "node scripts/e2e-run.mjs",
     "notices": "node scripts/generate-third-party-notices.mjs",
     "notices:check": "node scripts/generate-third-party-notices.mjs --check",
     "tokens:check": "node scripts/check-forbidden-tokens.mjs",
     "pins:check": "node scripts/check-pin-drift.mjs",
     "host:smoke": "node scripts/host-smoke.mjs",
+    "gate": "node scripts/gate.mjs",
     "tauri": "tauri"
   },
   "license": "GPL-3.0-only",
