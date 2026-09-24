@@ -15,6 +15,7 @@ function harness(opts: { active?: string } = {}) {
   const calls: Call[] = [];
   const asked: LeaveQuestion[] = [];
   let removedCount = 0;
+  const copies: { path: string; text: string }[] = [];
   const state: NoteSaveState = initialNoteSaveState();
   const save = new NoteSave(state, {
     root: () => "/vault",
@@ -33,12 +34,17 @@ function harness(opts: { active?: string } = {}) {
       if (active) active = remap(active);
     },
     removed: () => removedCount++,
+    keepCopy: async (_root, path, text) => {
+      copies.push({ path, text });
+      return path.replace(/\.md$/, " (2).md");
+    },
   });
   return {
     save,
     state,
     calls,
     asked,
+    copies,
     removedCount: () => removedCount,
     open(path: string | null, text = "") {
       active = path;
@@ -137,9 +143,45 @@ describe("NoteSave — switching notes", () => {
     await settle();
     h.calls[0].settle({ kind: "conflict", disk: "elsewhere" });
     await settle();
-    expect(h.state.saveError?.summary).toContain('"A"');
+    // The other change is not overwritten, and the edits are not dropped: they become a copy.
+    expect(h.copies).toEqual([{ path: "A.md", text: "a1" }]);
+    expect(h.state.saveError?.summary).toContain('"A (2)"');
+    expect(h.save.stranded).toBe(0);
     expect(h.state.conflictDisk).toBeNull();
     expect(h.state.saveFailure).toBeNull();
+  });
+
+  it("a note left behind whose copy cannot be made keeps the edits and tries again", async () => {
+    let fail = true;
+    let active: string | null = "A.md";
+    const writes: string[] = [];
+    const copies: string[] = [];
+    const save = new NoteSave(initialNoteSaveState(), {
+      root: () => "/v",
+      activePath: () => active,
+      write: async (_r, path, text) => {
+        writes.push(`${path}:${text}`);
+        return path === "A.md" ? { kind: "conflict", disk: "elsewhere" } : written;
+      },
+      keepCopy: async (_r, path, text) => {
+        if (fail) throw new Error("disk full");
+        copies.push(`${path}:${text}`);
+        return "A (2).md";
+      },
+    });
+    save.opened("a0");
+    save.schedule("A.md", "a1");
+    active = "B.md";
+    save.opened("b0");
+    save.schedule("B.md", "b1");
+    await settle();
+    expect(save.stranded).toBe(1);
+    expect(save.state.saveError?.summary).toContain('"A"');
+    fail = false;
+    await save.flush();
+    expect(copies).toEqual(["A.md:a1"]);
+    expect(save.stranded).toBe(0);
+    expect(writes.filter((w) => w.startsWith("A.md"))).toEqual(["A.md:a1", "A.md:a1"]);
   });
 
   it("typing that goes on while leaving is saved rather than read as a failure", async () => {

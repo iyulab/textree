@@ -76,7 +76,7 @@ async function handleChange(handlers: SyncHandlers, payload: FsChange): Promise<
   }
   handlers.activePresent();
 
-  const action = decideChangeAction(disk, handlers.isDirty(), handlers.synced());
+  const action = decideChangeAction(disk, handlers.activeDoc(), handlers.isDirty(), handlers.synced());
   if (action === "conflict") handlers.conflict(disk); // protect unsaved edits — user chooses
   else if (action === "reload") handlers.reloadActive(disk); // reload silently
 }

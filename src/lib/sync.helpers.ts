@@ -25,12 +25,15 @@ export function decideRescanAction(disk: string, live: string, dirty: boolean, s
 export type ChangeAction = "reload" | "conflict" | "none";
 
 /**
- * Decide what a per-path change to the open note means. A clean note reloads (FS is the truth).
- * A dirty note only has a conflict when disk no longer holds what was last synced — a change event
- * whose content is still that (a late echo, a touch without a content change) is not an external
- * edit, and raising a banner for it would ask the user about their own typing.
+ * Decide what a per-path change to the open note means. When disk already holds what the user
+ * sees, there is nothing to take in — an event about the app's own move or rename of the open note,
+ * or a touch that changed no content, must not rebuild the editor under the cursor. Otherwise a
+ * clean note reloads (FS is the truth). A dirty note only has a conflict when disk no longer holds
+ * what was last synced — a change event whose content is still that (a late echo) is not an
+ * external edit, and raising a banner for it would ask the user about their own typing.
  */
-export function decideChangeAction(disk: string, dirty: boolean, synced: string): ChangeAction {
+export function decideChangeAction(disk: string, live: string, dirty: boolean, synced: string): ChangeAction {
+  if (disk === live) return "none";
   if (!dirty) return "reload";
   return disk === synced ? "none" : "conflict";
 }

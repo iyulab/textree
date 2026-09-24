@@ -114,6 +114,12 @@
     removed: () => {
       conflictAttention = false;
     },
+    // Like putting a note back: never overwrites, and when its folder is gone the copy goes to the
+    // top of the vault — the edits matter more than the place.
+    keepCopy: (vault, path, text) =>
+      createNoteWithContent(vault, parentDir(path), noteStem(path), text).catch(() =>
+        createNoteWithContent(vault, vault, noteStem(path), text),
+      ),
     moved: (remap) => {
       if (!activePath) return;
       const to = remap(activePath);
@@ -548,7 +554,14 @@
       save.opened("");
       return;
     }
-    content = await readNote(root, node.body_path);
+    const text = await readNote(root, node.body_path);
+    // Opening the note already open keeps its editor (same key), so the screen would go on showing
+    // the old text while the save baseline moved to disk — the next keystroke would write the old
+    // text back over what is there now (a version just restored, say). When disk differs from what
+    // is on screen, the editor is rebuilt from disk.
+    const reopened = activePath !== null && samePath(node.body_path, activePath);
+    if (reopened && text !== liveDoc) reloadVersion += 1;
+    content = text;
     activeName = node.name;
     activePath = node.body_path;
     save.opened(content);

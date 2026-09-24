@@ -65,6 +65,11 @@ export interface NoteSaveDeps {
   removed?: () => void;
   /** A structure change moved paths (see `move`); the open note may be among them. */
   moved?: (remap: Remap) => void;
+  /**
+   * Keep `text` as a new note beside `path` without overwriting anything, and say where it went.
+   * Used for edits to a note already left that can no longer be written to it.
+   */
+  keepCopy?: (root: string, path: string, text: string) => Promise<string>;
   /** Leaving was refused; the named banner should be brought to the person's attention. */
   ask?: (question: LeaveQuestion) => void;
   debounceMs?: number;
@@ -299,6 +304,24 @@ export class NoteSave {
     });
   }
 
+  async #keepAsCopy(job: PendingEdit, root: string): Promise<void> {
+    const s = this.state;
+    const name = noteStem(job.path);
+    try {
+      if (!this.deps.keepCopy) throw new Error("no place to keep them");
+      const copy = await this.deps.keepCopy(root, job.path, job.text);
+      if (this.#stranded.size === 0 && !s.saveFailure) s.saveError = null;
+      s.saveError ??= friendlyError(
+        `"${name}" changed on disk after you left it, so your last edits to it were kept as "${noteStem(copy)}".`,
+      );
+    } catch (e) {
+      this.#stranded.set(job.path, { root, edit: job });
+      s.saveError = friendlyError(
+        `Your last edits to "${name}" are not saved yet — it changed on disk, and keeping them as a copy failed (${friendlyError(e).summary}). They are kept and tried again with every save.`,
+      );
+    }
+  }
+
   #syncDirty(): void {
     const open = this.deps.activePath();
     this.state.dirty = this.#pending !== null && open !== null && this.#pending.path === open;
@@ -330,10 +353,9 @@ export class NoteSave {
       const active = retry ? null : this.deps.activePath();
       if (outcome.kind === "conflict") {
         if (job.path !== active) {
-          // Edits to a note already left: there is no banner to ask on.
-          s.saveError = friendlyError(
-            `Your last edits to "${noteStem(job.path)}" were not saved — it changed on disk.`,
-          );
+          // Edits to a note already left that changed (or went) on disk meanwhile: there is no banner
+          // to ask on, and writing would overwrite the other change. Keep them as a copy beside it.
+          await this.#keepAsCopy(job, root);
           return;
         }
         s.saveError = null;

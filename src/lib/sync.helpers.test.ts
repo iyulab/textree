@@ -26,15 +26,19 @@ describe("decideRescanAction", () => {
 });
 
 describe("decideChangeAction", () => {
-  it("reloads a clean note", () => {
-    expect(decideChangeAction("disk", false, "anything")).toBe("reload");
+  it("reloads a clean note that changed on disk", () => {
+    expect(decideChangeAction("changed elsewhere", "on screen", false, "on screen")).toBe("reload");
+  });
+
+  it("leaves a clean note alone when disk already holds what the user sees (the app moved or renamed it)", () => {
+    expect(decideChangeAction("same", "same", false, "same")).toBe("none");
   });
 
   it("raises a conflict when disk moved away from the last sync while there are unsaved edits", () => {
-    expect(decideChangeAction("edited elsewhere", true, "last saved")).toBe("conflict");
+    expect(decideChangeAction("edited elsewhere", "typing", true, "last saved")).toBe("conflict");
   });
 
   it("ignores a change event whose content is still what was last synced", () => {
-    expect(decideChangeAction("last saved", true, "last saved")).toBe("none");
+    expect(decideChangeAction("last saved", "typing", true, "last saved")).toBe("none");
   });
 });
