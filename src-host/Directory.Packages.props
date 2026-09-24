@@ -6,6 +6,7 @@
     <PackageVersion Include="Microsoft.ApplicationInsights" Version="2.22.0" />
     <PackageVersion Include="FluxIndex.Core" Version="0.51.2" />
     <PackageVersion Include="FluxIndex.Storage.SQLite" Version="0.51.2" />
+    <PackageVersion Include="FluxIndex.Providers.LMSupply" Version="0.51.2" />
     <PackageVersion Include="FluxIndex.Extensions.FileVault" Version="0.15.0" />
     <PackageVersion Include="FileFlux" Version="0.28.1" />
     <PackageVersion Include="LMSupply.Embedder" Version="0.74.0" />

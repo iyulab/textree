@@ -17,7 +17,7 @@
  * The second form checks what an installer carries: a single self-extracting file whose native
  * libraries only appear at launch, which `dotnet run` never exercises.
  */
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
@@ -125,7 +125,12 @@ try {
   console.log("[host:smoke] OK");
 } finally {
   await post("/shutdown").catch(() => {});
-  await sleep(1500);
-  if (host.exitCode === null) host.kill();
+  for (let i = 0; i < 20 && host.exitCode === null; i++) await sleep(500);
+  // `dotnet run` goes through a shell on Windows: killing the shell leaves the host running,
+  // holding the build output locked. End the whole tree.
+  if (host.exitCode === null) {
+    if (process.platform === "win32") spawnSync("taskkill", ["/PID", String(host.pid), "/T", "/F"]);
+    else host.kill();
+  }
   rmSync(vault, { recursive: true, force: true });
 }

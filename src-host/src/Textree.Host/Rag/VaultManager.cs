@@ -16,7 +16,7 @@ namespace Textree.Host.Rag;
 /// </summary>
 public sealed class VaultManager : IDisposable
 {
-    private readonly LmSupplyEmbeddingService _embedder;
+    private readonly EmbedderSlot _embedder;
     private readonly TextreeHostOptions _options;
     private readonly Lock _gate = new();
 
@@ -25,13 +25,13 @@ public sealed class VaultManager : IDisposable
     private IServiceScope? _scope;
     private IVault? _vault;
 
-    public VaultManager(LmSupplyEmbeddingService embedder, TextreeHostOptions options)
+    public VaultManager(EmbedderSlot embedder, TextreeHostOptions options)
     {
         _embedder = embedder ?? throw new ArgumentNullException(nameof(embedder));
         _options = options ?? throw new ArgumentNullException(nameof(options));
     }
 
-    public bool EmbedderReady => _embedder.Dimensions > 0;
+    public bool EmbedderReady => _embedder.Ready;
 
     /// <summary>
     /// Ensures the active vault targets <paramref name="vaultPath"/>, (re)building the
@@ -75,18 +75,19 @@ public sealed class VaultManager : IDisposable
             // on the SQLite options so the vec table name is deterministic at migration time,
             // and BindIdentity must run on the resolved vector store before any store op
             // (FluxIndex 0.13.x — same contract Filer satisfies via VectorStoreIdentityBinder).
-            var identity = _embedder.GetIdentity();
+            var embedding = _embedder.Service;
+            var identity = embedding.GetIdentity();
 
             var services = new ServiceCollection();
             services.AddLogging();
 
             // Shared embedder (singleton): determines the vector store dimension.
-            services.TryAddSingleton<IEmbeddingService>(_embedder);
+            services.TryAddSingleton<IEmbeddingService>(embedding);
 
             services.AddSQLiteVecVectorStore(o =>
             {
                 o.DatabasePath = dbPath;
-                o.VectorDimension = _embedder.Dimensions;
+                o.VectorDimension = embedding.GetEmbeddingDimension();
                 o.UseSQLiteVec = true;
                 o.AutoMigrate = true;
                 o.EmbeddingFingerprint = identity.Fingerprint;

@@ -4,18 +4,17 @@ using Xunit;
 public class EmbedderLazyTests
 {
     [Fact]
-    public void Dimensions_is_zero_before_model_set()
+    public void Not_ready_before_the_model_loads()
     {
-        var svc = new LmSupplyEmbeddingService();
-        Assert.Equal(0, svc.Dimensions);
-        Assert.Equal(0, svc.GetEmbeddingDimension());
+        var slot = new EmbedderSlot();
+        Assert.False(slot.Ready);
     }
 
     [Fact]
-    public async Task EmbedCore_throws_before_model_set()
+    public void Asking_for_the_service_before_the_model_loads_says_so()
     {
-        var svc = new LmSupplyEmbeddingService();
-        await Assert.ThrowsAsync<InvalidOperationException>(
-            () => svc.GenerateEmbeddingsBatchAsync(new[] { "hi" }));
+        var slot = new EmbedderSlot();
+        var ex = Assert.Throws<InvalidOperationException>(() => slot.Service);
+        Assert.Contains("not loaded", ex.Message);
     }
 }

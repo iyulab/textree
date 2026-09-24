@@ -18,7 +18,9 @@ public class VaultManagerScopeTests
         var model = await LocalEmbedder.LoadAsync(
             opts.EmbeddingModel,
             new EmbedderOptions { Provider = LMSupply.ExecutionProvider.Cpu });
-        return new VaultManager(new LmSupplyEmbeddingService(model), opts);
+        var slot = new EmbedderSlot();
+        slot.Set(model);
+        return new VaultManager(slot, opts);
     }
 
     [Fact]

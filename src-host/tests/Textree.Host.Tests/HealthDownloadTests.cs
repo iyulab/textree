@@ -74,6 +74,33 @@ public sealed class HealthDownloadTests
         Assert.Equal(2, dl.GetProperty("fileCount").GetInt32());
     }
 
+    [Fact]
+    public async Task Index_says_warming_while_the_model_is_still_loading()
+    {
+        // Indexing needs the model. Before it has loaded, the answer is "not yet" rather than a
+        // failure — and not "ok", since nothing was indexed.
+        var gate = new TaskCompletionSource<IEmbeddingModel>();
+        var loader = new StubEmbedderLoader(gate.Task, 0, 0);
+        using var factory = new TextreeHostFactory(loader);
+        var client = factory.CreateClient();
+        var vault = Directory.CreateTempSubdirectory("index-warming-").FullName;
+        try
+        {
+            var note = Path.Combine(vault, "present.md");
+            File.WriteAllText(note, "# present");
+
+            var resp = await client.PostAsJsonAsync("/index", new { vaultPath = vault, path = note });
+
+            Assert.Equal(System.Net.HttpStatusCode.ServiceUnavailable, resp.StatusCode);
+            Assert.Contains("warming", await resp.Content.ReadAsStringAsync());
+        }
+        finally
+        {
+            gate.TrySetCanceled();
+            Directory.Delete(vault, recursive: true);
+        }
+    }
+
     // ── Test host: replaces IEmbedderLoader and/or ModelStatus with stubs ──
     private sealed class TextreeHostFactory : WebApplicationFactory<Program>
     {

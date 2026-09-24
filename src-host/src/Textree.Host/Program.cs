@@ -17,9 +17,9 @@ using IChatClient = Microsoft.Extensions.AI.IChatClient;
 // embedderReady=false rather than remaining unreachable until the model is on disk.
 var opts = new TextreeHostOptions();
 var status = new ModelStatus();
-// Empty embedder: Dimensions==0 until SetModel is called, keeping EmbedderReady==false
-// and /search returning "warming" until the background load finishes.
-var embedder = new LmSupplyEmbeddingService();
+// Empty until the background load finishes, keeping EmbedderReady==false and /search
+// returning "warming" meanwhile.
+var embedder = new EmbedderSlot();
 
 // The local model (phi-4-mini) is an ONNX Runtime GenAI model. LMSupply.Generator ships the
 // GGUF path only; the ONNX backend is its own package and has to be registered before any
@@ -88,7 +88,7 @@ _ = Task.Run(async () =>
         var model = await app.Services.GetRequiredService<IEmbedderLoader>()
             .LoadAsync(opts.EmbeddingModel, status.EmbedderProgress, CancellationToken.None);
         status.SetEmbedderPhase(ModelPhase.Loading);
-        embedder.SetModel(model);
+        embedder.Set(model);
         status.SetEmbedderPhase(ModelPhase.Ready);
     }
     catch (Exception ex)
@@ -157,6 +157,14 @@ app.MapPost("/index", async (IndexRequest req, CancellationToken ct) =>
     // resolve to CWD — a scope-correctness hazard. Reject at the edge.
     if (string.IsNullOrWhiteSpace(req.VaultPath) || string.IsNullOrWhiteSpace(req.Path))
         return Results.BadRequest("VaultPath and Path required");
+
+    // A source that is already gone is gone whether or not the model has loaded yet.
+    if (!File.Exists(req.Path))
+        return Results.NotFound(new { status = "gone" });
+
+    // Nothing to index with until the model has loaded; the caller may try again.
+    if (!mgr.EmbedderReady)
+        return Results.Json(new { status = "warming" }, statusCode: StatusCodes.Status503ServiceUnavailable);
 
     try
     {
