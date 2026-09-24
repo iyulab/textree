@@ -1297,8 +1297,13 @@ fn prune_empty_dirs(dir: &Path) {
 /// Each copy the earlier version set aside could be restored on its own. Carried under one path,
 /// only the latest would stay reachable, so the earlier ones are given the name the earlier
 /// version's own trash gave a second copy — `name (1).md`, then `(2)` — skipping any name
-/// already in the folder or already given in this pass.
-fn earlier_copy_name(root: &Path, rel: &str, given: &mut HashSet<String>) -> String {
+/// already in the folder, already given in this pass, or already `occupied` in the history.
+fn earlier_copy_name(
+    root: &Path,
+    rel: &str,
+    given: &mut HashSet<String>,
+    occupied: &dyn Fn(&str) -> bool,
+) -> String {
     let path = Path::new(rel);
     let parent = path.parent().filter(|p| !p.as_os_str().is_empty());
     let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
@@ -1313,7 +1318,7 @@ fn earlier_copy_name(root: &Path, rel: &str, given: &mut HashSet<String>) -> Str
             Some(p) => format!("{}/{}", p.to_string_lossy().replace('\\', "/"), candidate_name),
             None => candidate_name,
         };
-        if !root.join(&candidate).exists() && given.insert(candidate.to_lowercase()) {
+        if !root.join(&candidate).exists() && !occupied(&candidate) && given.insert(candidate.to_lowercase()) {
             return candidate;
         }
         n += 1;
@@ -1409,16 +1414,32 @@ fn carry_over_set_aside(root: &Path, prepared: &crate::git_engine::VaultRepo) ->
     }
     let mut given: HashSet<String> = latest_of.keys().cloned().collect();
 
+    // What the history already holds for deleted content — carried on an earlier open (a copy
+    // that could not be read then stays behind and arrives later), or deleted since. Writing a
+    // copy over such a path would leave only the newest write reachable, so a path already held
+    // is never written over: the copy arriving now takes a name of its own instead.
+    let held: HashSet<String> = crate::git_engine::tip_paths(repo, crate::git_engine::SNAPSHOT_REF)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|p| p.to_lowercase())
+        .collect();
+    let occupied = |rel: &str| {
+        let in_repo = prepared.path_in_repo(Path::new(rel)).to_string_lossy().replace('\\', "/").to_lowercase();
+        let beneath = format!("{in_repo}/");
+        held.contains(&in_repo) || held.iter().any(|p| p.starts_with(&beneath))
+    };
+
     for (i, item) in items.iter().enumerate() {
         if validate_vault_rel(&item.original_rel).is_err() {
             // Not a name that can exist inside the folder (a dot-name, a reserved device name):
             // it stays, and the report says so.
             continue;
         }
-        let carried_as = if latest_of.get(&item.original_rel.to_lowercase()) == Some(&i) {
+        let latest = latest_of.get(&item.original_rel.to_lowercase()) == Some(&i);
+        let carried_as = if latest && !occupied(&item.original_rel) {
             item.original_rel.clone()
         } else {
-            earlier_copy_name(root, &item.original_rel, &mut given)
+            earlier_copy_name(root, &item.original_rel, &mut given, &occupied)
         };
         let put_aside = dir.join(&item.trash_name);
         let sources = if item.is_dir {
@@ -2136,6 +2157,36 @@ mod tests {
         restore_deleted(root_s, "note (1).md".into()).unwrap();
         assert_eq!(std::fs::read_to_string(root.join("note.md")).unwrap(), "second draft", "the latest keeps the path");
         assert_eq!(std::fs::read_to_string(root.join("note (1).md")).unwrap(), "first draft", "the earlier one is still there");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_copy_arriving_on_a_later_open_does_not_write_over_one_already_carried() {
+        // The earlier copy of a path deleted twice cannot be read on the first open, so only the
+        // later one is carried. When the earlier one arrives on the next open, it must not take
+        // the path the later one already holds.
+        use std::os::windows::fs::OpenOptionsExt;
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        git2::Repository::init(root).unwrap();
+        let root_s = root.to_string_lossy().to_string();
+        as_an_earlier_version_left_it(root, &[]);
+        let trash = root.join(".textree").join("trash");
+        std::fs::write(trash.join("note.md"), "first draft").unwrap();
+        std::fs::write(trash.join("note (1).md"), "second draft").unwrap();
+        listing(root, &[("note.md", "note.md", 1_600_000_000, false), ("note (1).md", "note.md", 1_700_000_000, false)]);
+        let held = std::fs::OpenOptions::new().read(true).share_mode(0x4).open(trash.join("note.md")).unwrap();
+
+        let first = move_state_out_of_vault(root_s.clone()).unwrap();
+        drop(held);
+        let second = move_state_out_of_vault(root_s.clone()).unwrap();
+
+        assert_eq!((first.notes, second.notes), (1, 1));
+        assert!(!root.join(".textree").exists());
+        restore_deleted(root_s.clone(), "note.md".into()).unwrap();
+        restore_deleted(root_s, "note (1).md".into()).unwrap();
+        assert_eq!(std::fs::read_to_string(root.join("note.md")).unwrap(), "second draft", "the one carried first keeps its path");
+        assert_eq!(std::fs::read_to_string(root.join("note (1).md")).unwrap(), "first draft");
     }
 
     #[test]
