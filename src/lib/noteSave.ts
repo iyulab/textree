@@ -75,12 +75,17 @@ export interface NoteSaveDeps {
   /** Leaving was refused; the named banner should be brought to the person's attention. */
   ask?: (question: LeaveQuestion) => void;
   debounceMs?: number;
+  /** How long closing waits for a save before treating the folder as not answering. Default 5 s. */
+  closeWaitMs?: number;
 }
 
 const DEFAULT_DEBOUNCE_MS = 500;
 /** Extra saves before leaving for edits typed while the last one ran. Bounded, so someone who never
  *  stops typing is not held. */
 const MAX_TRAILING_SAVES = 5;
+/** A save still running after this long when the window closes is taken as a folder that is not
+ *  answering (a stalled sync or network drive). The wait is bounded so it cannot hold the app open. */
+const DEFAULT_CLOSE_WAIT_MS = 5000;
 
 export class NoteSave {
   #synced = "";
@@ -91,17 +96,20 @@ export class NoteSave {
   // Oldest first, and never merged: two kept edits to one note are two things the person typed.
   #stranded: { root: string; edit: PendingEdit }[] = [];
   #warnedOnClose = false;
+  #warnedStalledOnClose = false;
   // Saves run one at a time. Two in flight would each be based on the same state, and the second
   // would mistake the first for a change made elsewhere.
   #saving: Promise<void> = Promise.resolve();
   #timer: ReturnType<typeof setTimeout> | null = null;
   readonly #debounceMs: number;
+  readonly #closeWaitMs: number;
 
   constructor(
     readonly state: NoteSaveState,
     private readonly deps: NoteSaveDeps,
   ) {
     this.#debounceMs = deps.debounceMs ?? DEFAULT_DEBOUNCE_MS;
+    this.#closeWaitMs = deps.closeWaitMs ?? DEFAULT_CLOSE_WAIT_MS;
   }
 
   /**
@@ -203,10 +211,30 @@ export class NoteSave {
    * Edits kept for a note already left live only in memory, so the first close that finds them
    * still unwritten stays open and warns; the next one closes without them — a disk that never
    * takes them must not keep the app from closing.
+   *
+   * The same holds for a save that never comes back at all: a write cannot be taken back once it
+   * is handed to the disk, so the close does not cancel it — it stops waiting. The first close that
+   * finds a save still running after the wait stays open and says so; the next one closes. Nothing
+   * is written after it, so a write that lands late cannot overwrite anything newer.
    */
   async beforeClosing(): Promise<"close" | "stay"> {
     if (!this.#pending && this.#stranded.length === 0) return "close";
-    if ((await this.beforeLeaving()) !== "saved") return "stay";
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const stalled = new Promise<"stalled">((done) => {
+      timer = setTimeout(() => done("stalled"), this.#closeWaitMs);
+    });
+    const left = await Promise.race([this.beforeLeaving(), stalled]);
+    clearTimeout(timer);
+    if (left === "stalled") {
+      if (this.#warnedStalledOnClose) return "close";
+      this.#warnedStalledOnClose = true;
+      this.state.saveError = friendlyError(
+        "Some edits are still being written — the folder isn't answering. Close again to quit without waiting for them.",
+      );
+      return "stay";
+    }
+    this.#warnedStalledOnClose = false;
+    if (left !== "saved") return "stay";
     if (this.#stranded.length > 0 && !this.#warnedOnClose) {
       this.#warnedOnClose = true;
       this.state.saveError = friendlyError(

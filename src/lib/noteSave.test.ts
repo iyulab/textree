@@ -362,6 +362,44 @@ describe("NoteSave — switching notes", () => {
     expect(await second).toBe("close");
   });
 
+  it("a write that never returns does not keep the app from closing: it warns once, then closes", async () => {
+    const hung: string[] = [];
+    const save = new NoteSave(initialNoteSaveState(), {
+      root: () => "/v",
+      activePath: () => "A.md",
+      // The folder stopped answering: the write neither lands nor fails.
+      write: (_r, path) => {
+        hung.push(path);
+        return new Promise<WriteOutcome>(() => {});
+      },
+      closeWaitMs: 10,
+    });
+    save.opened("a0");
+    save.schedule("A.md", "a1");
+
+    const first = save.beforeClosing();
+    await vi.advanceTimersByTimeAsync(10);
+    expect(await first).toBe("stay");
+    expect(save.state.saveError?.summary).toContain("still being written");
+    expect(save.state.saveError?.summary).toContain("Close again");
+    expect(hung).toEqual(["A.md"]);
+
+    const second = save.beforeClosing();
+    await vi.advanceTimersByTimeAsync(10);
+    expect(await second).toBe("close");
+  });
+
+  it("a write that comes back while the close waits is not mistaken for a stuck one", async () => {
+    const h = harness();
+    h.save.opened("a0");
+    h.save.schedule("A.md", "a1");
+    const closing = h.save.beforeClosing();
+    await settle();
+    h.calls[0].settle(written);
+    expect(await closing).toBe("close");
+    expect(h.state.saveError).toBeNull();
+  });
+
   it("a later close warns again about edits kept after an earlier warning was answered", async () => {
     let active: string | null = "A.md";
     // Only the notes being left refuse the write; the open one saves fine, so a "stay" can only come
