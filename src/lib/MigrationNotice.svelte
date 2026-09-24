@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { lines, reassurance, TITLE } from "./migrationNotice.helpers";
+  import { lines, reassurance, title } from "./migrationNotice.helpers";
   import type { MoveOut } from "./ipc";
 
   interface Props {
@@ -15,19 +15,19 @@
   class="scrim"
   role="dialog"
   aria-modal="true"
-  aria-label={TITLE}
+  aria-label={title(moved)}
   tabindex="-1"
   onkeydown={(e) => { if (e.key === "Escape") { e.preventDefault(); onclose(); } }}
   data-testid="migration-notice"
 >
   <div class="dialog">
-    <h2 class="title">{TITLE}</h2>
+    <h2 class="title">{title(moved)}</h2>
     <ul class="what">
       {#each lines(moved) as line (line)}
         <li>{line}</li>
       {/each}
     </ul>
-    <p class="calm">{reassurance()}</p>
+    <p class="calm">{reassurance(moved)}</p>
     <div class="buttons">
       <button class="btn primary" onclick={onclose} data-testid="migration-ok">Got it</button>
     </div>

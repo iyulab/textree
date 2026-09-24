@@ -140,6 +140,10 @@ export type MoveOut = {
   settings: boolean;
   /** How many notes the set-aside copies held, now reachable as deleted notes. */
   notes: number;
+  /** How many other files (attachments kept beside a deleted note) came with them. */
+  files: number;
+  /** What is still inside the folder's `.textree/` afterwards, relative to the folder. */
+  leftBehind: string[];
 };
 
 /**

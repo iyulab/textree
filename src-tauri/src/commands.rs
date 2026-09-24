@@ -1215,15 +1215,24 @@ fn last_written_at(
 #[derive(Serialize, Debug, Clone, PartialEq, Eq, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct MoveOut {
-    /// Whether settings — favourites, ordering — were carried over to where they live now.
+    /// Whether settings — favourites, ordering, saved views — were carried over to where they
+    /// live now.
     pub settings: bool,
     /// How many notes the set-aside copies held, now reachable as deleted notes.
     pub notes: usize,
+    /// How many other files (attachments kept beside a deleted note) came with them.
+    pub files: usize,
+    /// What is still inside the folder's `.textree/` afterwards, relative to the folder.
+    ///
+    /// Anything here could not be carried — unreadable, refused by the repository, or not ours
+    /// to know about — and stays exactly where it was. It is reported so that nothing tells the
+    /// person their folder holds only notes while it does not.
+    pub left_behind: Vec<String>,
 }
 
 impl MoveOut {
     fn happened(&self) -> bool {
-        self.settings || self.notes > 0
+        self.settings || self.notes > 0 || self.files > 0 || !self.left_behind.is_empty()
     }
 }
 
@@ -1247,22 +1256,17 @@ fn files_beneath(dir: &Path) -> Vec<(PathBuf, PathBuf)> {
     found
 }
 
-/// Carries the copies an earlier version set aside into the history, dated as they were.
+/// Every copy an earlier version set aside, with where it came from and when it left.
 ///
-/// The date matters as much as the contents: the list of deleted notes is ordered by when each
-/// one left, and the copies are the only place that answer exists for anything deleted before
-/// the history started keeping it. Losing it here would silently reorder someone's list.
-fn carry_over_set_aside(root: &Path, prepared: &crate::git_engine::VaultRepo) -> CarriedOver {
-    let dir = root.join(".textree").join("trash");
-    if !dir.exists() {
-        return CarriedOver { notes: 0, everything: true };
-    }
-    // What is actually in there, which is not the same as what the list says is in there. A
-    // corrupt list reads as empty, an entry can name a file that is gone, and a copy can be
-    // sitting there with no entry at all — the old restore screen showed those as unknown
-    // origin and could still put them back. Each name is struck off as it is carried, and
-    // whatever is left over is why the folder stays.
-    let mut left_over: BTreeSet<String> = std::fs::read_dir(&dir)
+/// What is actually in the folder, which is not the same as what the list says is in there. A
+/// corrupt list reads as empty, an entry can name a file that is gone, and a copy can be sitting
+/// there with no entry at all. The earlier version treated that last case as ordinary — a copy
+/// whose entry could not be written was kept, and its restore screen offered it back as being
+/// of unknown origin, to the top of the folder. So does this: such a copy is carried under its
+/// own name at the top of the folder, dated by when the file was last written, which is the
+/// nearest thing to when it left that survives.
+fn set_aside_copies(root: &Path, dir: &Path) -> Vec<TrashItem> {
+    let mut on_disk: BTreeSet<String> = std::fs::read_dir(dir)
         .map(|entries| {
             entries
                 .filter_map(|e| e.ok())
@@ -1271,31 +1275,81 @@ fn carry_over_set_aside(root: &Path, prepared: &crate::git_engine::VaultRepo) ->
         })
         .unwrap_or_default();
 
-    let manifest = read_trash_manifest(root);
+    let mut found = Vec::new();
+    for mut item in read_trash_manifest(root) {
+        // Listed twice, or listed but gone: the copy on disk is what counts, once.
+        if !on_disk.remove(&item.trash_name) {
+            continue;
+        }
+        // An entry whose recorded origin cannot be a path inside the folder still names a real
+        // copy; it goes back the way an unlisted one does rather than being left behind.
+        if validate_vault_rel(&item.original_rel).is_err() {
+            item.original_rel = item.trash_name.clone();
+        }
+        found.push(item);
+    }
+    for name in on_disk {
+        let at = dir.join(&name);
+        let deleted_at = std::fs::metadata(&at)
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        found.push(TrashItem {
+            is_dir: at.is_dir(),
+            original_rel: name.clone(),
+            trash_name: name,
+            deleted_at,
+        });
+    }
+    found
+}
+
+/// Carries the copies an earlier version set aside into the history, dated as they were.
+///
+/// The date matters as much as the contents: the list of deleted notes is ordered by when each
+/// one left, and the copies are the only place that answer exists for anything deleted before
+/// the history started keeping it. Losing it here would silently reorder someone's list.
+///
+/// Each copy is removed from the folder as soon as the history holds it — from then on it is no
+/// longer the only copy — so running this again carries nothing twice. A copy that could not be
+/// carried stays where it is, and whether anything stayed is read off the folder afterwards
+/// rather than reported from here.
+fn carry_over_set_aside(root: &Path, prepared: &crate::git_engine::VaultRepo) -> CarriedOver {
+    let dir = root.join(".textree").join("trash");
+    let mut carried = CarriedOver::default();
+    if !dir.exists() {
+        return carried;
+    }
+
     let repo = prepared.repo();
     let Ok((author, committer)) = crate::git_engine::commit_identities(repo) else {
         log::warn!("carry_over_set_aside: no identity available");
-        return CarriedOver { notes: 0, everything: false };
+        return carried;
     };
 
     // Oldest first, so the newest write for any one path is also the latest deletion of it.
-    let mut items = manifest.clone();
+    let mut items = set_aside_copies(root, &dir);
     items.sort_by_key(|item| item.deleted_at);
 
-    let mut carried = 0usize;
     for item in &items {
-        let put_aside = dir.join(&item.trash_name);
-        if !put_aside.exists() || validate_vault_rel(&item.original_rel).is_err() {
+        if validate_vault_rel(&item.original_rel).is_err() {
+            // Not a name that can exist inside the folder (a dot-name, a reserved device name):
+            // it stays, and the report says so.
             continue;
         }
+        let put_aside = dir.join(&item.trash_name);
         let sources = if item.is_dir {
             files_beneath(&put_aside)
         } else {
             vec![(put_aside.clone(), PathBuf::new())]
         };
         let mut entries: Vec<(PathBuf, Vec<u8>)> = Vec::new();
+        let mut unreadable = false;
         for (on_disk, below) in sources {
             let Ok(content) = std::fs::read(&on_disk) else {
+                unreadable = true;
                 continue;
             };
             let mut target = PathBuf::from(&item.original_rel);
@@ -1328,30 +1382,56 @@ fn carry_over_set_aside(root: &Path, prepared: &crate::git_engine::VaultRepo) ->
             crate::git_engine::WhenUnchanged::Record,
         ) {
             Ok(_) => {
-                carried += entries.len();
-                left_over.remove(&item.trash_name);
+                for (rel, _) in &entries {
+                    let is_note = rel
+                        .extension()
+                        .is_some_and(|e| e.eq_ignore_ascii_case("md"));
+                    if is_note {
+                        carried.notes += 1;
+                    } else {
+                        carried.files += 1;
+                    }
+                }
+                // Held by the history now. A copy with a part that could not be read keeps all
+                // of itself: the unread part has no other copy.
+                if !unreadable {
+                    let removed = if item.is_dir {
+                        std::fs::remove_dir_all(&put_aside)
+                    } else {
+                        std::fs::remove_file(&put_aside)
+                    };
+                    if let Err(e) = removed {
+                        log::warn!("carry_over_set_aside: {} carried but not removed: {e}", item.trash_name);
+                    }
+                }
             }
             Err(e) => log::warn!("carry_over_set_aside: {} not carried: {}", item.original_rel, e.message()),
         }
     }
-    if !left_over.is_empty() {
-        log::warn!(
-            "carry_over_set_aside: {} item(s) stay where they are: {}",
-            left_over.len(),
-            left_over.iter().cloned().collect::<Vec<_>>().join(", ")
-        );
+
+    // The list only described the copies. Once none are left it describes nothing.
+    if std::fs::read_dir(&dir).map(|mut d| d.next().is_none()).unwrap_or(false) {
+        let _ = std::fs::remove_dir(&dir);
+        let _ = std::fs::remove_file(legacy_sidecar_path(root, TRASH_MANIFEST));
     }
-    CarriedOver { notes: carried, everything: left_over.is_empty() }
+    carried
 }
 
-/// What came out of the set-aside copies, and whether anything had to be left behind.
-///
-/// The second half is the one that matters: the folder is only removed once there is nothing in
-/// it that exists nowhere else, and a copy that could not be carried — unreadable, unnamed by the
-/// list, refused by the repository — is exactly such a thing.
+/// What came out of the set-aside copies.
+#[derive(Default)]
 struct CarriedOver {
     notes: usize,
-    everything: bool,
+    files: usize,
+}
+
+/// Everything still under `dir`, relative to `root`, `/`-separated, in a stable order.
+fn still_inside(root: &Path, dir: &Path) -> Vec<String> {
+    let mut left: Vec<String> = files_beneath(dir)
+        .into_iter()
+        .filter_map(|(abs, _)| abs.strip_prefix(root).ok().map(|r| r.to_string_lossy().replace('\\', "/")))
+        .collect();
+    left.sort();
+    left
 }
 
 /// Moves everything the application keeps out of the notes folder, keeping every file.
@@ -1397,32 +1477,31 @@ pub fn move_state_out_of_vault(root: String) -> Result<MoveOut, String> {
     }
 
     // The copies set aside need somewhere to go before they can be removed from the folder.
+    // Each leaves the folder only once the history holds it: a copy that failed to carry has no
+    // other copy by definition — that is what being set aside meant.
     if root_p.join(".textree").join("trash").exists() {
         let prepared = crate::git_engine::prepare(root_p).map_err(|e| e.message().to_string())?;
         let carried = carry_over_set_aside(root_p, &prepared);
         moved.notes = carried.notes;
-        // Only once every copy is reachable from somewhere else. Removing the folder is the one
-        // step here that cannot be taken back, and a copy that failed to carry has no other copy
-        // by definition — that is what being set aside meant. Leaving the folder is untidy; the
-        // alternative is destroying the only remaining copy of something someone deleted but did
-        // not throw away.
-        if carried.everything {
-            std::fs::remove_dir_all(root_p.join(".textree").join("trash"))
-                .map_err(|e| e.to_string())?;
-            let _ = std::fs::remove_file(legacy_sidecar_path(root_p, TRASH_MANIFEST));
-        }
+        moved.files = carried.files;
     }
 
-    // Anything else in there is the application's too — temp files it wrote, and nothing a
-    // person put there — so the directory goes once it holds nothing.
+    // Temp files are the application's own and hold nothing a person made, so they go. The
+    // directory itself goes only once it holds nothing — and whatever it still holds is read off
+    // the disk and reported, so the notice cannot say the folder is clean while it is not.
     let _ = std::fs::remove_dir_all(root_p.join(LEGACY_TEMP_DIR[0]).join(LEGACY_TEMP_DIR[1]));
     let _ = std::fs::remove_dir(&inside);
+    if inside.exists() {
+        moved.left_behind = still_inside(root_p, &inside);
+    }
 
     if moved.happened() {
         log::info!(
-            "move_state_out_of_vault: settings={} notes={}",
+            "move_state_out_of_vault: settings={} notes={} files={} left_behind={}",
             moved.settings,
-            moved.notes
+            moved.notes,
+            moved.files,
+            moved.left_behind.len()
         );
     }
     Ok(moved)
@@ -1817,6 +1896,110 @@ mod tests {
         let again = move_state_out_of_vault(root_s.clone()).unwrap();
         assert_eq!(again, MoveOut::default(), "there is nothing left to move");
         assert_eq!(deleted_notes(root_s).unwrap().len(), 1, "and nothing was doubled");
+    }
+
+    /// How many states the deleted-content history holds.
+    fn snapshots_recorded(root: &Path) -> usize {
+        let repo = git2::Repository::open(root).unwrap();
+        let Ok(reference) = repo.find_reference(crate::git_engine::SNAPSHOT_REF) else {
+            return 0;
+        };
+        let mut walk = repo.revwalk().unwrap();
+        walk.push(reference.target().unwrap()).unwrap();
+        walk.count()
+    }
+
+    #[test]
+    fn a_copy_the_list_never_named_is_carried_too() {
+        // The earlier version kept a copy whose entry it could not write, and offered it back as
+        // being of unknown origin, to the top of the folder. Leaving it behind would make
+        // something that version could restore unreachable here.
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        git2::Repository::init(root).unwrap();
+        let root_s = root.to_string_lossy().to_string();
+        as_an_earlier_version_left_it(root, &[("listed.md", "a", 1_700_000_000)]);
+        std::fs::write(root.join(".textree").join("trash").join("stray.md"), "only copy").unwrap();
+
+        let moved = move_state_out_of_vault(root_s.clone()).unwrap();
+
+        assert_eq!(moved.notes, 2);
+        assert!(moved.left_behind.is_empty(), "left: {:?}", moved.left_behind);
+        assert!(!root.join(".textree").exists(), "the folder holds only notes afterwards");
+        let listed: Vec<String> = deleted_notes(root_s.clone()).unwrap().into_iter().map(|d| d.rel).collect();
+        assert!(listed.contains(&"stray.md".to_string()), "listed: {listed:?}");
+        restore_deleted(root_s, "stray.md".into()).unwrap();
+        assert_eq!(std::fs::read_to_string(root.join("stray.md")).unwrap(), "only copy");
+    }
+
+    #[test]
+    fn a_damaged_list_does_not_hide_the_copies_it_described() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        git2::Repository::init(root).unwrap();
+        let root_s = root.to_string_lossy().to_string();
+        as_an_earlier_version_left_it(root, &[("one.md", "first", 1_700_000_000), ("two.md", "second", 1_700_000_500)]);
+        std::fs::write(root.join(".textree").join(TRASH_MANIFEST), "{not json").unwrap();
+
+        let moved = move_state_out_of_vault(root_s.clone()).unwrap();
+
+        assert_eq!(moved.notes, 2);
+        assert!(!root.join(".textree").exists());
+        assert_eq!(deleted_notes(root_s).unwrap().len(), 2);
+    }
+
+    #[test]
+    fn a_deleted_folder_counts_its_notes_and_its_other_files_apart() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        git2::Repository::init(root).unwrap();
+        let root_s = root.to_string_lossy().to_string();
+        as_an_earlier_version_left_it(root, &[]);
+        let proj = root.join(".textree").join("trash").join("proj");
+        std::fs::create_dir_all(&proj).unwrap();
+        std::fs::write(proj.join("plan.md"), "# plan").unwrap();
+        std::fs::write(proj.join("diagram.png"), [0u8, 1, 2]).unwrap();
+        let items = vec![TrashItem {
+            trash_name: "proj".into(),
+            original_rel: "proj".into(),
+            deleted_at: 1_700_000_000,
+            is_dir: true,
+        }];
+        std::fs::write(root.join(".textree").join(TRASH_MANIFEST), serde_json::to_string(&items).unwrap()).unwrap();
+
+        let moved = move_state_out_of_vault(root_s).unwrap();
+
+        assert_eq!((moved.notes, moved.files), (1, 1));
+        assert!(!root.join(".textree").exists());
+    }
+
+    #[test]
+    fn what_cannot_be_carried_stays_is_reported_and_nothing_is_carried_twice() {
+        // A name that cannot exist inside the folder stays where it is. Opening the folder again
+        // must neither record the others a second time nor pretend the folder is clean.
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        git2::Repository::init(root).unwrap();
+        let root_s = root.to_string_lossy().to_string();
+        as_an_earlier_version_left_it(root, &[("one.md", "first", 1_700_000_000)]);
+        std::fs::write(root.join(".textree").join("trash").join(".odd"), "kept").unwrap();
+        std::fs::write(root.join(".textree").join("db.json"), "{}").unwrap();
+
+        let first = move_state_out_of_vault(root_s.clone()).unwrap();
+        let recorded = snapshots_recorded(root);
+        let second = move_state_out_of_vault(root_s.clone()).unwrap();
+
+        let expected: Vec<String> = [".textree/db.json", ".textree/trash.json", ".textree/trash/.odd"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        assert_eq!(first.notes, 1);
+        assert_eq!(first.left_behind, expected);
+        assert_eq!((second.notes, second.files, second.settings), (0, 0, false), "carried once only");
+        assert_eq!(second.left_behind, expected, "still said, every time it is still true");
+        assert_eq!(snapshots_recorded(root), recorded, "no state recorded twice");
+        assert_eq!(deleted_notes(root_s).unwrap().len(), 1);
+        assert_eq!(std::fs::read_to_string(root.join(".textree").join("trash").join(".odd")).unwrap(), "kept");
     }
 
     #[test]
