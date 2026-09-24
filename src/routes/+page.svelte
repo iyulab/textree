@@ -121,6 +121,7 @@
       createNoteWithContent(vault, parentDir(path), noteStem(path), text).catch(() =>
         createNoteWithContent(vault, vault, noteStem(path), text),
       ),
+    landedOnOpen: (text) => applyReload(text),
     moved: (remap) => {
       if (!activePath) return;
       const to = remap(activePath);

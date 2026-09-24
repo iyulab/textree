@@ -362,6 +362,104 @@ describe("NoteSave — switching notes", () => {
     expect(await second).toBe("close");
   });
 
+  it("a later close warns again about edits kept after an earlier warning was answered", async () => {
+    let active: string | null = "A.md";
+    // Only the notes being left refuse the write; the open one saves fine, so a "stay" can only come
+    // from the kept edits.
+    const refusing = new Set<string>(["A.md"]);
+    const save = new NoteSave(initialNoteSaveState(), {
+      root: () => "/v",
+      activePath: () => active,
+      write: async (_r, path) => {
+        if (refusing.has(path)) throw new Error("disk full");
+        return written;
+      },
+    });
+    const strand = async (path: string, next: string) => {
+      save.opened("x");
+      save.schedule(path, `${path} edit`);
+      active = next;
+      save.opened("y");
+      save.schedule(next, "typing");
+      await settle();
+    };
+    await strand("A.md", "B.md");
+    expect(await save.beforeClosing()).toBe("stay");
+    refusing.clear();
+    await save.flush();
+    expect(save.stranded).toBe(0);
+
+    refusing.add("B.md");
+    await strand("B.md", "C.md");
+    expect(save.stranded).toBe(1);
+    expect(await save.beforeClosing()).toBe("stay");
+  });
+
+  it("two kept edits to one note are both kept, not the later over the earlier", async () => {
+    let active: string | null = "A.md";
+    const disk = new Map<string, string>([["A.md", "a0"]]);
+    let fail = true;
+    const copies: string[] = [];
+    const save = new NoteSave(initialNoteSaveState(), {
+      root: () => "/v",
+      activePath: () => active,
+      write: async (_r, path, text, expected) => {
+        if (fail) throw new Error("disk full");
+        if ((disk.get(path) ?? "") !== expected) return { kind: "conflict", disk: disk.get(path) ?? null };
+        disk.set(path, text);
+        return written;
+      },
+      keepCopy: async (_r, _path, text) => {
+        copies.push(text);
+        return "A (2).md";
+      },
+    });
+    for (const text of ["a2", "a3"]) {
+      active = "A.md";
+      save.opened("a0");
+      save.schedule("A.md", text);
+      active = "B.md";
+      save.opened("b0");
+      save.schedule("B.md", "b");
+      await settle();
+    }
+    expect(save.stranded).toBe(2);
+    fail = false;
+    await save.flush();
+    // The earlier lands; the later, typed over the same starting text, meets it as a change on disk.
+    expect(disk.get("A.md")).toBe("a2");
+    expect(copies).toEqual(["a3"]);
+    expect(save.stranded).toBe(0);
+  });
+
+  it("kept edits landing on the note opened again bring the screen and the save baseline along", async () => {
+    let active: string | null = "A.md";
+    let fail = true;
+    const shown: string[] = [];
+    const save = new NoteSave(initialNoteSaveState(), {
+      root: () => "/v",
+      activePath: () => active,
+      write: async () => {
+        if (fail) throw new Error("disk full");
+        return written;
+      },
+      landedOnOpen: (text) => shown.push(text),
+    });
+    save.opened("a0");
+    save.schedule("A.md", "a2");
+    active = "B.md";
+    save.opened("b0");
+    save.schedule("B.md", "b");
+    await settle();
+    // Back on A, which still shows what disk held.
+    active = "A.md";
+    save.opened("a0");
+    fail = false;
+    await save.flush();
+    expect(shown).toEqual(["a2"]);
+    expect(save.synced).toBe("a2");
+  });
+
   it("kept edits are written into the vault they were typed in, even after another vault opens", async () => {
     let root = "/one";
     let active: string | null = "A.md";
