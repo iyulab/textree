@@ -64,12 +64,6 @@ jobs:
       - name: No workspace-only text in tracked files
         run: npm run tokens:check
 
-      # The host's fast-moving package families are held to their current line. Falling behind is
-      # silent — restore, build and tests stay green on an old pin — so it is checked here, with
-      # expiring waivers as the only way to carry a known gap.
-      - name: Host package pins within drift threshold
-        run: npm run pins:check
-
       - name: Type check (svelte-check, 0 errors / 0 warnings)
         run: npm run check
 
@@ -113,6 +107,16 @@ jobs:
         uses: actions/setup-dotnet@v6
         with:
           dotnet-version: '10.0.x'
+
+      # The host's fast-moving package families are held to their current line — the pinned ones
+      # and the ones that arrive only through them, read from the restored graph. Falling behind is
+      # silent — restore, build and tests stay green on an old pin — so it is checked here, with
+      # expiring waivers as the only way to carry a known gap.
+      - name: Restore host packages
+        run: dotnet restore src-host/TextreeHost.slnx
+
+      - name: Host package pins within drift threshold
+        run: npm run pins:check
 
       - name: Assemble host sidecar
         shell: pwsh
