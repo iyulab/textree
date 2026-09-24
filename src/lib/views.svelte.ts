@@ -1,5 +1,5 @@
 /*
- * Saved-views store — folder → named views, persisted to .textree/views.json (vault-bound).
+ * Saved-views store — folder → named views, persisted to views.json (kept with the app, per vault).
  *
  * Persistence shape mirrors order.json (nav.svelte.ts): a single fixed sidecar file keyed by folder
  * path. This sidesteps enumeration (one read, filter by folder in memory), makes delete clean (drop
@@ -7,7 +7,7 @@
  * like `a/b` and `a-b` never collide. New IPC 0 (reuses write_sidecar/read_sidecar).
  *
  * NOTE — deviation from the ratified `views/<slug>.json` per-view-file record: the ratified
- * load-bearing decisions (6-field schema, .textree/ sidecar, versioned JSON, file-is-truth, NEW IPC
+ * load-bearing decisions (6-field schema, sidecar file, versioned JSON, file-is-truth, NEW IPC
  * 0, interop trade-off) are all preserved; only the container changes (per-view file → folder-keyed
  * map), because honoring per-view files literally would need a list/delete IPC and break "new IPC 0".
  * The ViewDefinition schema (view.helpers.ts) is untouched and stored as the map's array values.

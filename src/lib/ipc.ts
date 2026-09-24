@@ -258,9 +258,9 @@ export async function promoteNode(
   return invoke<string>("promote_node", { root, path });
 }
 
-// ── Sidecar (.textree/) persistence ───────────────────────────────────
+// ── Sidecar persistence (per-vault settings kept with the app) ────────
 
-/** Read the `.textree/<rel>` sidecar. null if absent. */
+/** Read the `<rel>` sidecar kept for this vault. null if absent. */
 export async function readSidecar(
   root: string,
   rel: string,
@@ -268,7 +268,7 @@ export async function readSidecar(
   return invoke<string | null>("read_sidecar", { root, rel });
 }
 
-/** Atomic write of the `.textree/<rel>` sidecar (parent auto-created). */
+/** Atomic write of the `<rel>` sidecar kept for this vault (parent auto-created). */
 export async function writeSidecar(
   root: string,
   rel: string,

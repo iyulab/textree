@@ -1,8 +1,8 @@
-//! Structural edits (M4): note/folder creation, deletion (trash), leaf↔container promotion.
+//! Structural edits (M4): note/folder creation, deletion, leaf↔container promotion.
 //!
 //! Every operation works only within the vault root (parent validation + name validation) and is
-//! reflected to the filesystem immediately. Deletion is not permanent removal but a move to
-//! `.textree/trash/` (design §5 M4).
+//! reflected to the filesystem immediately. Deleting keeps the deleted state in the history
+//! first (see `keep_state_of` in commands), so nothing deleted is beyond reach.
 
 use crate::pathsafe::{is_valid_name, is_within};
 use std::io;
@@ -109,10 +109,10 @@ pub fn promote_leaf(root: &Path, leaf_md: &Path) -> io::Result<PathBuf> {
     Ok(new_dir)
 }
 
-/// Finds a non-colliding destination path within the trash (`name`, `name (1)`, …).
+/// Finds a non-colliding path for `file_name` inside `dir` (`name`, `name (1)`, …).
 /// Directories are not split on extension (so names like `journal.backup` are not altered).
-pub(crate) fn unique_in(trash: &Path, file_name: &str, is_dir: bool) -> PathBuf {
-    let candidate = trash.join(file_name);
+pub(crate) fn unique_in(dir: &Path, file_name: &str, is_dir: bool) -> PathBuf {
+    let candidate = dir.join(file_name);
     if !candidate.exists() {
         return candidate;
     }
@@ -122,7 +122,7 @@ pub(crate) fn unique_in(trash: &Path, file_name: &str, is_dir: bool) -> PathBuf 
     };
     let mut n = 1;
     loop {
-        let c = trash.join(format!("{stem} ({n}){ext}"));
+        let c = dir.join(format!("{stem} ({n}){ext}"));
         if !c.exists() {
             return c;
         }

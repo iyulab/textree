@@ -1,6 +1,6 @@
 /*
  * Navigation store — favorites, recent, manual order.
- * Favorites/order live in .textree/ (vault-bound); recent lives in localStorage (device-bound).
+ * Favorites/order are kept with the app per vault; recent lives in localStorage (device-bound).
  *
  * Pure logic (mergeOrder/dedupePushFront/RECENT_MAX) lives in nav.helpers.ts —
  * split into a runes-free module so it can be tested directly under vitest (node environment).

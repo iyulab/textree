@@ -16,7 +16,7 @@
   }: {
     /** The folder's notes as a table model (columns = frontmatter keys, rows = notes). */
     table: FolderTable;
-    /** The folder's path — the key under which named views are saved (.textree/views.json). */
+    /** The folder's path — the key under which named views are saved (views.json). */
     folder: string;
     /** Open a row's note. */
     onOpen: (path: string) => void;
@@ -73,7 +73,7 @@
     filters = filters.map((f, idx) => (idx === i ? { ...f, ...patch } : f));
   }
 
-  // ── Saved views (.textree/views.json, folder-keyed) ──────────────────────
+  // ── Saved views (views.json, folder-keyed) ────────────────────────────────
   let savedViews = $derived(views.forFolder(folder));
   let activeView = $state<string | null>(null);
   let naming = $state(false);

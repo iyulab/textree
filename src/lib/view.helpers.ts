@@ -3,7 +3,7 @@
  *
  * A view is a saved, named lens over a folder's frontmatter table (folder = database, .md = row):
  * which rows to keep (filters), which columns to show (projection), and how to sort. Views persist
- * to `.textree/views/<slug>.json` (a regeneratable sidecar — file-is-truth; the .md frontmatter is
+ * to the per-folder saved views (kept with the app, outside the notes folder) (a regeneratable sidecar — file-is-truth; the .md frontmatter is
  * the data, the view is derived config). The on-disk shape is a fixed contract (a future-locking
  * fork once written), so the schema is pinned HERE rather than drifting in across the UI/store.
  *
@@ -93,7 +93,7 @@ export function applyView(table: FolderTable, def: ViewDefinition): FolderTable 
 
 /**
  * A view's identity within its folder is its trimmed name. (Views persist in a single folder-keyed
- * file — `.textree/views.json`, mirroring `order.json` — so there is no per-view filename/slug.)
+ * file — `views.json`, mirroring `order.json` — so there is no per-view filename/slug.)
  */
 const viewId = (name: string): string => name.trim();
 

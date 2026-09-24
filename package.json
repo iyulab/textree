@@ -1,7 +1,15 @@
 {
   "name": "textree",
   "version": "0.7.0",
-  "description": "",
+  "private": true,
+  "description": "A local Markdown notes app: your notes stay plain files on your own disk, versioned underneath.",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/iyulab/textree"
+  },
+  "engines": {
+    "node": ">=22"
+  },
   "type": "module",
   "scripts": {
     "dev": "vite dev",

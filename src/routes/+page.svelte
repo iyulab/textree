@@ -257,7 +257,7 @@
       opError = friendlyError(e);
     }
     await nav.load(path); // load favorites/order settings
-    await views.load(path); // load saved folder views (.textree/views.json)
+    await views.load(path); // load saved folder views (views.json, kept with the app)
     dismissedForeignViews = false; // re-evaluate the foreign-views notice for the new vault
     return true;
   }

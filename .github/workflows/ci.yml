@@ -31,6 +31,13 @@ jobs:
           node-version: 22
           cache: npm
 
+      # The compiler is part of the key: target/ built by one rustc is dead weight to the next, and
+      # the runner image moves its preinstalled toolchain on its own schedule.
+      - name: Read rustc version
+        id: rustc
+        shell: bash
+        run: echo "version=$(rustc -V | tr -c '[:alnum:].' '-')" >> "$GITHUB_OUTPUT"
+
       - name: Cache cargo
         uses: actions/cache@v6
         with:
@@ -39,9 +46,9 @@ jobs:
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
             src-tauri/target/
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-${{ steps.rustc.outputs.version }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-cargo-
+            ${{ runner.os }}-${{ steps.rustc.outputs.version }}-cargo-
 
       - name: Install dependencies
         run: npm ci

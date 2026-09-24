@@ -2,7 +2,7 @@
  * Theme state — light/dark/system (auto).
  *
  * The selection persists in localStorage("textree-theme"). This is an **app setting**,
- * separate from the vault's library schema (.textree/, frontmatter) — a presentation-layer
+ * separate from the vault's own data (per-vault settings, frontmatter) — a presentation-layer
  * preference, not note data.
  *
  * "auto" tracks the OS preference (prefers-color-scheme) in real time. Explicit light/dark
