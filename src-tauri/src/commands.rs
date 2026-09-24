@@ -15,6 +15,10 @@ use tempfile::NamedTempFile;
 /// Name of the staging directory for atomic writes, inside the repository's own storage.
 const TEMP_DIR_NAME: &str = "textree-tmp";
 
+/// Prefix of a temp file staged at the top of a folder no repository governs. The application's
+/// own, so that one left by a crash can be recognized and removed without touching anything else.
+const LOOSE_TEMP_PREFIX: &str = ".textree-tmp-";
+
 /// Legacy staging location, kept only so leftovers from earlier versions get cleaned up.
 const LEGACY_TEMP_DIR: [&str; 2] = [".textree", "tmp"];
 
@@ -36,12 +40,22 @@ fn temp_dir(root: &Path) -> Option<PathBuf> {
 /// rename. Without this they would linger forever. Called on vault open. Errors are ignored (an
 /// in-flight temp held open by another instance simply stays).
 ///
-/// The older location is swept as well, so upgrading leaves nothing behind.
+/// The older location is swept as well, so upgrading leaves nothing behind — and so is the top of
+/// the folder, for temps staged there before a repository existed. Only names carrying the
+/// application's own prefix go, and only at the top: a sweep never walks the whole folder.
 fn clear_temp_dir(root: &Path) {
     let legacy = root.join(LEGACY_TEMP_DIR[0]).join(LEGACY_TEMP_DIR[1]);
     for dir in temp_dir(root).into_iter().chain([legacy]) {
         if let Ok(entries) = std::fs::read_dir(&dir) {
             for entry in entries.flatten() {
+                let _ = std::fs::remove_file(entry.path());
+            }
+        }
+    }
+    if let Ok(entries) = std::fs::read_dir(root) {
+        for entry in entries.flatten() {
+            let ours = entry.file_name().to_string_lossy().starts_with(LOOSE_TEMP_PREFIX);
+            if ours && entry.path().is_file() {
                 let _ = std::fs::remove_file(entry.path());
             }
         }
@@ -79,13 +93,16 @@ pub(crate) fn atomic_write(root: &Path, path: &Path, content: &str) -> io::Resul
 /// The same guarantee for content that is not necessarily text — a restored file can be
 /// anything that was kept alongside the notes.
 fn atomic_write_bytes(root: &Path, path: &Path, content: &[u8]) -> io::Result<()> {
-    // No repository: stage beside the target. The temp file is a dot-file that exists only
-    // until the rename a moment later, and nothing is left in the folder afterwards.
-    let Some(dir) = temp_dir(root) else {
-        return atomic_bytes_beside(path, content);
+    // No repository: stage at the top of the folder, under a name of our own. It exists only
+    // until the rename a moment later; one a crash leaves is swept on the next open. The top of
+    // the folder is on the same volume as every note in it, so the rename stays atomic.
+    let mut tmp = match temp_dir(root) {
+        Some(dir) => {
+            std::fs::create_dir_all(&dir)?;
+            NamedTempFile::new_in(&dir)?
+        }
+        None => tempfile::Builder::new().prefix(LOOSE_TEMP_PREFIX).tempfile_in(root)?,
     };
-    std::fs::create_dir_all(&dir)?;
-    let mut tmp = NamedTempFile::new_in(&dir)?;
     tmp.write_all(content)?;
     // Flush down to physical storage, not just the OS buffer (fsync). Only then is the
     // content guaranteed after the rename even under power loss — persist alone has no durability.
@@ -2941,6 +2958,24 @@ mod tests {
             .map(|e| e.file_name().to_string_lossy().to_string())
             .collect();
         assert_eq!(names, vec!["welcome.md".to_string()], "no directory, no temp, no repository");
+    }
+
+    #[test]
+    fn a_temp_a_crash_left_at_the_top_of_the_folder_is_swept_and_nothing_else_is() {
+        let root = TempDir::new().unwrap();
+        std::fs::write(root.path().join(format!("{LOOSE_TEMP_PREFIX}abc123")), "half written").unwrap();
+        std::fs::write(root.path().join(".tmpNotOurs"), "someone else's").unwrap();
+        std::fs::write(root.path().join("note.md"), "note").unwrap();
+
+        clear_temp_dir(root.path());
+
+        let mut names: Vec<String> = std::fs::read_dir(root.path())
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .collect();
+        names.sort();
+        assert_eq!(names, vec![".tmpNotOurs".to_string(), "note.md".to_string()]);
     }
 
     #[test]

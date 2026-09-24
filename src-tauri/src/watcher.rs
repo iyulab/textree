@@ -531,16 +531,12 @@ mod tests {
     #[test]
     #[ignore = "real-OS integration: spins the actual debouncer; timing-dependent"]
     fn atomic_write_no_external_change_end_to_end() {
-        use std::io::Write as _;
         use std::sync::{Arc, Mutex};
-        use tempfile::NamedTempFile;
 
         let tmp = TempDir::new().unwrap();
         let root = tmp.path().to_path_buf();
         let file = root.join("a.md");
         std::fs::write(&file, "v1").unwrap();
-        let tmpdir = root.join(".textree").join("tmp");
-        std::fs::create_dir_all(&tmpdir).unwrap();
 
         let sw = Arc::new(SelfWrites::default());
         let emitted: Arc<Mutex<Vec<FsChange>>> = Arc::new(Mutex::new(Vec::new()));
@@ -569,10 +565,9 @@ mod tests {
         // Simulate write_note: record the expected content, then atomic_write it.
         let new_content = "v2 the content after the user kept typing";
         sw.record(&file, new_content);
-        let mut t = NamedTempFile::new_in(&tmpdir).unwrap();
-        t.write_all(new_content.as_bytes()).unwrap();
-        t.as_file().sync_all().unwrap();
-        t.persist(&file).unwrap();
+        // The production write, in a folder no repository governs yet (the temp is staged at
+        // the top of the folder under the application's own prefix).
+        crate::commands::atomic_write(&root, &file, new_content).unwrap();
 
         std::thread::sleep(Duration::from_millis(900)); // debounce + settle
 

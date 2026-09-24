@@ -88,7 +88,7 @@ impl LivenessState {
     }
 }
 
-/// The canary filename prefix. Files under `.textree/tmp/` matching this are the
+/// The canary filename prefix. Files in the canary directory matching this are the
 /// watchdog's own probes — recognized so they can be observed and never surfaced.
 const CANARY_PREFIX: &str = ".watcher-canary-";
 
@@ -125,7 +125,7 @@ pub(crate) fn token_of(path: &Path) -> Option<u64> {
 }
 
 /// Scans a raw debounce flush for canary tokens the watcher surfaced. Called before
-/// `is_ignored` filtering (which would otherwise drop these `.textree` paths), so it
+/// `is_ignored` filtering (which would otherwise drop these dot-paths), so it
 /// is the only place a canary round-trip can be seen.
 pub(crate) fn observed_canary_tokens(events: &[DebouncedEvent]) -> Vec<u64> {
     let mut out = Vec::new();
