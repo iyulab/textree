@@ -1,7 +1,8 @@
 using FileFlux;
 using FluxIndex.Core.Application.Interfaces;
-using FluxIndex.Extensions.FileVault.Extensions;
-using FluxIndex.Extensions.FileVault.Interfaces;
+using FluxFeed.Domain.Enums;
+using FluxFeed.Extensions;
+using FluxFeed.Interfaces;
 using FluxIndex.Storage.SQLite;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -65,16 +66,15 @@ public sealed class VaultManager : IDisposable
             var hash = VaultHash.For(fullPath);
             Directory.CreateDirectory(_options.IndexRoot);
             var dbPath = Path.Combine(_options.IndexRoot, $"{hash}.db");
-            // FileVault's VaultBasePath is its STORAGE root (extracted/refined .md, per-entry
+            // FluxFeed's VaultBasePath is its STORAGE root (extracted/refined .md, per-entry
             // dirs), NOT the content tree. Keep it under IndexRoot — distinct from the user's
             // notes — so the store never pollutes the content folder. Memorized files are
             // referenced by absolute path, so scope filtering still targets the real note paths.
             var vaultStore = Path.Combine(_options.IndexRoot, hash);
 
-            // Identity binds the vectors to the embedding model. The fingerprint must be set
-            // on the SQLite options so the vec table name is deterministic at migration time,
-            // and BindIdentity must run on the resolved vector store before any store op
-            // (FluxIndex 0.13.x — same contract Filer satisfies via VectorStoreIdentityBinder).
+            // Identity binds the vectors to the embedding model. The fingerprint is set on the
+            // SQLite options so the vec table name is deterministic; FluxFeed binds the store to
+            // the embedder's identity itself and refuses a store bound to a different embedder.
             var embedding = _embedder.Service;
             var identity = embedding.GetIdentity();
 
@@ -98,8 +98,8 @@ public sealed class VaultManager : IDisposable
             services.AddFileVaultWithFluxIndex(o =>
             {
                 o.VaultBasePath = vaultStore;
-                // No IHostedService host here (bare ServiceProvider): run the memorize
-                // pipeline synchronously inside MemorizeAsync rather than via a background queue.
+                // No Generic Host here (bare ServiceProvider): the memorize pipeline runs inline
+                // inside MemorizeAsync, so there is no background worker that would need starting.
                 o.EnableBackgroundProcessing = false;
                 o.Chunking.Strategy = "Hierarchical";
                 o.Chunking.MaxChunkSize = 1024;
@@ -107,21 +107,7 @@ public sealed class VaultManager : IDisposable
             });
 
             var provider = services.BuildServiceProvider();
-
-            // TODO(upstream: FluxIndex FileVault — an initialization path that does not assume a
-            // Generic Host; remove this manual start once one ships).
-            // Run registered hosted services (e.g. the SQLite vec-table migration) — a bare
-            // ServiceProvider has no Host to start them, so the vec table would never be created.
-            foreach (var hosted in provider.GetServices<Microsoft.Extensions.Hosting.IHostedService>())
-            {
-                hosted.StartAsync(CancellationToken.None).GetAwaiter().GetResult();
-            }
-
             var scope = provider.CreateScope();
-
-            // Bind the embedding identity to the vector store before any vault op (vec table naming).
-            scope.ServiceProvider.GetRequiredService<IVectorStore>().BindIdentity(identity);
-
             var vault = scope.ServiceProvider.GetRequiredService<IVault>();
 
             _provider = provider;
@@ -137,46 +123,18 @@ public sealed class VaultManager : IDisposable
         var vault = EnsureVault(vaultPath);
         var fullPath = Path.GetFullPath(filePath);
 
-        // TODO(upstream: FluxIndex FileVault — an atomic upsert, and a synchronous memorize that
-        // awaits a terminal stage; remove the get→remove→add and the polling below once they ship).
-        // Upsert semantics: if an entry already exists, remove it first so that re-memorizing
-        // the same file does not accumulate duplicate chunks in the vector store. Without this,
-        // repeated ReindexAsync calls grow the result set linearly with the reindex count.
-        // Sequential by design: Rust forwards file events one-at-a-time over a single IPC channel,
-        // so there is no concurrent MemorizeAsync for the same path. A future parallel reindex
-        // would need a per-path lock (or a native upsert API) to keep this get→remove→add atomic.
-        var existing = await vault.GetAsync(fullPath, ct);
-        if (existing is not null)
-        {
-            await vault.RemoveAsync(fullPath, ct);
-        }
-
-        await vault.MemorizeAsync(fullPath, ct);
-
-        // With EnableBackgroundProcessing=false the pipeline runs inline, so the returned entry
-        // is normally already terminal. Poll defensively until a terminal stage, then surface
-        // failures loudly — a silent Error/timeout would let ReindexAsync mark a vault "indexed"
+        // Re-memorizing replaces the file's previous chunks (chunk ids derive from the path and
+        // the passage), so an edited note needs no remove first and an unchanged one does not
+        // accumulate duplicates. With background processing off the pipeline runs inline and the
+        // returned entry is terminal — but a failure there comes back as an Error entry rather
+        // than an exception, and a silent Error would let ReindexAsync call a vault "indexed"
         // while chunks are missing (project rule: never swallow failures without signal).
-        var deadline = Environment.TickCount64 + 60_000;
-        while (Environment.TickCount64 < deadline)
+        var entry = await vault.MemorizeAsync(fullPath, waitForCompletion: true, ct);
+        if (entry.Stage is ProcessingStage.Error)
         {
-            var entry = await vault.GetAsync(fullPath, ct);
-            if (entry is not null)
-            {
-                if (entry.Stage is FluxIndex.Extensions.FileVault.Domain.Enums.ProcessingStage.Memorized)
-                {
-                    return;
-                }
-                if (entry.Stage is FluxIndex.Extensions.FileVault.Domain.Enums.ProcessingStage.Error)
-                {
-                    throw new InvalidOperationException(
-                        $"FluxIndex pipeline error for '{fullPath}': {entry.LastError}");
-                }
-            }
-            await Task.Delay(100, ct);
+            throw new InvalidOperationException(
+                $"Indexing failed for '{fullPath}': {entry.FirstError ?? entry.LastError}");
         }
-
-        throw new TimeoutException($"Memorize timed out for '{fullPath}'");
     }
 
     public async Task<IReadOnlyList<SearchHit>> SearchAsync(

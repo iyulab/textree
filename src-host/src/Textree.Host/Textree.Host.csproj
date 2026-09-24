@@ -9,7 +9,7 @@
     <PackageReference Include="FluxIndex.Core" />
     <PackageReference Include="FluxIndex.Storage.SQLite" />
     <PackageReference Include="FluxIndex.Providers.LMSupply" />
-    <PackageReference Include="FluxIndex.Extensions.FileVault" />
+    <PackageReference Include="FluxFeed" />
     <PackageReference Include="FileFlux" />
     <PackageReference Include="LMSupply.Embedder" />
     <PackageReference Include="LMSupply.Generator" />
