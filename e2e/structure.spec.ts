@@ -6,7 +6,7 @@ import {
   removeTempVault,
   dragNodeOnto,
 } from "./helpers";
-import { existsSync } from "node:fs";
+import { existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 let browser: Browser;
@@ -237,6 +237,27 @@ test("delete → the note leaves the folder (original disappears)", async () => 
 
     await expect(page.getByRole("treeitem", { name: /delete-target-note/ })).toHaveCount(0);
     expect(exists(vault, "delete-target-note.md")).toBe(false);
+  } finally {
+    removeTempVault(vault);
+  }
+});
+
+test("the key goes to the note that has focus even after a note appears above it", async () => {
+  const vault = createTempVault({ "mango.md": "mango\n", "zebra.md": "zebra\n" });
+  try {
+    await loadVault(page, vault);
+    const zebra = page.getByRole("treeitem", { name: /zebra/ });
+    await zebra.focus();
+    // A note arrives from outside and sorts above the focused one; the tree redraws around the focus.
+    writeFileSync(join(vault, "apple.md"), "apple\n");
+    await expect(page.getByRole("treeitem", { name: /apple/ })).toBeVisible();
+
+    await page.keyboard.press("Delete");
+
+    await expect(page.getByRole("treeitem", { name: /zebra/ })).toHaveCount(0);
+    expect(exists(vault, "zebra.md")).toBe(false);
+    expect(exists(vault, "apple.md")).toBe(true);
+    expect(exists(vault, "mango.md")).toBe(true);
   } finally {
     removeTempVault(vault);
   }

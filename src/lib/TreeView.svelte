@@ -258,7 +258,10 @@
 </script>
 
 <ul class="tree" role={top ? "tree" : "group"}>
-  {#each ordered as node, i}
+  <!-- Keyed by path: an unkeyed list reuses rows by position, so a note appearing above the focused
+       row would turn that focused element into a different note — and the next key (Delete, F2,
+       Enter) would act on that note instead of the one the person had focused. -->
+  {#each ordered as node, i (node.path)}
     {@const hasChildren = node.children.length > 0}
     {@const open = !tree.isCollapsed(node.path)}
     {@const isContainer = node.kind === "container" && hasChildren}
