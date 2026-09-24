@@ -116,12 +116,19 @@ published, and keeping your versions somewhere other than this computer.
 
 ## Building from source
 
-Requirements: Windows 10/11 (WebView2), Node 22+, Rust (stable).
+Requirements: Windows 10/11 (WebView2), Node 22+, Rust (stable), PowerShell 7, and the .NET 10
+SDK (for the AI helper).
 
 ```bash
 git clone https://github.com/iyulab/textree.git
+git clone https://github.com/iyulab/canopy.git   # the publishing renderer, next to textree
 cd textree
 npm install
+
+# The app bundles two helpers; build them once before the first run.
+pwsh scripts/assemble-canopy-sidecar.ps1    # expects ../canopy
+pwsh scripts/assemble-host-sidecar.ps1
+
 npm run tauri dev      # run in development
 npm run tauri build    # build an installer
 ```

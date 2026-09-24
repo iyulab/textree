@@ -202,6 +202,10 @@ app.MapPost("/reindex", (ReindexRequest req) =>
     if (string.IsNullOrWhiteSpace(req.VaultPath))
         return Results.BadRequest("VaultPath required");
 
+    // Same answer as /index before the model has loaded: not yet, try again.
+    if (!mgr.EmbedderReady)
+        return Results.Json(new { status = "warming" }, statusCode: StatusCodes.Status503ServiceUnavailable);
+
     _ = Task.Run(async () =>
     {
         try { await mgr.ReindexAsync(req.VaultPath, CancellationToken.None); }

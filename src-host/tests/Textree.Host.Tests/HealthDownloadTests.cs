@@ -101,6 +101,25 @@ public sealed class HealthDownloadTests
         }
     }
 
+    [Fact]
+    public async Task Reindex_says_warming_while_the_model_is_still_loading()
+    {
+        var gate = new TaskCompletionSource<IEmbeddingModel>();
+        using var factory = new TextreeHostFactory(new StubEmbedderLoader(gate.Task, 0, 0));
+        var client = factory.CreateClient();
+        try
+        {
+            var resp = await client.PostAsJsonAsync("/reindex", new { vaultPath = Path.GetTempPath() });
+
+            Assert.Equal(System.Net.HttpStatusCode.ServiceUnavailable, resp.StatusCode);
+            Assert.Contains("warming", await resp.Content.ReadAsStringAsync());
+        }
+        finally
+        {
+            gate.TrySetCanceled();
+        }
+    }
+
     // ── Test host: replaces IEmbedderLoader and/or ModelStatus with stubs ──
     private sealed class TextreeHostFactory : WebApplicationFactory<Program>
     {

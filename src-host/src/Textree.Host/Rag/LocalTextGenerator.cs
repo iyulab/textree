@@ -27,10 +27,12 @@ namespace Textree.Host.Rag;
 //   3. LMSupply.Generator exposes a first-class IAsyncEnumerable<string> streaming chat
 //      API (GenerateChatAsync) that maps 1:1 to the SSE token stream we need — no extra
 //      RAG/completion-service indirection.
-// Execution provider: Auto. It used to be pinned to CPU because DirectML crashed on inference
-// ("LayerNormalization DmlExecutionProvider 0x80070057") without falling back; the ONNX Runtime
-// line in use no longer ships DirectML at all, and Auto now picks CUDA or CoreML when present,
-// else CPU, keeping CPU as the fallback. /health reports what was actually picked.
+// Execution provider: CPU, deliberately. The original reason — DirectML crashing on inference
+// without falling back — is gone (the ONNX Runtime line in use ships no DirectML). What remains
+// is a choice: Auto would pick CUDA on NVIDIA machines, but the GPU runtime is fetched separately
+// on first use (about half a gigabyte on top of the model), which nothing announces to the
+// person waiting. Switching is one line once that download is accounted for. /health reports
+// what the model actually runs on.
 // Default model: the LMSupply "phi-4-mini" alias (Microsoft Phi-4 Mini, 3.8B, MIT,
 // multilingual, ONNX CPU-int4). We pin this alias rather than "default" on purpose:
 // "default" does hardware-aware auto-selection that, on a CPU machine, routes to a Gemma-4
@@ -91,10 +93,10 @@ public sealed class LocalTextGenerator : ITextGenerator, IAsyncDisposable
                 // actual phase even if download progress callbacks never fire (cached model).
                 _status.SetGeneratorPhase(ModelPhase.Downloading);
 
-                // Auto: CUDA/CoreML when present, else CPU. See header.
+                // CPU on purpose; see the execution-provider note in the header.
                 var model = await LocalGenerator.LoadAsync(
                     ModelId,
-                    new GeneratorOptions { Provider = ExecutionProvider.Auto },
+                    new GeneratorOptions { Provider = ExecutionProvider.Cpu },
                     progress: _status.GeneratorProgress,
                     cancellationToken: ct);
 
