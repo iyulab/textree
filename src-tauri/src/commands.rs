@@ -6,7 +6,7 @@ use crate::vault::{self, TreeNode};
 use crate::watcher::WatcherHandle;
 use serde::{Deserialize, Serialize};
 use std::io::{self, Write};
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use tauri::{AppHandle, Manager, State};
@@ -1236,24 +1236,88 @@ impl MoveOut {
     }
 }
 
-/// Every file under `dir`, paired with its path relative to `dir`.
-fn files_beneath(dir: &Path) -> Vec<(PathBuf, PathBuf)> {
-    let mut found = Vec::new();
+/// What a walk under a directory found.
+#[derive(Default)]
+struct Beneath {
+    /// Every file, paired with its path relative to the directory walked.
+    files: Vec<(PathBuf, PathBuf)>,
+    /// Directories whose contents could not be listed. Whatever they hold was not seen, so it
+    /// can be neither carried nor removed.
+    unlisted: Vec<PathBuf>,
+}
+
+/// Every file under `dir`, and every directory under it that could not be listed.
+///
+/// The second half is the guard: a directory that could not be read looks exactly like an empty
+/// one to a walk that drops the failure, and an empty-looking directory is one that gets removed.
+fn walk_beneath(dir: &Path) -> Beneath {
+    let mut found = Beneath::default();
     let mut stack = vec![dir.to_path_buf()];
     while let Some(current) = stack.pop() {
         if current.is_dir() {
-            if let Ok(entries) = std::fs::read_dir(&current) {
-                for entry in entries.flatten() {
-                    stack.push(entry.path());
+            match std::fs::read_dir(&current) {
+                Ok(entries) => {
+                    for entry in entries {
+                        match entry {
+                            Ok(entry) => stack.push(entry.path()),
+                            Err(_) => found.unlisted.push(current.clone()),
+                        }
+                    }
                 }
+                Err(_) => found.unlisted.push(current.clone()),
             }
             continue;
         }
         if let Ok(rel) = current.strip_prefix(dir) {
-            found.push((current.clone(), rel.to_path_buf()));
+            found.files.push((current.clone(), rel.to_path_buf()));
         }
     }
+    found.unlisted.dedup();
     found
+}
+
+/// Removes every directory under `dir` (and `dir` itself) that holds nothing, deepest first.
+///
+/// Only ever removes a directory that is empty at the moment it is removed — `remove_dir` refuses
+/// anything else — so nothing that holds a file, readable or not, can go this way.
+fn prune_empty_dirs(dir: &Path) {
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                prune_empty_dirs(&path);
+            }
+        }
+    }
+    let _ = std::fs::remove_dir(dir);
+}
+
+/// Where an earlier copy of a path goes when a later copy of the same path is also carried.
+///
+/// Each copy the earlier version set aside could be restored on its own. Carried under one path,
+/// only the latest would stay reachable, so the earlier ones are given the name the earlier
+/// version's own trash gave a second copy — `name (1).md`, then `(2)` — skipping any name
+/// already in the folder or already given in this pass.
+fn earlier_copy_name(root: &Path, rel: &str, given: &mut HashSet<String>) -> String {
+    let path = Path::new(rel);
+    let parent = path.parent().filter(|p| !p.as_os_str().is_empty());
+    let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+    let (stem, ext) = match name.rsplit_once('.') {
+        Some((s, e)) if !s.is_empty() => (s.to_string(), format!(".{e}")),
+        _ => (name.clone(), String::new()),
+    };
+    let mut n = 1;
+    loop {
+        let candidate_name = format!("{stem} ({n}){ext}");
+        let candidate = match parent {
+            Some(p) => format!("{}/{}", p.to_string_lossy().replace('\\', "/"), candidate_name),
+            None => candidate_name,
+        };
+        if !root.join(&candidate).exists() && given.insert(candidate.to_lowercase()) {
+            return candidate;
+        }
+        n += 1;
+    }
 }
 
 /// Every copy an earlier version set aside, with where it came from and when it left.
@@ -1312,14 +1376,18 @@ fn set_aside_copies(root: &Path, dir: &Path) -> Vec<TrashItem> {
 /// one left, and the copies are the only place that answer exists for anything deleted before
 /// the history started keeping it. Losing it here would silently reorder someone's list.
 ///
-/// Each copy is removed from the folder as soon as the history holds it — from then on it is no
-/// longer the only copy — so running this again carries nothing twice. A copy that could not be
-/// carried stays where it is, and whether anything stayed is read off the folder afterwards
-/// rather than reported from here.
+/// A file leaves the folder only once the history holds it, and only the files actually read go:
+/// a directory is never removed wholesale, because whatever inside it could not be listed or read
+/// has no other copy. Directories left holding nothing are then removed. So running this again
+/// carries nothing twice, and whatever stayed is read off the folder afterwards rather than
+/// reported from here.
 fn carry_over_set_aside(root: &Path, prepared: &crate::git_engine::VaultRepo) -> CarriedOver {
     let dir = root.join(".textree").join("trash");
+    let manifest = legacy_sidecar_path(root, TRASH_MANIFEST);
     let mut carried = CarriedOver::default();
     if !dir.exists() {
+        // A list with no copies beside it describes nothing that exists.
+        let _ = std::fs::remove_file(&manifest);
         return carried;
     }
 
@@ -1333,32 +1401,50 @@ fn carry_over_set_aside(root: &Path, prepared: &crate::git_engine::VaultRepo) ->
     let mut items = set_aside_copies(root, &dir);
     items.sort_by_key(|item| item.deleted_at);
 
-    for item in &items {
+    // A path deleted more than once left a copy each time. The latest keeps the path; each
+    // earlier one is carried under a name of its own, so every copy stays reachable.
+    let mut latest_of: HashMap<String, usize> = HashMap::new();
+    for (i, item) in items.iter().enumerate() {
+        latest_of.insert(item.original_rel.to_lowercase(), i);
+    }
+    let mut given: HashSet<String> = latest_of.keys().cloned().collect();
+
+    for (i, item) in items.iter().enumerate() {
         if validate_vault_rel(&item.original_rel).is_err() {
             // Not a name that can exist inside the folder (a dot-name, a reserved device name):
             // it stays, and the report says so.
             continue;
         }
+        let carried_as = if latest_of.get(&item.original_rel.to_lowercase()) == Some(&i) {
+            item.original_rel.clone()
+        } else {
+            earlier_copy_name(root, &item.original_rel, &mut given)
+        };
         let put_aside = dir.join(&item.trash_name);
         let sources = if item.is_dir {
-            files_beneath(&put_aside)
+            walk_beneath(&put_aside).files
         } else {
             vec![(put_aside.clone(), PathBuf::new())]
         };
         let mut entries: Vec<(PathBuf, Vec<u8>)> = Vec::new();
-        let mut unreadable = false;
+        let mut read_from: Vec<PathBuf> = Vec::new();
         for (on_disk, below) in sources {
             let Ok(content) = std::fs::read(&on_disk) else {
-                unreadable = true;
                 continue;
             };
-            let mut target = PathBuf::from(&item.original_rel);
+            let mut target = PathBuf::from(&carried_as);
             if !below.as_os_str().is_empty() {
                 target = target.join(&below);
             }
             entries.push((prepared.path_in_repo(&target), content));
+            read_from.push(on_disk);
         }
         if entries.is_empty() {
+            // Nothing readable in it. An empty directory holds nothing and goes; one with
+            // anything unreadable inside keeps all of it.
+            if item.is_dir {
+                prune_empty_dirs(&put_aside);
+            }
             continue;
         }
         let when = git2::Time::new(item.deleted_at as i64, 0);
@@ -1392,17 +1478,14 @@ fn carry_over_set_aside(root: &Path, prepared: &crate::git_engine::VaultRepo) ->
                         carried.files += 1;
                     }
                 }
-                // Held by the history now. A copy with a part that could not be read keeps all
-                // of itself: the unread part has no other copy.
-                if !unreadable {
-                    let removed = if item.is_dir {
-                        std::fs::remove_dir_all(&put_aside)
-                    } else {
-                        std::fs::remove_file(&put_aside)
-                    };
-                    if let Err(e) = removed {
-                        log::warn!("carry_over_set_aside: {} carried but not removed: {e}", item.trash_name);
+                // Held by the history now, file by file — and only the files that were read.
+                for on_disk in &read_from {
+                    if let Err(e) = std::fs::remove_file(on_disk) {
+                        log::warn!("carry_over_set_aside: {} carried but not removed: {e}", on_disk.display());
                     }
+                }
+                if item.is_dir {
+                    prune_empty_dirs(&put_aside);
                 }
             }
             Err(e) => log::warn!("carry_over_set_aside: {} not carried: {}", item.original_rel, e.message()),
@@ -1410,9 +1493,9 @@ fn carry_over_set_aside(root: &Path, prepared: &crate::git_engine::VaultRepo) ->
     }
 
     // The list only described the copies. Once none are left it describes nothing.
-    if std::fs::read_dir(&dir).map(|mut d| d.next().is_none()).unwrap_or(false) {
-        let _ = std::fs::remove_dir(&dir);
-        let _ = std::fs::remove_file(legacy_sidecar_path(root, TRASH_MANIFEST));
+    prune_empty_dirs(&dir);
+    if !dir.exists() {
+        let _ = std::fs::remove_file(&manifest);
     }
     carried
 }
@@ -1424,13 +1507,24 @@ struct CarriedOver {
     files: usize,
 }
 
-/// Everything still under `dir`, relative to `root`, `/`-separated, in a stable order.
+/// Everything still under `dir`, relative to `root`, `/`-separated, in a stable order: every file,
+/// and every directory whose contents could not be listed. Never empty while `dir` exists — a
+/// directory that is still there is itself something left behind.
 fn still_inside(root: &Path, dir: &Path) -> Vec<String> {
-    let mut left: Vec<String> = files_beneath(dir)
-        .into_iter()
-        .filter_map(|(abs, _)| abs.strip_prefix(root).ok().map(|r| r.to_string_lossy().replace('\\', "/")))
+    let rel = |abs: &Path| abs.strip_prefix(root).ok().map(|r| r.to_string_lossy().replace('\\', "/"));
+    let found = walk_beneath(dir);
+    let mut left: Vec<String> = found
+        .files
+        .iter()
+        .map(|(abs, _)| abs.as_path())
+        .chain(found.unlisted.iter().map(|p| p.as_path()))
+        .filter_map(rel)
         .collect();
+    if left.is_empty() && dir.exists() {
+        left.extend(rel(dir));
+    }
     left.sort();
+    left.dedup();
     left
 }
 
@@ -1479,7 +1573,11 @@ pub fn move_state_out_of_vault(root: String) -> Result<MoveOut, String> {
     // The copies set aside need somewhere to go before they can be removed from the folder.
     // Each leaves the folder only once the history holds it: a copy that failed to carry has no
     // other copy by definition — that is what being set aside meant.
-    if root_p.join(".textree").join("trash").exists() {
+    if !root_p.join(".textree").join("trash").exists() {
+        // A list with no copies beside it describes nothing that exists — and there is nothing to
+        // carry, so no repository is made for it.
+        let _ = std::fs::remove_file(legacy_sidecar_path(root_p, TRASH_MANIFEST));
+    } else {
         let prepared = crate::git_engine::prepare(root_p).map_err(|e| e.message().to_string())?;
         let carried = carry_over_set_aside(root_p, &prepared);
         moved.notes = carried.notes;
@@ -1490,7 +1588,7 @@ pub fn move_state_out_of_vault(root: String) -> Result<MoveOut, String> {
     // directory itself goes only once it holds nothing — and whatever it still holds is read off
     // the disk and reported, so the notice cannot say the folder is clean while it is not.
     let _ = std::fs::remove_dir_all(root_p.join(LEGACY_TEMP_DIR[0]).join(LEGACY_TEMP_DIR[1]));
-    let _ = std::fs::remove_dir(&inside);
+    prune_empty_dirs(&inside);
     if inside.exists() {
         moved.left_behind = still_inside(root_p, &inside);
     }
@@ -2000,6 +2098,127 @@ mod tests {
         assert_eq!(snapshots_recorded(root), recorded, "no state recorded twice");
         assert_eq!(deleted_notes(root_s).unwrap().len(), 1);
         assert_eq!(std::fs::read_to_string(root.join(".textree").join("trash").join(".odd")).unwrap(), "kept");
+    }
+
+    /// Writes the trash list an earlier version kept, exactly as given.
+    fn listing(root: &Path, items: &[(&str, &str, u64, bool)]) {
+        let items: Vec<TrashItem> = items
+            .iter()
+            .map(|(name, origin, when, is_dir)| TrashItem {
+                trash_name: (*name).into(),
+                original_rel: (*origin).into(),
+                deleted_at: *when,
+                is_dir: *is_dir,
+            })
+            .collect();
+        std::fs::write(root.join(".textree").join(TRASH_MANIFEST), serde_json::to_string(&items).unwrap()).unwrap();
+    }
+
+    #[test]
+    fn a_path_deleted_twice_keeps_both_copies_reachable() {
+        // The earlier version kept a copy each time and could restore either. Carried under one
+        // path, only the latest would be reachable from any screen.
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        git2::Repository::init(root).unwrap();
+        let root_s = root.to_string_lossy().to_string();
+        as_an_earlier_version_left_it(root, &[]);
+        let trash = root.join(".textree").join("trash");
+        std::fs::write(trash.join("note.md"), "first draft").unwrap();
+        std::fs::write(trash.join("note (1).md"), "second draft").unwrap();
+        listing(root, &[("note.md", "note.md", 1_600_000_000, false), ("note (1).md", "note.md", 1_700_000_000, false)]);
+
+        let moved = move_state_out_of_vault(root_s.clone()).unwrap();
+
+        assert_eq!(moved.notes, 2);
+        assert!(!root.join(".textree").exists());
+        restore_deleted(root_s.clone(), "note.md".into()).unwrap();
+        restore_deleted(root_s, "note (1).md".into()).unwrap();
+        assert_eq!(std::fs::read_to_string(root.join("note.md")).unwrap(), "second draft", "the latest keeps the path");
+        assert_eq!(std::fs::read_to_string(root.join("note (1).md")).unwrap(), "first draft", "the earlier one is still there");
+    }
+
+    #[test]
+    fn an_empty_deleted_folder_holds_nothing_and_does_not_keep_the_folder() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        git2::Repository::init(root).unwrap();
+        let root_s = root.to_string_lossy().to_string();
+        as_an_earlier_version_left_it(root, &[]);
+        std::fs::create_dir_all(root.join(".textree").join("trash").join("empty").join("inner")).unwrap();
+        listing(root, &[("empty", "empty", 1_700_000_000, true)]);
+
+        let moved = move_state_out_of_vault(root_s).unwrap();
+
+        assert!(moved.left_behind.is_empty(), "left: {:?}", moved.left_behind);
+        assert!(!root.join(".textree").exists(), "nothing was in it, so nothing keeps the folder");
+    }
+
+    #[test]
+    fn a_list_with_no_copies_beside_it_is_simply_gone() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join(".textree")).unwrap();
+        std::fs::write(root.join(".textree").join(TRASH_MANIFEST), "[]").unwrap();
+
+        let moved = move_state_out_of_vault(root.to_string_lossy().to_string()).unwrap();
+
+        assert_eq!(moved, MoveOut::default());
+        assert!(!root.join(".textree").exists());
+        assert!(!root.join(".git").exists(), "and no repository is made for it");
+    }
+
+    #[test]
+    fn a_leftover_the_report_cannot_name_is_still_reported() {
+        // A directory that stays is itself something left behind, even with no file to name.
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        let inside = root.join(".textree");
+        std::fs::create_dir_all(&inside).unwrap();
+        assert_eq!(still_inside(root, &inside), vec![".textree".to_string()]);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_copy_that_cannot_be_read_stays_whole_and_its_readable_siblings_are_carried_once() {
+        // A deleted folder where one file is held open elsewhere (a sync client, a scanner). The
+        // readable file is carried and leaves; the unreadable one is not removed with its folder,
+        // and opening again records nothing twice.
+        use std::os::windows::fs::OpenOptionsExt;
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        git2::Repository::init(root).unwrap();
+        let root_s = root.to_string_lossy().to_string();
+        as_an_earlier_version_left_it(root, &[]);
+        let proj = root.join(".textree").join("trash").join("proj");
+        std::fs::create_dir_all(proj.join("deep")).unwrap();
+        std::fs::write(proj.join("plan.md"), "# plan").unwrap();
+        std::fs::write(proj.join("deep").join("held.md"), "only copy").unwrap();
+        listing(root, &[("proj", "proj", 1_700_000_000, true)]);
+        let held = std::fs::OpenOptions::new()
+            .read(true)
+            // FILE_SHARE_DELETE only: nobody else may read it, but it could be deleted — so a
+            // wholesale removal of the folder would destroy it, which is what this guards.
+            .share_mode(0x4)
+            .open(proj.join("deep").join("held.md"))
+            .unwrap();
+
+        let first = move_state_out_of_vault(root_s.clone()).unwrap();
+        let recorded = snapshots_recorded(root);
+        let second = move_state_out_of_vault(root_s.clone()).unwrap();
+        drop(held);
+
+        assert_eq!(first.notes, 1);
+        assert_eq!(first.left_behind, vec![".textree/trash.json".to_string(), ".textree/trash/proj/deep/held.md".to_string()]);
+        assert!(!proj.join("plan.md").exists(), "the carried file left");
+        assert_eq!(std::fs::read_to_string(proj.join("deep").join("held.md")).unwrap(), "only copy");
+        assert_eq!((second.notes, second.files), (0, 0));
+        assert_eq!(snapshots_recorded(root), recorded, "nothing recorded twice");
+
+        // Once it can be read, the next open carries it and the folder is clean.
+        let third = move_state_out_of_vault(root_s).unwrap();
+        assert_eq!(third.notes, 1);
+        assert!(!root.join(".textree").exists());
     }
 
     #[test]

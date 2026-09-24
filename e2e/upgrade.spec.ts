@@ -15,6 +15,7 @@ import { connectToApp, loadVault, createTempVault, removeTempVault } from "./hel
  * Shapes covered (each one a thing 0.6.0 itself treated as normal):
  *  - settings plus listed copies                    → everything carried, folder clean
  *  - a copy the list never named (unknown origin)   → carried to the top of the folder
+ *  - the same path deleted twice                    → both copies stay reachable
  *  - a deleted folder holding a note and an image   → counted as a note and a file
  *  - a list that no longer parses                   → its copies still carried
  *  - something that cannot be carried               → stays, and the notice says so every time
@@ -66,6 +67,7 @@ test("upgrade: every copy an earlier release set aside reaches Deleted notes, an
     {
       "old-idea.md": "# old idea\nonly copy\n",
       "later.md": "# later\n",
+      "later (1).md": "# later, deleted again\n",
       "proj/plan.md": "# plan\n",
       "proj/diagram.png": "PNG",
       "stray.md": "# stray\nnamed by no list\n",
@@ -73,6 +75,8 @@ test("upgrade: every copy an earlier release set aside reaches Deleted notes, an
     [
       { trashName: "old-idea.md", originalRel: "old-idea.md", deletedAt: at("2026-05-01T09:00:00Z"), isDir: false },
       { trashName: "later.md", originalRel: "later.md", deletedAt: at("2026-07-20T09:00:00Z"), isDir: false },
+      // The same path deleted a second time: the earlier release kept both copies.
+      { trashName: "later (1).md", originalRel: "later.md", deletedAt: at("2026-08-01T09:00:00Z"), isDir: false },
       { trashName: "proj", originalRel: "proj", deletedAt: at("2026-06-10T09:00:00Z"), isDir: true },
       { trashName: "gone.md", originalRel: "gone.md", deletedAt: at("2026-06-01T09:00:00Z"), isDir: false },
     ],
@@ -82,14 +86,14 @@ test("upgrade: every copy an earlier release set aside reaches Deleted notes, an
 
     const notice = page.getByTestId("migration-notice");
     await expect(notice).toContainText("Two things moved out of your notes folder");
-    await expect(notice).toContainText("4 notes and 1 other file from the trash are now under Deleted notes.");
+    await expect(notice).toContainText("5 notes and 1 other file from the trash are now under Deleted notes.");
     await expect(notice).toContainText("Your folder now holds only your notes.");
     await page.getByTestId("migration-ok").click();
 
     expect(existsSync(join(vault, ".textree")), "nothing of the app's is left in the folder").toBe(false);
     expect(readdirSync(vault).sort()).toEqual([".git", "alpha.md"]);
 
-    const listed = await openDeletedNotes(["old-idea", "later", "plan", "stray"]);
+    const listed = await openDeletedNotes(["old-idea", "later", "later (1)", "plan", "stray"]);
     // Ordered by when each left, the earlier release's own dates kept.
     expect(listed.indexOf("later")).toBeLessThan(listed.indexOf("old-idea"));
     await page.keyboard.press("Escape");
