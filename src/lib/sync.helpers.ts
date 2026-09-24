@@ -37,3 +37,21 @@ export function decideChangeAction(disk: string, live: string, dirty: boolean, s
   if (!dirty) return "reload";
   return disk === synced ? "none" : "conflict";
 }
+
+export type ReopenAction = "keep" | "rebuild" | "reuse";
+
+/**
+ * The note already open was opened again (picked in the tree, or a version of it restored). Its
+ * editor keeps its key, so without a rebuild the screen goes on showing what it showed.
+ *
+ * - its own edits are still being written → `keep`: the screen is ahead of disk and is what counts;
+ *   rebuilding from disk would show older text the next keystroke builds on;
+ * - disk differs from the screen → `rebuild` from disk: left alone, the screen would show text disk
+ *   no longer holds while saving compares against disk, and the next keystroke would write the old
+ *   text back (over a version just restored, say);
+ * - otherwise → `reuse`: nothing to change, and the cursor stays where it is.
+ */
+export function decideReopen(ownEditsPending: boolean, disk: string, live: string): ReopenAction {
+  if (ownEditsPending) return "keep";
+  return disk === live ? "reuse" : "rebuild";
+}

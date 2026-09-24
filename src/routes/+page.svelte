@@ -39,6 +39,7 @@
   import { cloudPublishNotice, cloudPublishErrorNotice } from "$lib/cloudPublish.helpers";
   import tokensCssRaw from "$lib/styles/tokens.css?raw";
   import { startSync } from "$lib/sync";
+  import { decideReopen } from "$lib/sync.helpers";
   import { buildWikiResolver } from "$lib/wikilink.helpers";
   import { backlinks } from "$lib/backlinkStore.svelte";
   import { relatedNotes } from "$lib/relatedNotesStore.svelte";
@@ -554,16 +555,14 @@
       save.opened("");
       return;
     }
-    const reopened = activePath !== null && samePath(node.body_path, activePath);
-    // The note already open, with its edits still being written: the screen is ahead of disk and is
-    // what counts. Re-reading would rebuild the editor from older text.
-    if (reopened && save.pending) return;
     const text = await readNote(root, node.body_path);
-    // Opening the note already open keeps its editor (same key), so the screen would go on showing
-    // the old text while the save baseline moved to disk — the next keystroke would write the old
-    // text back over what is there now (a version just restored, say). When disk differs from what
-    // is on screen, the editor is rebuilt from disk.
-    if (reopened && text !== liveDoc) reloadVersion += 1;
+    if (activePath !== null && samePath(node.body_path, activePath)) {
+      // The note already open, opened again (see decideReopen).
+      const ownPending = save.pending !== null && samePath(save.pending.path, activePath);
+      const action = decideReopen(ownPending, text, liveDoc);
+      if (action === "keep") return;
+      if (action === "rebuild") reloadVersion += 1;
+    }
     content = text;
     activeName = node.name;
     activePath = node.body_path;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { decideChangeAction, decideRescanAction } from "./sync.helpers";
+import { decideChangeAction, decideReopen, decideRescanAction } from "./sync.helpers";
 
 describe("decideRescanAction", () => {
   it("leaves a note alone when disk matches what the user sees (clean)", () => {
@@ -40,5 +40,19 @@ describe("decideChangeAction", () => {
 
   it("ignores a change event whose content is still what was last synced", () => {
     expect(decideChangeAction("last saved", "typing", true, "last saved")).toBe("none");
+  });
+});
+
+describe("decideReopen", () => {
+  it("keeps the editor while the note's own edits are still being written, even though disk differs", () => {
+    expect(decideReopen(true, "older on disk", "newer on screen")).toBe("keep");
+  });
+
+  it("rebuilds from disk when disk no longer holds what the screen shows (a version was restored)", () => {
+    expect(decideReopen(false, "restored", "before restoring")).toBe("rebuild");
+  });
+
+  it("reuses the editor when disk holds what is on screen", () => {
+    expect(decideReopen(false, "same", "same")).toBe("reuse");
   });
 });
