@@ -27,6 +27,8 @@ import { fileURLToPath } from "node:url";
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const PROJECT = join(REPO, "src-host", "src", "Textree.Host");
 const READY_TIMEOUT_MS = 5 * 60_000;
+/** One request may take this long (a first /index loads the embedder path); a host that died mid-request must not hang the smoke. */
+const REQUEST_TIMEOUT_MS = 3 * 60_000;
 const exeArg = process.argv.indexOf("--exe");
 const EXE = exeArg > 0 ? resolve(process.argv[exeArg + 1]) : null;
 
@@ -42,8 +44,12 @@ const freePort = () =>
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+let output = "";
+
 function fail(message) {
   console.error(`[host:smoke] FAILED — ${message}`);
+  if (output) console.error(`--- last host output ---
+${output.slice(-3000)}`);
   process.exitCode = 1;
   throw new Error(message);
 }
@@ -62,7 +68,6 @@ const host = EXE
       stdio: ["ignore", "pipe", "pipe"],
       shell: process.platform === "win32",
     });
-let output = "";
 host.stdout.on("data", (d) => (output += d));
 host.stderr.on("data", (d) => (output += d));
 
@@ -71,11 +76,12 @@ const post = (path, body) =>
     method: "POST",
     headers: { "content-type": "application/json" },
     body: body === undefined ? undefined : JSON.stringify(body),
-  });
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+  }).catch((err) => fail(`${path} got no answer (${err.name}) — host ${host.exitCode === null ? "still running" : `exited ${host.exitCode}`}`));
 
 async function health() {
   try {
-    return await (await fetch(`${base}/health`)).json();
+    return await (await fetch(`${base}/health`, { signal: AbortSignal.timeout(5000) })).json();
   } catch {
     return null;
   }
@@ -98,6 +104,7 @@ try {
     if (h?.generatorError) fail(`the generator cannot load: ${h.generatorError}`);
     if (h?.embedderError) fail(`the embedder cannot load: ${h.embedderError}`);
     if (h?.generatorReady && h?.embedderReady) break;
+    if (host.exitCode !== null) fail(`the host exited (${host.exitCode}) while loading`);
     if (Date.now() > deadline) fail(`not ready in time: ${JSON.stringify(h)}`);
     await sleep(2000);
   }
@@ -124,7 +131,7 @@ try {
   console.log("[host:smoke] local generation answers");
   console.log("[host:smoke] OK");
 } finally {
-  await post("/shutdown").catch(() => {});
+  await fetch(`${base}/shutdown`, { method: "POST", signal: AbortSignal.timeout(5000) }).catch(() => {});
   for (let i = 0; i < 20 && host.exitCode === null; i++) await sleep(500);
   // `dotnet run` goes through a shell on Windows: killing the shell leaves the host running,
   // holding the build output locked. End the whole tree.
@@ -133,4 +140,9 @@ try {
     else host.kill();
   }
   rmSync(vault, { recursive: true, force: true });
+  // A host whose process has exited can still hold its output pipes open while the OS finishes
+  // tearing it down; waiting on them would keep the smoke from ever returning its verdict.
+  host.stdout.destroy();
+  host.stderr.destroy();
+  host.unref();
 }
