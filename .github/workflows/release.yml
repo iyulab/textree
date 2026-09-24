@@ -13,9 +13,9 @@ jobs:
     runs-on: windows-latest
     environment: production
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
 
@@ -48,7 +48,7 @@ jobs:
           echo "ref=$ref" >> "$GITHUB_OUTPUT"
 
       - name: Checkout canopy (pinned)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: iyulab/canopy
           ref: ${{ steps.canopy.outputs.ref }}
@@ -65,7 +65,7 @@ jobs:
       # tauri.conf.json bundle.resources requires both resources/canopy AND resources/host to
       # exist, so the verify-publish build below fails on a missing resource path otherwise.
       - name: Setup .NET
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v6
         with:
           dotnet-version: '10.0.x'
 

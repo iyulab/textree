@@ -24,15 +24,15 @@ jobs:
   verify:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
 
       - name: Cache cargo
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/registry/index/
@@ -99,7 +99,7 @@ jobs:
           echo "ref=$ref" >> "$GITHUB_OUTPUT"
 
       - name: Checkout canopy (pinned)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: iyulab/canopy
           ref: ${{ steps.canopy.outputs.ref }}
@@ -110,7 +110,7 @@ jobs:
         run: pwsh -NoProfile -File scripts/assemble-canopy-sidecar.ps1 -CanopyPath ${{ github.workspace }}/canopy-src
 
       - name: Setup .NET
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v6
         with:
           dotnet-version: '10.0.x'
 
