@@ -79,6 +79,9 @@ export class NoteSave {
   #synced = "";
 
   #pending: PendingEdit | null = null;
+  // Edits to a note already left whose write failed. Nothing on screen holds them any more, so they
+  // are kept here — with the vault they belong to — and tried again before every save until they land.
+  #stranded = new Map<string, { root: string; edit: PendingEdit }>();
   // Saves run one at a time. Two in flight would each be based on the same state, and the second
   // would mistake the first for a change made elsewhere.
   #saving: Promise<void> = Promise.resolve();
@@ -138,8 +141,14 @@ export class NoteSave {
   flush(): Promise<void> {
     this.#cancelTimer();
     return this.#enqueue(async () => {
+      for (const { root, edit } of [...this.#stranded.values()]) await this.#write(edit, root);
       if (this.#pending) await this.#write(this.#pending);
     });
+  }
+
+  /** Edits to notes already left that are not on disk yet (see `#stranded`). */
+  get stranded(): number {
+    return this.#stranded.size;
   }
 
   /** Save before leaving the open note — switching, changing vault, restructuring, or closing. */
@@ -187,8 +196,9 @@ export class NoteSave {
     this.#pending = null;
     this.#synced = "";
     this.#syncDirty();
-    // The edit context is gone, so the errors about it are too.
-    this.state.saveError = null;
+    // The edit context is gone, so the errors about it are too — except the warning about edits kept
+    // for a note left earlier, which are still waiting to land.
+    if (this.#stranded.size === 0) this.state.saveError = null;
     this.state.saveFailure = null;
     this.state.removed = false;
     this.state.conflictDisk = null;
@@ -199,7 +209,7 @@ export class NoteSave {
     this.#synced = text;
     this.#pending = null;
     this.#syncDirty();
-    this.state.saveError = null;
+    if (this.#stranded.size === 0) this.state.saveError = null;
     this.state.saveFailure = null;
     this.state.removed = false; // back to normal if it was re-created after being deleted
   }
@@ -307,15 +317,17 @@ export class NoteSave {
     }
   }
 
-  async #write(job: PendingEdit): Promise<void> {
-    const root = this.deps.root();
+  async #write(job: PendingEdit, rootOf?: string): Promise<void> {
+    const root = rootOf ?? this.deps.root();
     if (!root) return;
+    const retry = rootOf !== undefined;
     const s = this.state;
     const open = this.deps.activePath();
     if (job.path === open && (s.conflictDisk !== null || s.removed)) return;
     try {
       const outcome = await this.deps.write(root, job.path, job.text, job.base);
-      const active = this.deps.activePath();
+      if (retry) this.#stranded.delete(job.path);
+      const active = retry ? null : this.deps.activePath();
       if (outcome.kind === "conflict") {
         if (job.path !== active) {
           // Edits to a note already left: there is no banner to ask on.
@@ -332,6 +344,12 @@ export class NoteSave {
         else s.conflictDisk = outcome.disk;
         return;
       }
+      if (retry) {
+        // Kept edits landed. Whatever was said about them no longer holds, unless others remain.
+        if (this.#stranded.size === 0 && !this.state.saveFailure) this.state.saveError = null;
+        if (root === this.deps.root()) this.deps.saved?.(job.path, job.text);
+        return;
+      }
       this.deps.saved?.(job.path, job.text);
       if (job.path === active) this.#synced = job.text;
       if (this.#pending === job) {
@@ -343,13 +361,26 @@ export class NoteSave {
       // Only the open note's own save speaks for it: a note already left saving fine says nothing
       // about whether the open one's edits are saved.
       if (job.path === active) {
-        s.saveError = null;
         s.saveFailure = null;
+        // A note left behind with edits still not on disk keeps its warning up.
+        if (this.#stranded.size === 0) s.saveError = null;
       }
     } catch (e) {
+      const active = this.deps.activePath();
+      if (!retry && this.#pending !== job && job.path !== active) {
+        // Edits to a note already left: nothing on screen holds them, so keep them to try again.
+        this.#stranded.set(job.path, { root, edit: job });
+      }
+      if (retry || this.#stranded.has(job.path)) {
+        const why = friendlyError(e);
+        s.saveError = friendlyError(
+          `Your last edits to "${noteStem(job.path)}" are not saved yet (${why.summary}). They are kept and tried again with every save.`,
+        );
+        return;
+      }
       // The edit stays pending, so it can be tried again.
       s.saveError = friendlyError(e);
-      if (job.path === this.deps.activePath()) s.saveFailure = s.saveError;
+      if (job.path === active) s.saveFailure = s.saveError;
     }
   }
 }

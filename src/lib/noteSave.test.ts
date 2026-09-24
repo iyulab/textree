@@ -211,6 +211,77 @@ describe("NoteSave — switching notes", () => {
     expect(h.state.dirty).toBe(true);
     expect(h.removedCount()).toBe(1);
   });
+
+  it("edits to a note left behind whose write fails are kept, retried, and warned about until they land", async () => {
+    const h = harness();
+    h.save.opened("a0");
+    // Typed into the old note while the next one loads, then the first edit to the next note.
+    h.save.schedule("A.md", "a2");
+    h.open("B.md", "b0");
+    h.save.schedule("B.md", "b1");
+    await settle();
+    h.calls[0].settle(new Error("disk full"));
+    await settle();
+    expect(h.save.stranded).toBe(1);
+    expect(h.state.saveError?.summary).toContain('"A"');
+    expect(h.state.saveFailure).toBeNull(); // the open note has nothing wrong with it
+
+    // The next save tries the kept edits first, in the vault they belong to.
+    vi.advanceTimersByTime(500);
+    await settle();
+    expect(h.calls[1]).toMatchObject({ path: "A.md", text: "a2", expected: "a0" });
+    h.calls[1].settle(new Error("disk full"));
+    await settle();
+    expect(h.calls[2]).toMatchObject({ path: "B.md", text: "b1" });
+    h.calls[2].settle(written);
+    await settle();
+    // The open note saving fine does not hide that the other one's edits are still not on disk.
+    expect(h.save.stranded).toBe(1);
+    expect(h.state.saveError?.summary).toContain('"A"');
+
+    h.save.schedule("B.md", "b2");
+    vi.advanceTimersByTime(500);
+    await settle();
+    expect(h.calls[3]).toMatchObject({ path: "A.md", text: "a2", expected: "a0" });
+    h.calls[3].settle(written);
+    await settle();
+    h.calls[4].settle(written);
+    await settle();
+    expect(h.save.stranded).toBe(0);
+    expect(h.state.saveError).toBeNull();
+  });
+
+  it("kept edits are written into the vault they were typed in, even after another vault opens", async () => {
+    let root = "/one";
+    let active: string | null = "A.md";
+    const roots: string[] = [];
+    let fail = true;
+    const save = new NoteSave(initialNoteSaveState(), {
+      root: () => root,
+      activePath: () => active,
+      write: async (r) => {
+        roots.push(r);
+        if (fail) throw new Error("disk full");
+        return written;
+      },
+    });
+    save.opened("a0");
+    save.schedule("A.md", "a1");
+    active = "B.md";
+    save.opened("b0");
+    save.schedule("B.md", "b1");
+    await settle();
+    expect(save.stranded).toBe(1);
+
+    root = "/two";
+    active = null;
+    save.closed();
+    fail = false;
+    await save.flush();
+    expect(roots.at(-1)).toBe("/one");
+    expect(save.stranded).toBe(0);
+  });
+
 });
 
 describe("NoteSave — answers", () => {
