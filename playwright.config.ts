@@ -18,6 +18,8 @@ export default defineConfig({
   workers: 1,
   // The history keeps the name of a failure that does not come back on the next run.
   reporter: [["list"], ["./e2e/run-history-reporter.ts"]],
+  // Warms the publishing renderer once, so its first start is not charged to a spec (see the file).
+  globalSetup: "./e2e/global-setup.ts",
   timeout: 30_000,
   expect: { timeout: 10_000 },
 });
