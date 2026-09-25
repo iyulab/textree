@@ -15,7 +15,10 @@
  *   npm run host:smoke -- --exe src-tauri/resources/host/textree-host.exe   # the shipped build
  *
  * The second form checks what an installer carries: a single self-extracting file whose native
- * libraries only appear at launch, which `dotnet run` never exercises.
+ * libraries only appear at launch, which `dotnet run` never exercises. For the staged sidecar it
+ * first checks that the exe was assembled from the source as it stands (sidecar-provenance.mjs)
+ * and refuses a stale or unrecorded build — passing on some other build proves nothing about
+ * this one. `--any-build` runs it anyway, and the verdict line says what was tested.
  */
 import { spawn, spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -23,6 +26,7 @@ import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { check as checkProvenance, describe as describeProvenance } from "./sidecar-provenance.mjs";
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const PROJECT = join(REPO, "src-host", "src", "Textree.Host");
@@ -31,6 +35,17 @@ const READY_TIMEOUT_MS = 5 * 60_000;
 const REQUEST_TIMEOUT_MS = 3 * 60_000;
 const exeArg = process.argv.indexOf("--exe");
 const EXE = exeArg > 0 ? resolve(process.argv[exeArg + 1]) : null;
+const ANY_BUILD = process.argv.includes("--any-build");
+
+const provenance = EXE ? checkProvenance("host", EXE) : null;
+if (provenance) {
+  const line = `[host:smoke] the exe is ${describeProvenance(provenance)}`;
+  if (provenance.verdict !== "current" && !ANY_BUILD) {
+    console.error(`${line}\n[host:smoke] FAILED — the exe is not known to be a build of the current source (pass --any-build to run it anyway)`);
+    process.exit(1);
+  }
+  console.log(line);
+}
 
 const freePort = () =>
   new Promise((ok, fail) => {
@@ -129,7 +144,7 @@ try {
   if (!chat.ok) fail(`/chat answered ${chat.status}: ${text.slice(0, 300)}`);
   if (!/"content":"[^"]+"/.test(text)) fail(`/chat returned no content: ${text.slice(0, 300)}`);
   console.log("[host:smoke] local generation answers");
-  console.log("[host:smoke] OK");
+  console.log(provenance && provenance.verdict !== "current" ? "[host:smoke] OK — but for the exe above, not a known build of the current source" : "[host:smoke] OK");
 } finally {
   await fetch(`${base}/shutdown`, { method: "POST", signal: AbortSignal.timeout(5000) }).catch(() => {});
   for (let i = 0; i < 20 && host.exitCode === null; i++) await sleep(500);
