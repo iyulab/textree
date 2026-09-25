@@ -12,6 +12,8 @@ mod gate_foreground_latency;
 mod gate_staging_untouched;
 #[cfg(test)]
 mod gate_vault_untouched;
+#[cfg(test)]
+mod gate_write_interrupted;
 pub(crate) mod git_engine;
 pub(crate) mod pathsafe;
 pub(crate) mod process_ext;

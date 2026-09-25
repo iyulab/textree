@@ -13,11 +13,11 @@ use tauri::{AppHandle, Manager, State};
 use tempfile::NamedTempFile;
 
 /// Name of the staging directory for atomic writes, inside the repository's own storage.
-const TEMP_DIR_NAME: &str = "textree-tmp";
+pub(crate) const TEMP_DIR_NAME: &str = "textree-tmp";
 
 /// Prefix of a temp file staged at the top of a folder no repository governs. The application's
 /// own, so that one left by a crash can be recognized and removed without touching anything else.
-const LOOSE_TEMP_PREFIX: &str = ".textree-tmp-";
+pub(crate) const LOOSE_TEMP_PREFIX: &str = ".textree-tmp-";
 
 /// Legacy staging location, kept only so leftovers from earlier versions get cleaned up.
 const LEGACY_TEMP_DIR: [&str; 2] = [".textree", "tmp"];
@@ -32,7 +32,7 @@ const LEGACY_TEMP_DIR: [&str; 2] = [".textree", "tmp"];
 /// A folder no repository governs has no such place, and gets none: making a directory in it
 /// would be the one thing the folder is promised never to hold: anything but notes. Writes there stage
 /// beside their target instead — see [`atomic_write_bytes`].
-fn temp_dir(root: &Path) -> Option<PathBuf> {
+pub(crate) fn temp_dir(root: &Path) -> Option<PathBuf> {
     crate::git_engine::git_dir(root).map(|git| git.join(TEMP_DIR_NAME))
 }
 
@@ -43,7 +43,7 @@ fn temp_dir(root: &Path) -> Option<PathBuf> {
 /// The older location is swept as well, so upgrading leaves nothing behind — and so is the top of
 /// the folder, for temps staged there before a repository existed. Only names carrying the
 /// application's own prefix go, and only at the top: a sweep never walks the whole folder.
-fn clear_temp_dir(root: &Path) {
+pub(crate) fn clear_temp_dir(root: &Path) {
     let legacy = root.join(LEGACY_TEMP_DIR[0]).join(LEGACY_TEMP_DIR[1]);
     for dir in temp_dir(root).into_iter().chain([legacy]) {
         if let Ok(entries) = std::fs::read_dir(&dir) {
@@ -92,7 +92,8 @@ pub(crate) fn atomic_write(root: &Path, path: &Path, content: &str) -> io::Resul
 
 /// The same guarantee for content that is not necessarily text — a restored file can be
 /// anything that was kept alongside the notes.
-fn atomic_write_bytes(root: &Path, path: &Path, content: &[u8]) -> io::Result<()> {
+pub(crate) fn atomic_write_bytes(root: &Path, path: &Path, content: &[u8]) -> io::Result<()> {
+    write_step::before(write_step::Step::CreateTemp)?;
     // No repository: stage at the top of the folder, under a name of our own. It exists only
     // until the rename a moment later; one a crash leaves is swept on the next open. The top of
     // the folder is on the same volume as every note in it, so the rename stays atomic.
@@ -103,14 +104,73 @@ fn atomic_write_bytes(root: &Path, path: &Path, content: &[u8]) -> io::Result<()
         }
         None => tempfile::Builder::new().prefix(LOOSE_TEMP_PREFIX).tempfile_in(root)?,
     };
+    write_step::before(write_step::Step::WriteTemp)?;
     tmp.write_all(content)?;
     // Flush down to physical storage, not just the OS buffer (fsync). Only then is the
     // content guaranteed after the rename even under power loss — persist alone has no durability.
+    write_step::before(write_step::Step::Sync)?;
     tmp.as_file().sync_all()?;
     // persist is a rename within the same volume (both under the vault root), so it is atomic and
     // replaces the existing file.
+    write_step::before(write_step::Step::Rename)?;
     tmp.persist(path).map_err(|e| e.error)?;
     Ok(())
+}
+
+/// The points between the steps of an atomic write. In a shipped build they do nothing; tests
+/// use them to see the disk as a crash at that instant would leave it, or to make the next step
+/// fail.
+pub(crate) mod write_step {
+    use std::io;
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub(crate) enum Step {
+        CreateTemp,
+        WriteTemp,
+        Sync,
+        Rename,
+    }
+
+    #[cfg(not(test))]
+    #[inline(always)]
+    pub(crate) fn before(_: Step) -> io::Result<()> {
+        Ok(())
+    }
+
+    #[cfg(test)]
+    type Hook = Box<dyn FnMut(Step) -> io::Result<()>>;
+
+    #[cfg(test)]
+    thread_local! {
+        static HOOK: std::cell::RefCell<Option<Hook>> = const { std::cell::RefCell::new(None) };
+    }
+
+    #[cfg(test)]
+    pub(crate) fn before(step: Step) -> io::Result<()> {
+        HOOK.with(|h| match h.borrow_mut().as_mut() {
+            Some(hook) => hook(step),
+            None => Ok(()),
+        })
+    }
+
+    /// Runs `hook` before every step of atomic writes made on this thread, until the returned
+    /// guard is dropped — also when an assertion panics, so no later test inherits it.
+    #[cfg(test)]
+    #[must_use]
+    pub(crate) fn install(hook: impl FnMut(Step) -> io::Result<()> + 'static) -> Installed {
+        HOOK.with(|h| *h.borrow_mut() = Some(Box::new(hook)));
+        Installed
+    }
+
+    #[cfg(test)]
+    pub(crate) struct Installed;
+
+    #[cfg(test)]
+    impl Drop for Installed {
+        fn drop(&mut self) {
+            HOOK.with(|h| *h.borrow_mut() = None);
+        }
+    }
 }
 
 /// Seed note written into a freshly created default vault. English only (public repo).
