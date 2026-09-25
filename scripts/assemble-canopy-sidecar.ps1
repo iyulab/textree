@@ -7,7 +7,11 @@
 param(
   # Path to the canopy source repo. Default = umbrella sibling. CI passes the checked-out copy.
   [string]$CanopyPath = (Join-Path $PSScriptRoot '..' '..' 'canopy'),
-  [string]$NodeVersion = '22.12.0'
+  [string]$NodeVersion = '22.12.0',
+  # Build the commit a release ships (.github/canopy-ref) from a temporary worktree of
+  # $CanopyPath, instead of whatever that checkout has. Without it the E2E suite renders with the
+  # checkout's canopy, which is often ahead of the pin (sidecar-provenance.mjs says which).
+  [switch]$Pinned
 )
 $ErrorActionPreference = 'Stop'
 
@@ -15,6 +19,19 @@ $repoRoot  = Join-Path $PSScriptRoot '..'                       # textree/
 $stage     = Join-Path $repoRoot 'src-tauri' 'resources' 'canopy'
 $cacheDir  = Join-Path $repoRoot '.cache'
 $canopy    = (Resolve-Path $CanopyPath).Path
+$worktree  = $null
+if ($Pinned) {
+  $ref = (Get-Content (Join-Path $repoRoot '.github' 'canopy-ref') -Raw).Trim()
+  $worktree = Join-Path $cacheDir 'canopy-pinned'
+  if (Test-Path $worktree) {
+    git -C $canopy worktree remove --force $worktree 2>$null
+    if (Test-Path $worktree) { Remove-Item -Recurse -Force $worktree }
+    git -C $canopy worktree prune
+  }
+  git -C $canopy worktree add --detach $worktree $ref
+  if ($LASTEXITCODE -ne 0) { throw "could not check out canopy $ref from $canopy (fetch it there first)" }
+  $canopy = (Resolve-Path $worktree).Path
+}
 
 Write-Host "Assembling canopy sidecar: node v$NodeVersion + $canopy -> $stage"
 
@@ -52,5 +69,10 @@ if (-not (Test-Path $nodeExe)) {
   if (-not (Test-Path $extract)) { Expand-Archive $zip -DestinationPath $cacheDir -Force }
   Copy-Item (Join-Path $extract 'node.exe') $nodeExe -Force
 }
+
+# 6. Record which canopy commit this payload is (sidecar-provenance.mjs; the E2E run reports it).
+& node (Join-Path $PSScriptRoot 'sidecar-provenance.mjs') stamp canopy $canopy
+if ($LASTEXITCODE -ne 0) { throw "recording the renderer's source failed ($LASTEXITCODE)" }
+if ($worktree) { git -C $CanopyPath worktree remove --force $worktree }
 
 Write-Host "Done. Payload at $stage"

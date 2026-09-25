@@ -20,6 +20,7 @@ import { closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync } from
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { checkCanopy, describeCanopy } from "./sidecar-provenance.mjs";
 import { devServerListeners, killTree, runningDevApps } from "./dev-processes.mjs";
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -96,8 +97,15 @@ const { soak, playwrightArgs } = parseArgs(process.argv.slice(2));
 
 const env = { ...process.env };
 if (!env.TEXTREE_CANOPY_CLI && existsSync(ASSEMBLED_CANOPY)) {
-  // The same assembled renderer a release ships; publish specs need it by absolute path.
+  // The assembled renderer, packaged the way a release packages it; publish specs need it by
+  // absolute path. Whether it is also the canopy commit a release ships depends on what it was
+  // assembled from — said up front, so a green run is not read as a check of the shipped renderer
+  // when it was not one.
   env.TEXTREE_CANOPY_CLI = ASSEMBLED_CANOPY;
+  const renderer = checkCanopy();
+  const line = `[e2e:run] publishing renders with ${describeCanopy(renderer)}`;
+  if (renderer.verdict === "pinned") console.log(line);
+  else console.warn(line);
 }
 if (!env.TEXTREE_CANOPY_CLI) {
   console.warn("[e2e:run] warning: TEXTREE_CANOPY_CLI is unset and no assembled renderer exists — publish specs will fail");
