@@ -308,13 +308,20 @@
     }
   }
 
+  // True while a publish (to a folder or to the web) is in flight — shows the "Publishing…" banner
+  // and keeps a second publish from starting alongside it.
+  let publishing = $state(false);
+
   /**
    * Publish the open vault to a static site at `out` (outside the vault). Read-only over the
    * source. The app's tokens are rewritten for prefers-color-scheme so the site auto-themes.
    * Split from the folder picker so the E2E bridge can drive it without the native dialog.
    */
   async function publishToDir(out: string) {
-    if (!root) return;
+    // Same busy flag as publishing to the web: the render can take a while (the first one after
+    // install reads the renderer's files cold), and without it nothing on screen says it started.
+    if (!root || publishing) return;
+    publishing = true;
     publishNotice = null;
     try {
       const result = await publishSite(root, out, {
@@ -331,11 +338,13 @@
         text: `Publish failed: ${fe.summary}`,
         detail: fe.raw !== fe.summary ? fe.raw : undefined,
       };
+    } finally {
+      publishing = false;
     }
   }
 
   async function choosePublishTarget() {
-    if (!root) return;
+    if (!root || publishing) return;
     const out = await open({
       directory: true,
       multiple: false,
@@ -344,7 +353,6 @@
     if (typeof out === "string") await publishToDir(out);
   }
 
-  let cloudPublishing = $state(false);
   // True while the browser OAuth round-trip (connect_publish) is in flight — shows a distinct
   // "Connecting…" banner instead of "Publishing…".
   let cloudConnecting = $state(false);
@@ -355,11 +363,11 @@
    * source (same canopy render as the local publish).
    */
   async function publishToWeb() {
-    if (!root || cloudPublishing) return;
+    if (!root || publishing) return;
     // Claim the busy flag synchronously, before the first await, so two rapid invocations can't both
     // pass the guard and start concurrent uploads. `finally` resets it on every path (including the
     // no-token early return below).
-    cloudPublishing = true;
+    publishing = true;
     publishNotice = null;
     try {
       // First-time publish: no token yet → run the in-app sign-in (browser OAuth loopback + PKCE)
@@ -378,7 +386,7 @@
       publishNotice = { ...cloudPublishErrorNotice(e), onRetry: () => void publishToWeb() };
     } finally {
       cloudConnecting = false;
-      cloudPublishing = false;
+      publishing = false;
     }
   }
 
@@ -1484,7 +1492,7 @@
     {#if updateInfo}
       <UpdateBanner info={updateInfo} />
     {/if}
-    {#if cloudPublishing}
+    {#if publishing}
       <div class="publish-banner publishing" role="status" aria-busy="true">
         <span>{cloudConnecting ? "Connecting… (sign in in the browser window that opened)" : "Publishing…"}</span>
       </div>

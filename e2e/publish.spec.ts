@@ -41,7 +41,11 @@ test("publish renders the vault to an auto-theming static site, source untouched
   const out = mkdtempSync(join(tmpdir(), "textree-pub-")).replace(/\\/g, "/");
   try {
     await loadVault(page, vault);
-    await publishTo(page, out);
+    const publishing = publishTo(page, out);
+    // While the renderer runs, the screen says so (the first render after install can take a while).
+    await expect(page.locator(".publish-banner.publishing")).toContainText("Publishing…");
+    await publishing;
+    await expect(page.locator(".publish-banner.publishing")).toHaveCount(0);
 
     // canopy emitted the page.
     await expect
