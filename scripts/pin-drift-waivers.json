@@ -1,7 +1,1 @@
-[
-  {
-    "package": "Unpdf",
-    "until": "2026-10-24",
-    "reason": "arrives only through FileFlux, whose newest release still declares Unpdf >= 0.15.0; the host indexes Markdown only and never runs the PDF reader. Remove once FileFlux raises the floor and the pin follows."
-  }
-]
+[]

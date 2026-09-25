@@ -1,5 +1,5 @@
 using System.Runtime.CompilerServices;
-using System.Text;
+using IronProw.Core;
 using IronProw.LMSupply;
 using Microsoft.Extensions.AI;
 using MeaiChatMessage = Microsoft.Extensions.AI.ChatMessage;
@@ -11,8 +11,8 @@ namespace Textree.Host.Rag;
 // provider via ByoProviderRegistration.Register (Task 5), which resolves to a DI-singleton
 // IChatClient (iron-prow's SelectingChatClient — inert selection over a single candidate, same
 // reasoning D12 used for the local path's lightweight wiring). This class only adapts that
-// injected client into textree's ITextGenerator, keeping the streaming loop, RepetitionGuard, and
-// the LocalSafetyChatClient safety wrap that LocalTextGenerator already uses.
+// injected client into textree's ITextGenerator, keeping the streaming loop, the degeneration stop,
+// and the LocalSafetyChatClient safety wrap that LocalTextGenerator already uses.
 
 /// <summary>
 /// Text generator backed by an injected iron-prow <see cref="IChatClient"/> (a single-provider,
@@ -23,8 +23,6 @@ namespace Textree.Host.Rag;
 /// </summary>
 public sealed class RemoteChatTextGenerator : ITextGenerator
 {
-    private const int RepetitionTail = 256;
-
     private readonly IChatClient _client;
     private readonly string _model;
     private string? _lastError;
@@ -50,12 +48,12 @@ public sealed class RemoteChatTextGenerator : ITextGenerator
         // Keep textree's own safety wrap: iron-prow's default guard is a no-op NullGuard, so the
         // 512-token cap + readiness probe would otherwise be lost.
         //
-        // Deliberately NOT wrapped in `using`/disposed: LocalSafetyChatClient extends M.E.AI's
-        // DelegatingChatClient, whose Dispose(bool) forwards to InnerClient.Dispose(). _client
-        // here is a DI singleton (iron-prow's gateway, shared across every /chat request) —
-        // disposing this wrapper after one request would dispose that singleton and break every
-        // subsequent call. The wrapper itself owns no other disposable state, so never disposing
-        // it leaks nothing; the per-call streaming enumerator is still disposed below.
+        // Deliberately NOT wrapped in `using`/disposed: both wrappers (LocalSafetyChatClient and the
+        // degeneration stop) extend M.E.AI's DelegatingChatClient, whose Dispose(bool) forwards to
+        // InnerClient.Dispose(). _client here is a DI singleton (iron-prow's gateway, shared across
+        // every /chat request) — disposing the chain after one request would dispose that singleton
+        // and break every subsequent call. The wrappers own no other disposable state, so never
+        // disposing them leaks nothing; the per-call streaming enumerator is still disposed below.
         //
         // The probe's model-id list (`new[] { _model }`) is inert on this path: LocalSafetyChatClient
         // consults GetAvailableModelIdsAsync only when ChatOptions.ModelId is set, and this class
@@ -64,7 +62,8 @@ public sealed class RemoteChatTextGenerator : ITextGenerator
         var chat = new LocalSafetyChatClient(
             _client,
             new LocalSafetyOptions { DefaultMaxOutputTokens = 512 },
-            new LazyReadinessProbe(() => true, new[] { _model }));
+            new LazyReadinessProbe(() => true, new[] { _model }))
+            .WithDegenerationStop();
 
         var chatMessages = messages.Select(ToChatMessage).ToList();
         // ChatOptions.ModelId intentionally omitted: the bridge already binds `_model` into the
@@ -78,7 +77,6 @@ public sealed class RemoteChatTextGenerator : ITextGenerator
             Temperature = opts.Temperature,
         };
 
-        var recent = new StringBuilder(RepetitionTail);
         IAsyncEnumerator<ChatResponseUpdate>? enumerator = null;
         try
         {
@@ -104,10 +102,6 @@ public sealed class RemoteChatTextGenerator : ITextGenerator
                 ct.ThrowIfCancellationRequested();
                 if (string.IsNullOrEmpty(update.Text)) continue;
                 yield return update.Text;
-
-                recent.Append(update.Text);
-                if (recent.Length > RepetitionTail) recent.Remove(0, recent.Length - RepetitionTail);
-                if (RepetitionGuard.IsDegenerate(recent.ToString())) yield break;
             }
         }
         finally

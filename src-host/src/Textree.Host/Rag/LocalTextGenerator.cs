@@ -1,5 +1,5 @@
 using System.Runtime.CompilerServices;
-using System.Text;
+using IronProw.Core;
 using IronProw.LMSupply;
 using LMSupply;
 using LMSupply.Generator;
@@ -52,10 +52,6 @@ public sealed class LocalTextGenerator : ITextGenerator, IAsyncDisposable
     // same way the embedder resolves "fast"/"default"/"quality". See header for why this is
     // pinned instead of "default" (which auto-selects a GGUF/llama-server backend on CPU).
     private const string ModelId = "phi-4-mini";
-
-    // Rolling tail (chars) kept for RepetitionGuard; must be >= its inspection window. Bounds the
-    // per-chunk detection buffer so it never grows with the length of the answer.
-    private const int RepetitionTail = 256;
 
     private readonly ModelStatus _status;
     private readonly SemaphoreSlim _loadGate = new(1, 1);
@@ -132,11 +128,14 @@ public sealed class LocalTextGenerator : ITextGenerator, IAsyncDisposable
         // Borrow the iron-prow D12 bridge: the lightweight 2-decorator path (NOT AddLMSupplyLocal,
         // whose selection/registry/resilience gateway is inert for a single local provider).
         // GeneratorChatClient wraps our already-loaded IGeneratorModel (IGeneratorModel : ITextGenerator,
-        // compile-proven) as an IChatClient; LocalSafetyChatClient adds length-bounding + a readiness gate.
+        // compile-proven) as an IChatClient; LocalSafetyChatClient adds length-bounding + a readiness gate,
+        // and the outermost degeneration stop ends a small model that has fallen into a repeated
+        // word/phrase loop instead of letting it stream a wall of repetition up to the token cap.
         using var chat = new LocalSafetyChatClient(
             new GeneratorChatClient(model),
             new LocalSafetyOptions { DefaultMaxOutputTokens = 512 }, // belt-and-suspenders; we always set a cap below
-            new LazyReadinessProbe(() => Ready, new[] { ModelId }));
+            new LazyReadinessProbe(() => Ready, new[] { ModelId }))
+            .WithDegenerationStop();
 
         var chatMessages = messages.Select(ToChatMessage).ToList();
         var chatOptions = new ChatOptions
@@ -150,20 +149,11 @@ public sealed class LocalTextGenerator : ITextGenerator, IAsyncDisposable
         // ct is threaded into GetStreamingResponseAsync so the library can observe it between tokens.
         // ThrowIfCancellationRequested keeps our belt-and-suspenders guard: stop promptly on client
         // disconnect regardless of the bridge's internal cancellation discipline (free CPU).
-        //
-        // `recent` holds a rolling tail of the emitted text so RepetitionGuard can stop a small
-        // model that has degenerated into a repeated word/phrase loop, instead of streaming a wall
-        // of repetition up to the token cap. Bounded to RepetitionTail so it never grows with output.
-        var recent = new StringBuilder(RepetitionTail);
         await foreach (var update in chat.GetStreamingResponseAsync(chatMessages, chatOptions, ct))
         {
             ct.ThrowIfCancellationRequested();
             if (string.IsNullOrEmpty(update.Text)) continue;
             yield return update.Text;
-
-            recent.Append(update.Text);
-            if (recent.Length > RepetitionTail) recent.Remove(0, recent.Length - RepetitionTail);
-            if (RepetitionGuard.IsDegenerate(recent.ToString())) yield break;
         }
     }
 

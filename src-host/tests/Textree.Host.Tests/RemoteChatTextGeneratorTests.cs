@@ -81,6 +81,42 @@ public sealed class RemoteChatTextGeneratorTests
         Assert.Equal(0, fake.DisposeCallCount);
     }
 
+    [Fact]
+    public async Task GenerateAsync_stops_a_degenerate_repetition_loop_before_the_stream_ends()
+    {
+        // The detection rules themselves are iron-prow's (DegenerationDetector) and tested there.
+        // This locks the wiring: the generator is wrapped, so a word loop ends early instead of
+        // streaming to the token cap.
+        var fake = new FakeChatClient(updates: ["Answer: ", .. Enumerable.Repeat("concisely ", 40)]);
+        var gen = new RemoteChatTextGenerator(fake, Model);
+
+        var chunks = new List<string>();
+        await foreach (var chunk in gen.GenerateAsync(
+            [new RagChatMessage("user", "hi")], new GenerationOptions(), CancellationToken.None))
+        {
+            chunks.Add(chunk);
+        }
+
+        Assert.StartsWith("Answer: concisely ", string.Concat(chunks));
+        Assert.True(chunks.Count < 41, $"expected an early stop, streamed {chunks.Count} of 41 chunks");
+    }
+
+    [Fact]
+    public async Task GenerateAsync_lets_markdown_structure_runs_through()
+    {
+        string[] table = ["| a | b |\n", "| ", .. Enumerable.Repeat("--- | ", 12), "\n| 1 | 2 |"];
+        var gen = new RemoteChatTextGenerator(new FakeChatClient(updates: table), Model);
+
+        var chunks = new List<string>();
+        await foreach (var chunk in gen.GenerateAsync(
+            [new RagChatMessage("user", "hi")], new GenerationOptions(), CancellationToken.None))
+        {
+            chunks.Add(chunk);
+        }
+
+        Assert.Equal(string.Concat(table), string.Concat(chunks));
+    }
+
     // ── Fake IChatClient: streams canned updates, or throws, and records Dispose calls ───────
     private sealed class FakeChatClient : IChatClient
     {
