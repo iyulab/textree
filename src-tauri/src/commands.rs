@@ -1,4 +1,5 @@
 use crate::host;
+use crate::note_locks::NoteLocks;
 use crate::pathsafe::is_within;
 use crate::search::{IndexHandle, IndexState, SearchHit};
 use crate::self_write::SelfWrites;
@@ -401,13 +402,30 @@ pub fn write_sidecar(root: String, rel: String, content: String) -> Result<(), S
     atomic_write_beside(&path, &content).map_err(|e| e.to_string())
 }
 
+/// Runs `work` off the main thread. Anything that touches the notes folder goes through here: a
+/// folder that stops answering (a stalled sync or network drive) must hold up that one request, not
+/// the window.
+async fn off_main<T: Send + 'static>(
+    work: impl FnOnce() -> Result<T, String> + Send + 'static,
+) -> Result<T, String> {
+    tauri::async_runtime::spawn_blocking(work).await.map_err(|e| e.to_string())?
+}
+
 #[tauri::command]
-pub fn list_tree(root: String) -> Result<Vec<TreeNode>, String> {
+pub async fn list_tree(root: String) -> Result<Vec<TreeNode>, String> {
+    off_main(move || tree_of(root)).await
+}
+
+pub(crate) fn tree_of(root: String) -> Result<Vec<TreeNode>, String> {
     vault::build_tree(Path::new(&root)).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-pub fn read_note(root: String, path: String) -> Result<String, String> {
+pub async fn read_note(root: String, path: String) -> Result<String, String> {
+    off_main(move || note_text(root, path)).await
+}
+
+pub(crate) fn note_text(root: String, path: String) -> Result<String, String> {
     let root = PathBuf::from(root);
     let path = PathBuf::from(path);
     if !is_within(&root, &path) {
@@ -446,18 +464,40 @@ fn stale_base(path: &Path, expected: &str) -> io::Result<Option<WriteOutcome>> {
     }
 }
 
+/// Saves a note, off the main thread: a folder that stops answering (a stalled sync or network
+/// drive) holds up this save, not the window or the other notes.
 #[tauri::command]
-pub fn write_note(
+pub async fn write_note(
     root: String,
     path: String,
     content: String,
     expected: String,
     self_writes: State<'_, Arc<SelfWrites>>,
-    index: State<'_, Arc<IndexHandle>>,
-    host: State<'_, Arc<host::HostHandle>>,
+    locks: State<'_, Arc<NoteLocks>>,
+    app: AppHandle,
 ) -> Result<WriteOutcome, String> {
-    let root = PathBuf::from(root);
-    let path = PathBuf::from(path);
+    let (self_writes, locks) = (self_writes.inner().clone(), locks.inner().clone());
+    off_main(move || {
+        let (root, path) = (PathBuf::from(root), PathBuf::from(path));
+        let outcome = save_note(&root, &path, &content, &expected, &self_writes, &locks)?;
+        if outcome == WriteOutcome::Written {
+            refresh_indexes(&app, root, path);
+        }
+        Ok(outcome)
+    })
+    .await
+}
+
+/// Replaces the note with `content` if it still holds `expected`. Saves to one note run one at a
+/// time, each checking against what the previous one left (see [`NoteLocks`]).
+pub(crate) fn save_note(
+    root: &Path,
+    path: &Path,
+    content: &str,
+    expected: &str,
+    self_writes: &SelfWrites,
+    locks: &NoteLocks,
+) -> Result<WriteOutcome, String> {
     // The whole folder is gone — the note with it. Nothing can be written, nothing is.
     if !root.is_dir() {
         log::info!("write_note: the folder {} is gone; not written", root.display());
@@ -465,42 +505,52 @@ pub fn write_note(
     }
     // Not `is_within`: that needs the note to exist, and a note deleted outside the app (with or
     // without its folder) must come back as "gone" below, not as an error about where it is.
-    if crate::pathsafe::rel_within(&root, &path).is_none() {
+    if crate::pathsafe::rel_within(root, path).is_none() {
         log::warn!("write_note: rejected unsafe path: {}", path.display());
         return Err("path is outside the vault".into());
     }
-    if let Some(conflict) = stale_base(&path, &expected).map_err(|e| e.to_string())? {
+    let _turn = locks.turn(path);
+    if let Some(conflict) = stale_base(path, expected).map_err(|e| e.to_string())? {
         log::info!("write_note: {} changed since it was loaded; not written", path.display());
         return Ok(conflict);
     }
     // Must register "just before" writing: if the watcher receives the event before
     // record runs right after the write hits disk, an echo loop forms (design §4.1).
-    self_writes.record(&path, &content);
-    match atomic_write(&root, &path, &content) {
+    self_writes.record(path, content);
+    match atomic_write(root, path, content) {
         Ok(()) => {
             log::info!("write_note: {} ({} bytes)", path.display(), content.len());
-            // The watcher suppresses self-writes, so in-app edits update the index here.
-            // An index failure does not fail the save (index = derived cache, graceful).
-            if let Some(state) = index.0.lock().unwrap_or_else(|e| e.into_inner()).as_mut() {
-                let _ = state.index_note(&root, &path, &content);
-            }
-            // Background semantic index. Runs without asking because it only reads: it derives a
-            // search index and never alters what the person wrote.
-            let host_arc = host.inner().clone();
-            let (v, p) = (root.to_string_lossy().to_string(), path.to_string_lossy().to_string());
-            tauri::async_runtime::spawn_blocking(move || {
-                host::index_note(&host_arc, &v, &p);
-            });
             Ok(WriteOutcome::Written)
         }
         Err(e) => {
             // On write failure the disk did not change, so remove the stale registration
             // to keep the registry from diverging from the actual disk state.
-            self_writes.forget(&path);
+            self_writes.forget(path);
             log::error!("write_note failed for {}: {}", path.display(), e);
             Err(e.to_string())
         }
     }
+}
+
+/// Brings the search indexes up to date with a saved note, in the background: the full-text index
+/// can be held for a whole rebuild, and the save is already on disk — it must not wait for that.
+/// The watcher skips the app's own writes, so in-app edits reach the index only through here.
+///
+/// The note is read again rather than passed along: two saves in quick succession start two of
+/// these, in no guaranteed order, and whichever runs last must index what the note holds now.
+/// An index failure does not fail anything (the index is a derived cache).
+fn refresh_indexes(app: &AppHandle, root: PathBuf, path: PathBuf) {
+    let index = app.state::<Arc<IndexHandle>>().inner().clone();
+    let host = app.state::<Arc<host::HostHandle>>().inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let Ok(content) = std::fs::read_to_string(&path) else { return };
+        if let Some(state) = index.0.lock().unwrap_or_else(|e| e.into_inner()).as_mut() {
+            let _ = state.index_note(&root, &path, &content);
+        }
+        // Background semantic index. Runs without asking because it only reads: it derives a
+        // search index and never alters what the person wrote.
+        host::index_note(&host, &root.to_string_lossy(), &path.to_string_lossy());
+    });
 }
 
 #[tauri::command]
@@ -928,17 +978,23 @@ pub fn save_attachment(
         .map_err(|e| e.to_string())
 }
 
+/// Off the main thread: the index is held for the whole of a first-open rebuild, and a search made
+/// meanwhile waits for it.
 #[tauri::command]
-pub fn search_content(
+pub async fn search_content(
     query: String,
     limit: usize,
     index: State<'_, Arc<IndexHandle>>,
 ) -> Result<Vec<SearchHit>, String> {
-    let guard = index.0.lock().unwrap_or_else(|e| e.into_inner());
-    match guard.as_ref() {
-        Some(state) => state.search(&query, limit).map_err(|e| e.to_string()),
-        None => Ok(Vec::new()), // no index → empty results (graceful)
-    }
+    let index = index.inner().clone();
+    off_main(move || {
+        let guard = index.0.lock().unwrap_or_else(|e| e.into_inner());
+        match guard.as_ref() {
+            Some(state) => state.search(&query, limit).map_err(|e| e.to_string()),
+            None => Ok(Vec::new()), // no index → empty results (graceful)
+        }
+    })
+    .await
 }
 
 #[tauri::command]
@@ -1828,6 +1884,99 @@ mod tests {
             stale_base(&tmp.path().join("box").join("gone.md"), "loaded").unwrap(),
             Some(WriteOutcome::Conflict { disk: None })
         );
+    }
+
+    /// Starts saving `text` to `path` on another thread and holds it just before the rename — the
+    /// moment a stalled folder would hold it. Returns a way to let it go and its result.
+    fn save_held_before_rename(
+        root: &Path,
+        path: &Path,
+        text: &'static str,
+        expected: &'static str,
+        self_writes: &Arc<SelfWrites>,
+        locks: &Arc<NoteLocks>,
+    ) -> (std::sync::mpsc::Sender<()>, std::thread::JoinHandle<Result<WriteOutcome, String>>) {
+        use std::sync::mpsc;
+        let (reached_tx, reached) = mpsc::channel();
+        let (release, release_rx) = mpsc::channel::<()>();
+        let (root, path) = (root.to_path_buf(), path.to_path_buf());
+        let (self_writes, locks) = (Arc::clone(self_writes), Arc::clone(locks));
+        let handle = std::thread::spawn(move || {
+            let _hook = write_step::install(move |step| {
+                if step == write_step::Step::Rename {
+                    reached_tx.send(()).unwrap();
+                    release_rx.recv().unwrap();
+                }
+                Ok(())
+            });
+            save_note(&root, &path, text, expected, &self_writes, &locks)
+        });
+        reached.recv_timeout(std::time::Duration::from_secs(5)).expect("the held save starts");
+        (release, handle)
+    }
+
+    #[test]
+    fn a_save_that_lands_late_cannot_overwrite_a_newer_one() {
+        // The stalled save goes first and the newer one waits for it to finish, then checks the
+        // note against what it left. Without that, the stalled save would land last and put the
+        // older text back.
+        let tmp = TempDir::new().unwrap();
+        let (root, note) = (tmp.path(), tmp.path().join("a.md"));
+        std::fs::write(&note, "0").unwrap();
+        let (self_writes, locks) = (Arc::new(SelfWrites::default()), Arc::new(NoteLocks::default()));
+
+        let (release, older) = save_held_before_rename(root, &note, "older", "0", &self_writes, &locks);
+
+        let newer = {
+            let (root, note) = (root.to_path_buf(), note.clone());
+            let (self_writes, locks) = (Arc::clone(&self_writes), Arc::clone(&locks));
+            std::thread::spawn(move || save_note(&root, &note, "newer", "older", &self_writes, &locks))
+        };
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        assert!(!newer.is_finished(), "the newer save waits while the older one is still writing");
+        assert_eq!(std::fs::read_to_string(&note).unwrap(), "0");
+
+        release.send(()).unwrap();
+        assert_eq!(older.join().unwrap(), Ok(WriteOutcome::Written));
+        assert_eq!(newer.join().unwrap(), Ok(WriteOutcome::Written));
+        assert_eq!(std::fs::read_to_string(&note).unwrap(), "newer", "the newest text is what stays");
+    }
+
+    #[test]
+    fn a_stalled_save_does_not_hold_up_another_note() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        std::fs::write(root.join("a.md"), "a").unwrap();
+        std::fs::write(root.join("b.md"), "b").unwrap();
+        let (self_writes, locks) = (Arc::new(SelfWrites::default()), Arc::new(NoteLocks::default()));
+
+        let (release, stalled) =
+            save_held_before_rename(root, &root.join("a.md"), "a2", "a", &self_writes, &locks);
+
+        let other = save_note(root, &root.join("b.md"), "b2", "b", &self_writes, &locks);
+        assert_eq!(other, Ok(WriteOutcome::Written));
+        assert_eq!(std::fs::read_to_string(root.join("b.md")).unwrap(), "b2");
+
+        release.send(()).unwrap();
+        assert_eq!(stalled.join().unwrap(), Ok(WriteOutcome::Written));
+    }
+
+    #[test]
+    fn negative_control_without_taking_turns_the_newer_save_is_refused() {
+        // The same two saves with the order left to chance: the newer one checks the note before the
+        // stalled one lands, sees what it expects to replace is not there yet, and refuses — so the
+        // person is told of a conflict with their own edit. With turns, it goes after (see above).
+        let tmp = TempDir::new().unwrap();
+        let (root, note) = (tmp.path(), tmp.path().join("a.md"));
+        std::fs::write(&note, "0").unwrap();
+        let self_writes = Arc::new(SelfWrites::default());
+        // A fresh set of locks per save is no locking at all.
+        let (release, older) =
+            save_held_before_rename(root, &note, "older", "0", &self_writes, &Arc::new(NoteLocks::default()));
+        let newer = save_note(root, &note, "newer", "older", &self_writes, &NoteLocks::default());
+        assert!(matches!(newer, Ok(WriteOutcome::Conflict { .. })), "{newer:?}");
+        release.send(()).unwrap();
+        older.join().unwrap().unwrap();
     }
 
     #[test]

@@ -224,10 +224,10 @@ fn measure_foreground_against_tree_size() {
         .unwrap();
 
         let listing = millis(|| {
-            crate::commands::list_tree(root.clone()).unwrap();
+            crate::commands::tree_of(root.clone()).unwrap();
         });
         let read = millis(|| {
-            crate::commands::read_note(root.clone(), one_s.clone()).unwrap();
+            crate::commands::note_text(root.clone(), one_s.clone()).unwrap();
         });
         let add = millis(|| {
             let repo = Repository::open(tmp.path()).unwrap();

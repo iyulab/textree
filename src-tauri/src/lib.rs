@@ -26,6 +26,7 @@ mod telemetry;
 pub(crate) mod vault;
 pub(crate) mod watcher;
 pub(crate) mod liveness;
+pub(crate) mod note_locks;
 
 use host::HostHandle;
 use search::IndexHandle;
@@ -85,6 +86,7 @@ pub fn run() {
         })
         // Managed via Arc so the watcher thread and the write_note command share one registry.
         .manage(Arc::new(SelfWrites::default()))
+        .manage(Arc::new(note_locks::NoteLocks::default()))
         .manage(WatcherHandle::default())
         .manage(Arc::new(IndexHandle::default()))
         .manage(Arc::new(HostHandle::default()))

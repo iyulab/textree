@@ -320,7 +320,8 @@ test("＋child → promote leaf then create child note", async () => {
 
     // Promote: parent.md → parent/parent.md, and create parent/child.md.
     await expect.poll(() => exists(vault, "parent/parent.md"), { timeout: 5000 }).toBe(true);
-    expect(exists(vault, "parent/child.md")).toBe(true);
+    // The title is applied by a rename after the body is saved — it lands a moment after Enter.
+    await expect.poll(() => exists(vault, "parent/child.md"), { timeout: 5000 }).toBe(true);
     expect(exists(vault, "parent.md")).toBe(false);
   } finally {
     removeTempVault(vault);
