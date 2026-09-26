@@ -439,8 +439,10 @@
     }
     try {
       const vault = root;
-      await save.move(async () =>
-        remapRenamed(node.path, await renameNode(vault, node.path, name), node.kind !== "leaf"),
+      await save.move(
+        async () =>
+          remapRenamed(node.path, await renameNode(vault, node.path, name), node.kind !== "leaf"),
+        node.path,
       );
       await refreshTree();
       selectedNode = null;
@@ -482,7 +484,7 @@
       await save.move(async () => {
         newPath = await renameNoteUnique(vault, pathToRename, candidate);
         return remapRenamed(pathToRename, newPath, false);
-      });
+      }, pathToRename);
       await refreshTree();
       if (activePath === newPath) selectedNode = null; // still on the renamed note
       opError = null;
@@ -526,8 +528,10 @@
     try {
       const vault = root;
       // The open note, if it is the renamed one or inside it, stays open at its new path.
-      await save.move(async () =>
-        remapRenamed(node.path, await renameNode(vault, node.path, name), node.kind !== "leaf"),
+      await save.move(
+        async () =>
+          remapRenamed(node.path, await renameNode(vault, node.path, name), node.kind !== "leaf"),
+        node.path,
       );
       await refreshTree();
       selectedNode = null;
@@ -656,7 +660,7 @@
       await save.move(async () => {
         newDir = await promoteNode(vault, leaf);
         return remapPromoted(leaf, newDir);
-      });
+      }, leaf);
       await refreshTree();
       selectedNode = null;
       void createNewNote(newDir); // target the new container
@@ -764,7 +768,7 @@
       const vault = root;
       await save.move(async () => {
         return remapMoved(src, await moveNode(vault, src, destDir));
-      });
+      }, src);
       await refreshTree();
       selectedNode = null;
       opError = null;
@@ -795,7 +799,7 @@
       const vault = root;
       await save.move(async () => {
         return remapAdopted(src, leaf, await adoptNode(vault, src, leaf));
-      });
+      }, [src, leaf]);
       await refreshTree();
       selectedNode = null;
       opError = null;

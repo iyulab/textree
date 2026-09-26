@@ -653,3 +653,115 @@ describe("NoteSave — unsaved marker", () => {
     expect(h.state.dirty).toBe(true);
   });
 });
+
+describe("NoteSave — saves to different notes", () => {
+  it("edits typed while a save runs, then left, are written on top of that save — not kept as a copy", async () => {
+    const h = harness();
+    h.save.opened("a0");
+    h.save.schedule("A.md", "a1");
+    void h.save.flush();
+    await settle();
+    h.save.schedule("A.md", "a2"); // typed while "a1" is being written
+    h.open("B.md", "b0");
+    h.save.schedule("B.md", "b1"); // the edits to A are sent on their way
+    await settle();
+    h.calls[0].settle(written);
+    await settle();
+    const second = h.calls.find((c) => c.path === "A.md" && c.text === "a2");
+    // It started from what the note held before "a1" — but "a1" is its own earlier edit, not a
+    // change made elsewhere, so it replaces "a1".
+    expect(second).toMatchObject({ expected: "a1" });
+    expect(h.copies).toEqual([]);
+  });
+
+  it("a save to one note that never comes back does not hold up another note's", async () => {
+    const h = harness();
+    h.save.opened("a0");
+    h.save.schedule("A.md", "a1");
+    void h.save.flush();
+    await settle();
+    h.open("B.md", "b0");
+    h.save.schedule("B.md", "b1");
+    vi.advanceTimersByTime(500);
+    await settle();
+    expect(h.calls.map((c) => [c.path, c.text])).toEqual([
+      ["A.md", "a1"],
+      ["B.md", "b1"],
+    ]);
+  });
+
+  it("an edit already being written is not written a second time when its note is left", async () => {
+    const h = harness();
+    h.save.opened("a0");
+    h.save.schedule("A.md", "a1");
+    void h.save.flush();
+    await settle();
+    h.open("B.md", "b0");
+    h.save.schedule("B.md", "b1"); // would send A's edit again
+    await settle();
+    h.calls[0].settle(written);
+    await settle();
+    expect(h.calls.filter((c) => c.path === "A.md")).toHaveLength(1);
+  });
+
+  it("a move waits only for saves to what it moves", async () => {
+    const h = harness();
+    h.save.opened("a0");
+    h.save.schedule("A.md", "a1");
+    void h.save.flush();
+    await settle(); // A's save hangs
+    h.open("B.md", "b0");
+    let moved = false;
+    await h.save.move(async () => {
+      moved = true;
+      return (p) => p;
+    }, "B.md");
+    expect(moved).toBe(true);
+
+    let movedA = false;
+    const movingA = h.save.move(async () => {
+      movedA = true;
+      return (p) => p;
+    }, "A.md");
+    await settle();
+    expect(movedA).toBe(false); // not while a save to it is still running
+    h.calls[0].settle(written);
+    await movingA;
+    expect(movedA).toBe(true);
+  });
+
+  it("edits to a note left while it is being moved go where it went", async () => {
+    const h = harness();
+    h.save.opened("a0");
+    let finishMove!: () => void;
+    const moving = h.save.move(
+      () => new Promise((resolve) => (finishMove = () => resolve((p) => p.replace("A.md", "dest/A.md")))),
+      "A.md",
+    );
+    h.save.schedule("A.md", "typed");
+    h.open("B.md", "b0");
+    h.save.schedule("B.md", "b1"); // A's edits are queued while the move runs
+    await settle();
+    expect(h.calls.some((c) => c.path === "A.md")).toBe(false);
+    finishMove();
+    await moving;
+    await settle();
+    expect(h.calls.find((c) => c.text === "typed")).toMatchObject({ path: "dest/A.md" });
+  });
+
+  it("kept edits whose note was moved are tried at its new place", async () => {
+    const h = harness();
+    h.save.opened("a0");
+    h.save.schedule("A.md", "a1");
+    h.open("B.md", "b0");
+    h.save.schedule("B.md", "b1");
+    await settle();
+    h.calls[0].settle(new Error("disk full")); // A's edits are kept
+    await settle();
+    expect(h.save.stranded).toBe(1);
+    await h.save.move(async () => (p) => p.replace("A.md", "dest/A.md"), "A.md");
+    void h.save.flush();
+    await settle();
+    expect(h.calls.at(-1)).toMatchObject({ path: "dest/A.md", text: "a1" });
+  });
+});
