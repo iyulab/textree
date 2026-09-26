@@ -568,7 +568,7 @@ fn stranded_edits(root: &Path) -> Result<Vec<StrandedEdit>, String> {
 /// Runs `work` off the main thread. Anything that touches the notes folder goes through here: a
 /// folder that stops answering (a stalled sync or network drive) must hold up that one request, not
 /// the window.
-async fn off_main<T: Send + 'static>(
+pub(crate) async fn off_main<T: Send + 'static>(
     work: impl FnOnce() -> Result<T, String> + Send + 'static,
 ) -> Result<T, String> {
     tauri::async_runtime::spawn_blocking(work).await.map_err(|e| e.to_string())?
@@ -781,7 +781,6 @@ pub fn open_vault(
 
 // ── Structural edits (M4) — delegated to fs_ops ────────────────────────────────
 
-#[tauri::command]
 pub fn create_note(root: String, parent: String, name: String) -> Result<String, String> {
     let path = crate::fs_ops::create_note(Path::new(&root), Path::new(&parent), &name)
         .map_err(|e| e.to_string())?;
@@ -789,7 +788,6 @@ pub fn create_note(root: String, parent: String, name: String) -> Result<String,
     Ok(path.display().to_string())
 }
 
-#[tauri::command]
 pub fn create_untitled_note(root: String, parent: String) -> Result<String, String> {
     let path = crate::fs_ops::create_untitled_note(Path::new(&root), Path::new(&parent))
         .map_err(|e| e.to_string())?;
@@ -797,7 +795,6 @@ pub fn create_untitled_note(root: String, parent: String) -> Result<String, Stri
     Ok(path.display().to_string())
 }
 
-#[tauri::command]
 pub fn create_note_with_content(
     root: String,
     parent: String,
@@ -815,7 +812,6 @@ pub fn create_note_with_content(
     Ok(path.display().to_string())
 }
 
-#[tauri::command]
 pub fn rename_note_unique(root: String, path: String, name: String) -> Result<String, String> {
     let p = crate::fs_ops::rename_note_unique(Path::new(&root), Path::new(&path), &name)
         .map_err(|e| e.to_string())?;
@@ -823,7 +819,6 @@ pub fn rename_note_unique(root: String, path: String, name: String) -> Result<St
     Ok(p.display().to_string())
 }
 
-#[tauri::command]
 pub fn create_folder(root: String, parent: String, name: String) -> Result<String, String> {
     let dir = crate::fs_ops::create_folder(Path::new(&root), Path::new(&parent), &name)
         .map_err(|e| e.to_string())?;
@@ -831,7 +826,6 @@ pub fn create_folder(root: String, parent: String, name: String) -> Result<Strin
     Ok(dir.display().to_string())
 }
 
-#[tauri::command]
 pub fn promote_node(root: String, path: String) -> Result<String, String> {
     let root_p = Path::new(&root);
     // Resolved first: promoting replaces the file this names.
@@ -958,7 +952,6 @@ fn keep_state_of(root: &Path, target: &Path) -> Result<(), String> {
 ///
 /// The order is not an implementation detail: keeping comes first, because afterwards there is
 /// nowhere left to read the state from.
-#[tauri::command]
 pub fn delete_node(root: String, path: String) -> Result<(), String> {
     let root_p = Path::new(&root);
     let target = Path::new(&path);
@@ -1062,7 +1055,6 @@ fn record_moves(root: &Path, pairs: &[(String, String)]) {
     }
 }
 
-#[tauri::command]
 pub fn rename_node(root: String, path: String, name: String) -> Result<String, String> {
     let root_p = Path::new(&root);
     let target = Path::new(&path);
@@ -1087,7 +1079,6 @@ pub fn rename_node(root: String, path: String, name: String) -> Result<String, S
     Ok(p.display().to_string())
 }
 
-#[tauri::command]
 pub fn move_node(root: String, path: String, dest: String) -> Result<String, String> {
     let root_p = Path::new(&root);
     let from_rel = rel_to_root(root_p, Path::new(&path)).ok();
@@ -1100,7 +1091,6 @@ pub fn move_node(root: String, path: String, dest: String) -> Result<String, Str
     Ok(p.display().to_string())
 }
 
-#[tauri::command]
 pub fn adopt_node(root: String, path: String, leaf: String) -> Result<String, String> {
     let root_p = Path::new(&root);
     let leaf_p = Path::new(&leaf);
@@ -1126,7 +1116,6 @@ pub fn adopt_node(root: String, path: String, leaf: String) -> Result<String, St
 }
 
 /// Saves an attached image. `data` is base64-encoded bytes. Returns the relative link to insert into the body.
-#[tauri::command]
 pub fn save_attachment(
     root: String,
     note: String,
@@ -1160,11 +1149,7 @@ pub async fn search_content(
     .await
 }
 
-#[tauri::command]
-pub fn rebuild_index(
-    root: String,
-    index: State<'_, Arc<IndexHandle>>,
-) -> Result<(), String> {
+pub fn rebuild_index(root: String, index: &IndexHandle) -> Result<(), String> {
     let root_path = PathBuf::from(root);
     let mut guard = index.0.lock().unwrap_or_else(|e| e.into_inner());
     match guard.as_mut() {
@@ -1198,7 +1183,6 @@ fn resolve_canopy(app: &AppHandle) -> Result<crate::publish::CanopyInvocation, S
 
 /// Publishes the open vault to a static site by spawning canopy. Read-only over the source:
 /// the vault `.md` is never mutated; only `out_dir` (which must lie outside the vault) is written.
-#[tauri::command]
 pub fn publish_site(
     app: AppHandle,
     vault_path: String,
@@ -1216,7 +1200,6 @@ pub fn publish_site(
 /// Publishes the open vault to the cloud (pub.textree.me): renders locally via canopy, zips the
 /// output, and uploads it to api.textree.me/publish using the stored publish token. Read-only over
 /// the source. Errors if no publish token is set (add one in Settings).
-#[tauri::command]
 pub fn publish_to_cloud(
     app: AppHandle,
     vault_path: String,
@@ -1256,7 +1239,6 @@ pub fn open_log_dir(app: tauri::AppHandle) -> Result<(), String> {
 /// Refused rather than half-done when: the repository is in the middle of another operation,
 /// a path lies outside the vault, or a path is covered by an ignore rule (in which case the
 /// history would silently not contain what was asked for).
-#[tauri::command]
 pub fn commit_notes(
     root: String,
     paths: Vec<String>,
@@ -1381,7 +1363,6 @@ fn history_repo(root: &Path) -> Result<Option<crate::git_engine::VaultRepo>, Str
 ///
 /// The note does not have to still be in the folder: this is how a deleted one is looked at
 /// before deciding whether to bring it back.
-#[tauri::command]
 pub fn note_versions(root: String, path: String) -> Result<Vec<NoteVersion>, String> {
     let root_p = Path::new(&root);
     let rel = crate::pathsafe::rel_within(root_p, Path::new(&path))
@@ -1405,7 +1386,6 @@ pub fn note_versions(root: String, path: String) -> Result<Vec<NoteVersion>, Str
 }
 
 /// What a note held at one recorded state. Reads objects only — the file on disk is not touched.
-#[tauri::command]
 pub fn note_version_text(root: String, path: String, id: String) -> Result<String, String> {
     let root_p = Path::new(&root);
     let rel = crate::pathsafe::rel_within(root_p, Path::new(&path))
@@ -1429,7 +1409,6 @@ pub fn note_version_text(root: String, path: String, id: String) -> Result<Strin
 /// Two things end up here and the difference does not matter to whoever is looking for what
 /// they deleted: notes that were recorded and later removed, and notes that were never recorded
 /// but whose contents were kept when they were deleted.
-#[tauri::command]
 pub fn deleted_notes(root: String) -> Result<Vec<DeletedNote>, String> {
     let root_p = Path::new(&root);
     let Some(prepared) = history_repo(root_p)? else {
@@ -1858,7 +1837,6 @@ fn still_inside(root: &Path, dir: &Path) -> Vec<String> {
 /// The copies set aside for deleted notes go into the history rather than being thrown away —
 /// they are still the only copy of anything deleted before the history started keeping them.
 /// Settings go where settings live now. Only then is the empty directory removed.
-#[tauri::command]
 pub fn move_state_out_of_vault(root: String) -> Result<MoveOut, String> {
     let root_p = Path::new(&root);
     let inside = root_p.join(".textree");
@@ -1943,7 +1921,6 @@ pub fn move_state_out_of_vault(root: String) -> Result<MoveOut, String> {
 ///
 /// The note has to still be in the folder: bringing back one that is not is `restore_deleted`,
 /// which decides for itself which state that should be.
-#[tauri::command]
 pub fn restore_version(root: String, path: String, id: String) -> Result<(), String> {
     let root_p = Path::new(&root);
     let target = Path::new(&path);
@@ -1979,7 +1956,6 @@ pub fn restore_version(root: String, path: String, id: String) -> Result<(), Str
 ///
 /// An existing file of the same name is never overwritten: the restored copy is numbered
 /// alongside it, and the path it actually landed at is returned so the caller can say where.
-#[tauri::command]
 pub fn restore_deleted(root: String, rel: String) -> Result<RestoredNote, String> {
     let root_p = Path::new(&root);
     validate_vault_rel(&rel)?;
@@ -2111,6 +2087,82 @@ mod tests {
         assert_eq!(older.join().unwrap(), Ok(WriteOutcome::Written));
         assert_eq!(newer.join().unwrap(), Ok(WriteOutcome::Written));
         assert_eq!(std::fs::read_to_string(&note).unwrap(), "newer", "the newest text is what stays");
+    }
+
+    /// Renames `a.md` to `b.md` on another thread the way the command does: holding a turn over
+    /// the note first, then renaming.
+    fn rename_in_turn(
+        root: &Path,
+        locks: &Arc<NoteLocks>,
+    ) -> std::thread::JoinHandle<Result<String, String>> {
+        let (root, locks) = (root.to_path_buf(), Arc::clone(locks));
+        std::thread::spawn(move || {
+            let note = root.join("a.md");
+            let _turn = locks.subtree(&[note.as_path()]);
+            rename_node(root.to_string_lossy().into(), note.to_string_lossy().into(), "b".into())
+        })
+    }
+
+    #[test]
+    fn a_rename_waits_for_a_stalled_save_so_the_old_name_does_not_come_back() {
+        let tmp = TempDir::new().unwrap();
+        let (root, note) = (tmp.path(), tmp.path().join("a.md"));
+        std::fs::write(&note, "0").unwrap();
+        let (self_writes, locks) = (Arc::new(SelfWrites::default()), Arc::new(NoteLocks::default()));
+
+        let (release, save) = save_held_before_rename(root, &note, "newest", "0", &self_writes, &locks);
+        let rename = rename_in_turn(root, &locks);
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        assert!(!rename.is_finished(), "the rename waits while a save to the note is still writing");
+
+        release.send(()).unwrap();
+        assert_eq!(save.join().unwrap(), Ok(WriteOutcome::Written));
+        rename.join().unwrap().unwrap();
+        assert!(!note.exists(), "the old name must not come back");
+        assert_eq!(std::fs::read_to_string(root.join("b.md")).unwrap(), "newest");
+    }
+
+    #[test]
+    fn negative_control_a_rename_without_a_turn_lets_a_late_save_bring_the_old_name_back() {
+        let tmp = TempDir::new().unwrap();
+        let (root, note) = (tmp.path(), tmp.path().join("a.md"));
+        std::fs::write(&note, "0").unwrap();
+        let (self_writes, locks) = (Arc::new(SelfWrites::default()), Arc::new(NoteLocks::default()));
+
+        let (release, save) = save_held_before_rename(root, &note, "newest", "0", &self_writes, &locks);
+        let root_s = root.to_string_lossy().to_string();
+        rename_node(root_s, note.to_string_lossy().into(), "b".into()).unwrap();
+        release.send(()).unwrap();
+        assert_eq!(save.join().unwrap(), Ok(WriteOutcome::Written));
+
+        assert_eq!(std::fs::read_to_string(&note).unwrap(), "newest", "the old name came back");
+        assert_eq!(std::fs::read_to_string(root.join("b.md")).unwrap(), "0", "without the edit");
+    }
+
+    #[test]
+    fn a_save_arriving_during_a_rename_is_told_the_note_is_gone() {
+        // After the rename the note is elsewhere: a save still aimed at the old name must not
+        // create it again, and reports it gone so the editor follows the move instead.
+        let tmp = TempDir::new().unwrap();
+        let (root, note) = (tmp.path(), tmp.path().join("a.md"));
+        std::fs::write(&note, "0").unwrap();
+        let (self_writes, locks) = (Arc::new(SelfWrites::default()), Arc::new(NoteLocks::default()));
+
+        let turn = locks.subtree(&[note.as_path()]);
+        let late = {
+            let (root, note) = (root.to_path_buf(), note.clone());
+            let (self_writes, locks) = (Arc::clone(&self_writes), Arc::clone(&locks));
+            std::thread::spawn(move || save_note(&root, &note, "late", "0", &self_writes, &locks))
+        };
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        assert!(!late.is_finished(), "a save to a note being renamed waits for the rename");
+        let root_s = root.to_string_lossy().to_string();
+        rename_node(root_s, note.to_string_lossy().into(), "b".into()).unwrap();
+        drop(turn);
+
+        assert_eq!(late.join().unwrap(), Ok(WriteOutcome::Conflict { disk: None }));
+        assert!(!note.exists());
+        assert_eq!(std::fs::read_to_string(root.join("b.md")).unwrap(), "0");
     }
 
     #[test]
