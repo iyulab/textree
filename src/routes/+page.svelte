@@ -240,13 +240,27 @@
     if (activePath) save.schedule(activePath, text);
   }
 
+  // Counts openings. Opening no longer holds the window, so a folder that is slow to answer can be
+  // left for another one — and then the later opening is the one that counts.
+  let vaultLoads = 0;
+
   /** Open a vault path and load the tree (separate from the dialog — reused by the test bridge). */
-  /** Returns false when the switch did not happen: the open note's edits are not saved yet. */
+  /** Returns false when the switch did not happen: the open note's edits are not saved yet, or
+   *  another folder was opened before this one answered. */
   async function loadVault(path: string): Promise<boolean> {
     // preserve unsaved edits before switching vault
     if ((await save.beforeLeaving()) !== "saved") return false;
+    const mine = ++vaultLoads;
     root = path;
-    tree = await openVault(path);
+    let opened: TreeNode[];
+    try {
+      opened = await openVault(path);
+    } catch (e) {
+      if (mine !== vaultLoads) return false; // overtaken: what it says is about a folder left behind
+      throw e;
+    }
+    if (mine !== vaultLoads) return false;
+    tree = opened;
     // When the vault changes, the previous vault's selection, open note, and edit-mode context are invalid.
     // If not cleared, a stale selectedNode would wrongly target the previous vault's path as the
     // parent for creation/move, sending operations to the wrong location or failing.

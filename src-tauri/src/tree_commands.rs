@@ -17,6 +17,15 @@ use std::path::Path;
 use std::sync::Arc;
 use tauri::{AppHandle, State};
 
+/// Opening a folder reads all of it; one that does not answer must not hold the window, or keep
+/// the person from opening another instead (the later opening wins — see
+/// [`commands::open_vault`]).
+#[tauri::command]
+pub async fn open_vault(root: String, app: AppHandle) -> Result<Vec<crate::vault::TreeNode>, String> {
+    let ticket = commands::begin_open();
+    off_main(move || commands::open_vault(root, app, ticket)).await
+}
+
 /// Runs `work` off the main thread while holding a turn over `places`.
 async fn changing<T: Send + 'static>(
     locks: &State<'_, Arc<NoteLocks>>,

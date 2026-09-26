@@ -697,24 +697,50 @@ fn refresh_indexes(app: &AppHandle, root: PathBuf, path: PathBuf) {
     });
 }
 
-#[tauri::command]
-pub fn open_vault(
-    root: String,
-    app: AppHandle,
-    self_writes: State<'_, Arc<SelfWrites>>,
-    watcher_handle: State<'_, WatcherHandle>,
-    index: State<'_, Arc<IndexHandle>>,
-    host: State<'_, Arc<host::HostHandle>>,
-) -> Result<Vec<TreeNode>, String> {
+/// Which opening of a folder is the latest. Opening runs off the main thread, so a folder that
+/// does not answer no longer holds the window — and the person can open another one meanwhile.
+/// Then the later one is what they want: the earlier one, when it finally gets through, installs
+/// nothing.
+static OPENS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Taken while an opening puts its folder in place, so two cannot interleave that.
+static INSTALLING: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// What an opening that another one overtook reports. The window, having started the later one,
+/// does not show it.
+pub(crate) const SUPERSEDED: &str = "another folder was opened meanwhile";
+
+/// Starts an opening; the number it returns is what [`open_vault`] checks before installing.
+pub(crate) fn begin_open() -> u64 {
+    OPENS.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1
+}
+
+/// Opens a folder: reads its tree, installs its search index, points the semantic index at it and
+/// watches it. Everything that reads the folder runs first, where it may take as long as the
+/// folder takes; only then, briefly and one opening at a time, is the folder put in place — and
+/// only if no later opening started meanwhile.
+pub fn open_vault(root: String, app: AppHandle, ticket: u64) -> Result<Vec<TreeNode>, String> {
     let root_path = PathBuf::from(&root);
     // Sweep orphaned atomic-write temps (crash/power-loss leftovers) so they don't linger and sync.
     clear_temp_dir(&root_path);
     let tree = vault::build_tree(&root_path).map_err(|e| e.to_string())?;
     log::info!("open_vault: {} ({} top-level nodes)", root, tree.len());
 
+    let self_writes = app.state::<Arc<SelfWrites>>().inner().clone();
+    let index = app.state::<Arc<IndexHandle>>().inner().clone();
+    let host = app.state::<Arc<host::HostHandle>>().inner().clone();
+    let app_data = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let watchdog =
+        crate::liveness::Watchdog::spawn(app.clone(), &root_path, self_writes, index.clone())?;
+
+    let _installing = INSTALLING.lock().unwrap_or_else(|e| e.into_inner());
+    if OPENS.load(std::sync::atomic::Ordering::SeqCst) != ticket {
+        log::info!("open_vault: {root} was overtaken by a later opening; not installed");
+        return Err(SUPERSEDED.into()); // the watchdog it started stops as it drops
+    }
+
     // Install the index (app data directory, per-vault hash). On failure only search is disabled —
     // graceful degradation (editing, tree, and file search remain intact without the index).
-    let app_data = app.path().app_data_dir().map_err(|e| e.to_string())?;
     let dir = crate::search::index_dir(&app_data, &root_path);
     match IndexState::open_or_create(&dir) {
         Ok(state) => {
@@ -722,7 +748,7 @@ pub fn open_vault(
             *index.0.lock().unwrap_or_else(|e| e.into_inner()) = Some(state);
             if was_empty {
                 // Full build in the background (non-blocking for the UI).
-                let index_arc = index.inner().clone();
+                let index_arc = index.clone();
                 let root_for_build = root_path.clone();
                 tauri::async_runtime::spawn_blocking(move || {
                     if let Some(st) = index_arc.0.lock().unwrap_or_else(|e| e.into_inner()).as_mut() {
@@ -740,22 +766,16 @@ pub fn open_vault(
     // Background semantic reindex. Runs without asking for the same reason as the per-note
     // index above: it only reads, and changes nothing a person wrote.
     host.set_current_vault(root.clone());
-    let host_arc = host.inner().clone();
     let vault_str = root.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        host::reindex_vault(&host_arc, &vault_str);
+        host::reindex_vault(&host, &vault_str);
     });
 
-    // Explicitly drop the previous watchdog (stops its thread and the debouncer) before
-    // starting the new one, so leftover events from the old vault don't bleed into the new.
-    *watcher_handle.0.lock().unwrap() = None;
-    let wd = crate::liveness::Watchdog::spawn(
-        app,
-        &root_path,
-        self_writes.inner().clone(),
-        index.inner().clone(),
-    )?;
-    *watcher_handle.0.lock().unwrap() = Some(wd);
+    // The previous watchdog stops as it is replaced (its thread and debouncer with it), so
+    // leftover events from the old vault don't bleed into the new.
+    let watcher_handle = app.state::<WatcherHandle>();
+    let previous = watcher_handle.0.lock().unwrap().replace(watchdog);
+    drop(previous);
 
     Ok(tree)
 }
