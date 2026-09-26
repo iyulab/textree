@@ -957,9 +957,9 @@ pub fn delete_node(root: String, path: String) -> Result<(), String> {
     }
     keep_state_of(root_p, target)?;
     if target.is_dir() {
-        std::fs::remove_dir_all(target).map_err(|e| e.to_string())?;
+        crate::fs_ops::patiently(|| std::fs::remove_dir_all(target)).map_err(|e| e.to_string())?;
     } else {
-        std::fs::remove_file(target).map_err(|e| e.to_string())?;
+        crate::fs_ops::patiently(|| std::fs::remove_file(target)).map_err(|e| e.to_string())?;
     }
     log::info!("delete_node: {}", path);
     Ok(())
@@ -1762,7 +1762,7 @@ fn carry_over_set_aside(root: &Path, prepared: &crate::git_engine::VaultRepo) ->
                 }
                 // Held by the history now, file by file — and only the files that were read.
                 for on_disk in &read_from {
-                    if let Err(e) = std::fs::remove_file(on_disk) {
+                    if let Err(e) = crate::fs_ops::patiently(|| std::fs::remove_file(on_disk)) {
                         log::warn!("carry_over_set_aside: {} carried but not removed: {e}", on_disk.display());
                     }
                 }
@@ -1855,7 +1855,7 @@ pub fn move_state_out_of_vault(root: String) -> Result<MoveOut, String> {
         // recovery rather than by anything that decided to.
         let content = std::fs::read(&from).map_err(|e| e.to_string())?;
         atomic_bytes_beside(&to, &content).map_err(|e| e.to_string())?;
-        std::fs::remove_file(&from).map_err(|e| e.to_string())?;
+        crate::fs_ops::patiently(|| std::fs::remove_file(&from)).map_err(|e| e.to_string())?;
         moved.settings = true;
     }
 
@@ -2396,6 +2396,45 @@ mod tests {
 
         // Trash holds the moved files, so nothing above depended on them still being in place.
         assert!(!root.join("kept.md").exists());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_note_another_program_looks_at_for_a_moment_is_still_deleted_and_kept() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        git2::Repository::init(root).unwrap();
+        let root_s = root.to_string_lossy().to_string();
+        let note = seed_note(root, "sub/held.md", "held a moment");
+        // Open the way a scanner does: others may read, not delete.
+        let held = std::fs::OpenOptions::new().read(true).share_mode(0x1).open(&note).unwrap();
+        let release = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(150));
+            drop(held);
+        });
+
+        delete_node(root_s.clone(), note.clone()).unwrap();
+        release.join().unwrap();
+
+        assert!(!Path::new(&note).exists());
+        let deleted = deleted_notes(root_s).unwrap();
+        assert_eq!(deleted.len(), 1, "and it can be brought back");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn negative_control_a_note_held_the_whole_time_is_not_deleted() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        git2::Repository::init(root).unwrap();
+        let root_s = root.to_string_lossy().to_string();
+        let note = seed_note(root, "sub/held.md", "held");
+        let _held = std::fs::OpenOptions::new().read(true).share_mode(0x1).open(&note).unwrap();
+
+        assert!(delete_node(root_s, note.clone()).is_err(), "the system refuses while it is held");
+        assert!(Path::new(&note).exists());
     }
 
     #[test]
