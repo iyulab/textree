@@ -1,1 +1,32 @@
-[]
+[
+  {
+    "package": "IronHive.Abstractions",
+    "until": "2026-10-24",
+    "reason": "Brought in by IronProw.* 0.4.22, which this release line ships with. The next minor moves IronProw to its current line, which clears the gap; remove then."
+  },
+  {
+    "package": "IronHive.Core",
+    "until": "2026-10-24",
+    "reason": "Brought in by IronProw.* 0.4.22, which this release line ships with. The next minor moves IronProw to its current line, which clears the gap; remove then."
+  },
+  {
+    "package": "IronHive.Providers.Anthropic",
+    "until": "2026-10-24",
+    "reason": "Brought in by IronProw.* 0.4.22, which this release line ships with. The next minor moves IronProw to its current line, which clears the gap; remove then."
+  },
+  {
+    "package": "IronHive.Providers.GoogleAI",
+    "until": "2026-10-24",
+    "reason": "Brought in by IronProw.* 0.4.22, which this release line ships with. The next minor moves IronProw to its current line, which clears the gap; remove then."
+  },
+  {
+    "package": "IronHive.Providers.OpenAI",
+    "until": "2026-10-24",
+    "reason": "Brought in by IronProw.* 0.4.22, which this release line ships with. The next minor moves IronProw to its current line, which clears the gap; remove then."
+  },
+  {
+    "package": "IronHive.Providers.OpenAI.Compatible",
+    "until": "2026-10-24",
+    "reason": "Brought in by IronProw.* 0.4.22, which this release line ships with. The next minor moves IronProw to its current line, which clears the gap; remove then."
+  }
+]
