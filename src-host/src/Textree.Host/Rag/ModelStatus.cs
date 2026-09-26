@@ -36,10 +36,24 @@ public sealed class ModelStatus
     }
 
     // Progress callbacks mean bytes are moving → Downloading; the load loop drives Loading/Ready/Error explicitly.
-    private static void Report(ref ModelSnapshot slot, DownloadProgress p) =>
+    private static void Report(ref ModelSnapshot slot, DownloadProgress p)
+    {
+        var (done, total) = WholeDownloadBytes(p);
         Volatile.Write(ref slot, new ModelSnapshot(
-            ModelPhase.Downloading, p.OverallPercentComplete, p.BytesDownloaded,
-            p.TotalBytes, p.CurrentFileIndex, p.TotalFileCount, null));
+            ModelPhase.Downloading, p.OverallPercentComplete, done,
+            total, p.CurrentFileIndex, p.TotalFileCount, null));
+    }
+
+    // The snapshot's byte pair always describes the whole download, never one file of it.
+    // DownloadProgress.BytesDownloaded/TotalBytes are per current file, so they only stand for the
+    // whole outside a multi-file download. When some file's size is unknown there is no honest
+    // whole-download byte count: report 0/0 and let OverallPercent carry the progress.
+    private static (long Done, long Total) WholeDownloadBytes(DownloadProgress p)
+    {
+        if (p.OverallBytesDownloaded is { } done && p.OverallTotalBytes is { } total)
+            return (done, total);
+        return p.TotalFileCount == 0 ? (p.BytesDownloaded, p.TotalBytes) : (0, 0);
+    }
 
     public void SetEmbedderPhase(ModelPhase phase) => SetPhase(ref _embedder, phase);
     public void SetGeneratorPhase(ModelPhase phase) => SetPhase(ref _generator, phase);

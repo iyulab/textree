@@ -9,7 +9,7 @@
 
 import { friendlyError, type FriendlyError } from "./friendlyError.helpers";
 import type { WriteOutcome } from "./ipc";
-import { noteStem } from "./vaultPaths.helpers";
+import { noteStem, pathInside, pathKey, samePath } from "./vaultPaths.helpers";
 
 /** An edit not yet on disk. `base` is what the note held when the edit started from it. */
 export interface PendingEdit {
@@ -30,10 +30,23 @@ export interface NoteSaveState {
   removed: boolean;
   /** The copy on disk, while the open note's edits conflict with a change made elsewhere. */
   conflictDisk: string | null;
+  /**
+   * A save of the open note has been running long enough that the folder is taken as not answering
+   * (a stalled sync or network drive). The save is still on its way — a write handed to the disk
+   * cannot be called back — so nothing is dropped; the person is told why it has not landed.
+   */
+  stalled: boolean;
 }
 
 export function initialNoteSaveState(): NoteSaveState {
-  return { dirty: false, saveError: null, saveFailure: null, removed: false, conflictDisk: null };
+  return {
+    dirty: false,
+    saveError: null,
+    saveFailure: null,
+    removed: false,
+    conflictDisk: null,
+    stalled: false,
+  };
 }
 
 /**
@@ -70,17 +83,45 @@ export interface NoteSaveDeps {
    * Used for edits to a note already left that can no longer be written to it.
    */
   keepCopy?: (root: string, path: string, text: string) => Promise<string>;
+  /**
+   * Keep an edit to a note already left, not written yet, somewhere that outlasts the app — so
+   * closing before its folder takes it does not lose it. Returns an id to let go of it by.
+   */
+  keepStranded?: (root: string, edit: PendingEdit) => Promise<string>;
+  /** A kept edit landed (or was kept as a copy): let go of it. */
+  forgetStranded?: (root: string, id: string) => Promise<void>;
   /** Kept edits landed on the note that is open again (see `#stranded`); show `text`, now on disk. */
   landedOnOpen?: (text: string) => void;
   /** Leaving was refused; the named banner should be brought to the person's attention. */
   ask?: (question: LeaveQuestion) => void;
   debounceMs?: number;
+  /** How long closing waits for a save before treating the folder as not answering. Default 5 s. */
+  closeWaitMs?: number;
+  /** How long a save of the open note runs before it is said to be stalled. Default 10 s. */
+  stallMs?: number;
 }
 
 const DEFAULT_DEBOUNCE_MS = 500;
 /** Extra saves before leaving for edits typed while the last one ran. Bounded, so someone who never
  *  stops typing is not held. */
 const MAX_TRAILING_SAVES = 5;
+/** A save still running after this long when the window closes is taken as a folder that is not
+ *  answering (a stalled sync or network drive). The wait is bounded so it cannot hold the app open. */
+const DEFAULT_CLOSE_WAIT_MS = 5000;
+/** A save still running after this long is said to be stalled. Long enough that a slow disk or a
+ *  large note does not trip it; short enough that someone waiting on it learns why. */
+const DEFAULT_STALL_MS = 10_000;
+
+/** An edit to a note already left that could not be written yet. */
+interface Stranded {
+  root: string;
+  edit: PendingEdit;
+  /** Where it is kept outside the app, once it is (see `keepStranded`). */
+  id: string | null;
+  /** Landed or let go of while it was still being kept: forget it as soon as it is. */
+  gone: boolean;
+  keeping: Promise<void> | null;
+}
 
 export class NoteSave {
   #synced = "";
@@ -89,19 +130,41 @@ export class NoteSave {
   // Edits to a note already left whose write failed. Nothing on screen holds them any more, so they
   // are kept here — with the vault they belong to — and tried after every save until they land.
   // Oldest first, and never merged: two kept edits to one note are two things the person typed.
-  #stranded: { root: string; edit: PendingEdit }[] = [];
+  #stranded: Stranded[] = [];
   #warnedOnClose = false;
-  // Saves run one at a time. Two in flight would each be based on the same state, and the second
-  // would mistake the first for a change made elsewhere.
-  #saving: Promise<void> = Promise.resolve();
+  #warnedStalledOnClose = false;
+  // Saves to one note run one at a time, in order: two in flight would each be based on the same
+  // state, and the second would mistake the first for a change made elsewhere. Saves to different
+  // notes do not wait for each other — a folder that stops answering for one note holds up only it.
+  #chains = new Map<string, Promise<void>>();
+  // Structure changes under way, and the paths each one moves. A save to a path being moved waits
+  // for the move and then goes where the note went; saves elsewhere carry on.
+  #moves: { from: string[] | null; done: Promise<void> }[] = [];
+  // Edits to a note already left, waiting their turn to be written. Moves carry them along.
+  #queued = new Set<PendingEdit>();
+  // What an edit was typed on top of: the edit to the same note before it, not on disk yet when this
+  // one began, so both start from the same base. Once that one lands, this one starts from it —
+  // otherwise it would take its own earlier edit for a change made elsewhere.
+  #prev = new WeakMap<PendingEdit, PendingEdit>();
+  // Edits on disk. An edit whose later edit landed first is done too: the later one holds it.
+  #landed = new WeakSet<PendingEdit>();
+  #done = new WeakSet<PendingEdit>();
+  #running = new Map<PendingEdit, Promise<void>>();
+  // Saves running longer than the stall threshold, and who is waiting to hear of one.
+  #slow = new Set<PendingEdit>();
+  #onStall: (() => void)[] = [];
   #timer: ReturnType<typeof setTimeout> | null = null;
   readonly #debounceMs: number;
+  readonly #closeWaitMs: number;
+  readonly #stallMs: number;
 
   constructor(
     readonly state: NoteSaveState,
     private readonly deps: NoteSaveDeps,
   ) {
     this.#debounceMs = deps.debounceMs ?? DEFAULT_DEBOUNCE_MS;
+    this.#closeWaitMs = deps.closeWaitMs ?? DEFAULT_CLOSE_WAIT_MS;
+    this.#stallMs = deps.stallMs ?? DEFAULT_STALL_MS;
   }
 
   /**
@@ -120,15 +183,16 @@ export class NoteSave {
 
   /** The editor changed `path` to `text`. Saved after a pause in typing. */
   schedule(path: string, text: string): void {
-    if (this.#pending && this.#pending.path !== path) {
+    if (this.#pending && !samePath(this.#pending.path, path)) {
       // Edits to the note being left, typed while the next one was loading (the editor stays on the
       // old note until then). They are written, not replaced by the first edit to the new one.
-      const left = this.#pending;
+      this.#writeLeft(this.#pending);
       this.#pending = null;
-      this.#enqueue(() => this.#write(left));
     }
-    const base = this.#pending?.path === path ? this.#pending.base : this.#synced;
-    this.#pending = { path, text, base };
+    const prev = this.#pending;
+    const edit = { path, text, base: prev ? prev.base : this.#synced };
+    if (prev) this.#prev.set(edit, prev);
+    this.#pending = edit;
     this.#syncDirty();
     this.deps.edited?.();
     this.#cancelTimer();
@@ -148,12 +212,48 @@ export class NoteSave {
    * whether to put it back) it writes nothing — saving would answer for the person.
    */
   flush(): Promise<void> {
+    const { own, kept } = this.#flushParts();
+    return Promise.all([own, kept]).then(() => {});
+  }
+
+  /**
+   * The open note's own edits, and the kept edits for notes already left, each in its own note's
+   * turn — a kept edit that never lands does not hold up the open note.
+   */
+  #flushParts(): { own: Promise<void>; kept: Promise<void> } {
     this.#cancelTimer();
-    return this.#enqueue(async () => {
-      // The open note's own edits first: kept edits for a note already left must not hold them up.
-      if (this.#pending) await this.#write(this.#pending);
-      for (const { root, edit } of [...this.#stranded]) await this.#write(edit, root);
+    const own = this.#pending
+      ? this.#onPath(this.#pending.path, async () => {
+          // Read when its turn comes: a move meanwhile may have carried the edit elsewhere.
+          if (this.#pending) await this.#write(this.#pending);
+        })
+      : Promise.resolve();
+    const kept = Promise.all(
+      [...this.#stranded].map(({ root, edit }) => this.#onPath(edit.path, () => this.#write(edit, root))),
+    ).then(() => {});
+    return { own, kept };
+  }
+
+  /** Waits for the open note's own save — or for it to be found stalled, whichever comes first. */
+  async #flushOwn(): Promise<"done" | "stalled"> {
+    const { own } = this.#flushParts();
+    if (this.state.stalled) return "stalled";
+    let stop = () => {};
+    const stalled = new Promise<"stalled">((resolve) => {
+      const hear = () => resolve("stalled");
+      this.#onStall.push(hear);
+      stop = () => (this.#onStall = this.#onStall.filter((f) => f !== hear));
     });
+    try {
+      return await Promise.race([own.then(() => "done" as const), stalled]);
+    } finally {
+      stop();
+    }
+  }
+
+  /** Saves still on their way to disk, for any note. */
+  get writing(): number {
+    return new Set([...this.#running.keys(), ...this.#queued]).size;
   }
 
   /** Edits to notes already left that are not on disk yet (see `#stranded`). */
@@ -162,21 +262,60 @@ export class NoteSave {
   }
 
   #strand(root: string, edit: PendingEdit): void {
-    this.#stranded.push({ root, edit });
+    const entry: Stranded = { root, edit, id: null, gone: false, keeping: null };
+    this.#stranded.push(entry);
     this.#warnedOnClose = false; // new edits waiting: the next close warns about them again
+    this.#keepOutlasting(entry);
+  }
+
+  /** Writes `entry` where it outlasts the app (see `keepStranded`). */
+  #keepOutlasting(entry: Stranded): Promise<void> {
+    const keep = this.deps.keepStranded;
+    if (!keep) return Promise.resolve();
+    entry.keeping = keep(entry.root, { ...entry.edit })
+      .then((id) => {
+        if (entry.gone) void this.#forget(entry.root, id);
+        else entry.id = id;
+      })
+      .catch((e) => console.warn("Could not keep edits outside the app:", e))
+      .finally(() => (entry.keeping = null));
+    return entry.keeping;
+  }
+
+  #forget(root: string, id: string): Promise<void> {
+    return (this.deps.forgetStranded?.(root, id) ?? Promise.resolve()).catch((e) =>
+      console.warn("Could not let go of kept edits:", e),
+    );
   }
 
   #unstrand(edit: PendingEdit): void {
+    for (const entry of this.#stranded.filter((k) => k.edit === edit)) {
+      entry.gone = true;
+      if (entry.id !== null) void this.#forget(entry.root, entry.id);
+    }
     this.#stranded = this.#stranded.filter((k) => k.edit !== edit);
+  }
+
+  /**
+   * Edits kept from an earlier run for `root`'s notes, not written then. They join the ones kept in
+   * this run and are tried with the next save.
+   */
+  adopt(root: string, kept: { id: string; path: string; text: string; base: string }[]): void {
+    for (const { id, path, text, base } of kept) {
+      if (this.#stranded.some((k) => k.id === id)) continue;
+      this.#stranded.push({ root, edit: { path, text, base }, id, gone: false, keeping: null });
+    }
   }
 
   /** Save before leaving the open note — switching, changing vault, restructuring, or closing. */
   async beforeLeaving(): Promise<LeaveOutcome> {
-    await this.flush();
+    // Only the open note's own save is waited for: kept edits for notes left earlier are tried too,
+    // but are not this note's to wait on. A save found stalled is not waited out — see `busy`.
+    if ((await this.#flushOwn()) === "stalled") return "busy";
     // Edits typed while that save ran are pending again without anything having gone wrong.
     const s = this.state;
     for (let i = 0; i < MAX_TRAILING_SAVES && this.#pending && !s.saveFailure && s.conflictDisk === null && !s.removed; i++) {
-      await this.flush();
+      if ((await this.#flushOwn()) === "stalled") return "busy";
     }
     if (!this.#pending) return "saved";
     if (s.conflictDisk !== null) {
@@ -193,8 +332,9 @@ export class NoteSave {
       this.deps.ask?.("failure");
       return "failed";
     }
-    // Nothing went wrong — the typing simply has not stopped. What is still pending is saved to this
-    // note like any other edit, even after another note opens (see schedule).
+    // Nothing went wrong — the typing simply has not stopped, or the folder is slow to take it. What
+    // is still pending is saved to this note like any other edit, even after another note opens (see
+    // schedule); if the folder never takes it, it is kept like any edit to a note already left.
     return "busy";
   }
 
@@ -203,11 +343,41 @@ export class NoteSave {
    * Edits kept for a note already left live only in memory, so the first close that finds them
    * still unwritten stays open and warns; the next one closes without them — a disk that never
    * takes them must not keep the app from closing.
+   *
+   * The same holds for a save that never comes back at all: a write cannot be taken back once it
+   * is handed to the disk, so the close does not cancel it — it stops waiting. The first close that
+   * finds a save still running after the wait stays open and says so; the next one closes. Nothing
+   * is written after it, so a write that lands late cannot overwrite anything newer.
    */
   async beforeClosing(): Promise<"close" | "stay"> {
-    if (!this.#pending && this.#stranded.length === 0) return "close";
-    if ((await this.beforeLeaving()) !== "saved") return "stay";
-    if (this.#stranded.length > 0 && !this.#warnedOnClose) {
+    if (!this.#pending && this.#stranded.length === 0 && this.writing === 0) return "close";
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const stalled = new Promise<"stalled">((done) => {
+      timer = setTimeout(() => done("stalled"), this.#closeWaitMs);
+    });
+    // Every save still on its way counts — edits to a note already left too, not only the open one.
+    const everything = (async () => {
+      const left = await this.beforeLeaving();
+      await Promise.all([...this.#running.values()].map((r) => r.catch(() => {})));
+      return left === "busy" && this.state.stalled ? ("stalled" as const) : left;
+    })();
+    const left = await Promise.race([everything, stalled]);
+    clearTimeout(timer);
+    if (left === "stalled") {
+      // Keep what is still on its way where it outlasts the app, and nothing is lost by closing: it
+      // is tried again when the folder next opens (and found already there if it landed meanwhile).
+      if (await this.#keepEverythingUnwritten()) return "close";
+      if (this.#warnedStalledOnClose) return "close";
+      this.#warnedStalledOnClose = true;
+      this.state.saveError = friendlyError(
+        "Some edits are still being written — the folder isn't answering. Close again to quit without waiting for them.",
+      );
+      return "stay";
+    }
+    this.#warnedStalledOnClose = false;
+    if (left !== "saved") return "stay";
+    await Promise.all(this.#stranded.map((k) => k.keeping));
+    if (this.#stranded.some((k) => k.id === null) && !this.#warnedOnClose) {
       this.#warnedOnClose = true;
       this.state.saveError = friendlyError(
         "Some edits to a note you left are still not saved. Close again to quit without them.",
@@ -219,9 +389,18 @@ export class NoteSave {
 
   /**
    * A note holding `text` on disk was opened (or none, with ""). An edit still pending for the one
-   * left keeps its own path.
+   * left is written to it — to its own path — as an edit to a note left.
    */
   opened(text: string): void {
+    // An edit still pending for a note that is no longer open is an edit to a note left, whether or
+    // not anything is typed into the next one: it goes on its way now. Kept as the open note's, it
+    // would be what leaving the next note waits for — and a folder that stopped answering would hold
+    // every note opened after it.
+    const open = this.deps.activePath();
+    if (this.#pending && (open === null || !samePath(this.#pending.path, open))) {
+      this.#writeLeft(this.#pending);
+      this.#pending = null;
+    }
     this.#synced = text;
     this.state.removed = false;
     this.state.conflictDisk = null;
@@ -279,7 +458,7 @@ export class NoteSave {
 
   /** Conflict: keep my edits — they replace the copy the banner showed (and only that copy). */
   keepMine(): void {
-    if (this.state.conflictDisk !== null && this.#pending) this.#pending.base = this.state.conflictDisk;
+    if (this.state.conflictDisk !== null && this.#pending) this.#rebase(this.#pending, this.state.conflictDisk);
     this.state.conflictDisk = null;
     void this.flush();
   }
@@ -314,7 +493,7 @@ export class NoteSave {
     if (this.#pending?.text === text) {
       this.#pending = null;
     } else if (this.#pending) {
-      this.#pending.base = text;
+      this.#rebase(this.#pending, text);
     }
     if (movedTo !== null && this.#pending) this.#pending.path = movedTo;
     this.#syncDirty();
@@ -328,13 +507,42 @@ export class NoteSave {
    * mid-move would bring the note back there, or report it gone. An edit made while it ran is
    * carried to where its note went.
    */
-  move(relocate: () => Promise<Remap>): Promise<void> {
-    return this.#enqueue(async () => {
+  move(relocate: () => Promise<Remap>, from?: string | string[]): Promise<void> {
+    // `from`: the notes or folders being moved. Saves to anything else neither wait for the move nor
+    // hold it up. Without it, the move waits for every save and every save waits for it.
+    const moving = from === undefined ? null : [from].flat();
+    const covers = (path: string) => moving === null || moving.some((m) => pathInside(path, m));
+    const before = [
+      ...[...this.#chains].filter(([key]) => covers(key)).map(([, tail]) => tail),
+      ...this.#moves.map((m) => m.done),
+    ];
+    let finished!: () => void;
+    const entry = { from: moving, done: new Promise<void>((r) => (finished = r)) };
+    this.#moves.push(entry);
+    const run = Promise.all(before).then(async () => {
       const remap = await relocate();
       if (this.#pending) this.#pending.path = remap(this.#pending.path);
+      for (const edit of this.#queued) edit.path = remap(edit.path);
+      for (const entry of this.#stranded) {
+        const to = remap(entry.edit.path);
+        if (to === entry.edit.path) continue;
+        entry.edit.path = to;
+        // What was kept names the old place: keep it again under the new one, then let the old go.
+        const old = entry.id;
+        entry.id = null;
+        void this.#keepOutlasting(entry).then(() => {
+          if (old !== null) void this.#forget(entry.root, old);
+        });
+      }
       this.deps.moved?.(remap);
       this.#syncDirty();
     });
+    const end = () => {
+      this.#moves = this.#moves.filter((m) => m !== entry);
+      finished();
+    };
+    run.then(end, end);
+    return run;
   }
 
   async #keepAsCopy(job: PendingEdit, root: string): Promise<void> {
@@ -356,15 +564,86 @@ export class NoteSave {
     }
   }
 
+  /**
+   * Keeps every edit not on disk yet — on its way, waiting its turn, or failed — where it outlasts the
+   * app. True when all of them are kept (or there are none to keep).
+   */
+  async #keepEverythingUnwritten(): Promise<boolean> {
+    if (!this.deps.keepStranded) return false;
+    const root = this.deps.root();
+    const waiting = new Set<PendingEdit>([...this.#running.keys(), ...this.#queued]);
+    if (this.#pending) waiting.add(this.#pending);
+    for (const edit of waiting) {
+      if (this.#done.has(edit) || this.#stranded.some((k) => k.edit === edit) || !root) continue;
+      this.#strand(root, edit);
+    }
+    await Promise.all(this.#stranded.map((k) => k.keeping));
+    return this.#stranded.every((k) => k.id !== null);
+  }
+
   #syncDirty(): void {
     const open = this.deps.activePath();
     this.state.dirty = this.#pending !== null && open !== null && this.#pending.path === open;
+    this.#syncStalled();
   }
 
-  #enqueue(job: () => Promise<void>): Promise<void> {
-    const run = this.#saving.then(job);
-    this.#saving = run.catch(() => {});
+  #syncStalled(): void {
+    const open = this.deps.activePath();
+    const stalled = open !== null && [...this.#slow].some((j) => samePath(j.path, open));
+    this.state.stalled = stalled;
+    if (stalled) for (const hear of [...this.#onStall]) hear();
+  }
+
+  /** Runs `job` in `path`'s turn: after the saves to it before this one, and after any move of it. */
+  #onPath(path: string, job: () => Promise<void>): Promise<void> {
+    const key = pathKey(path);
+    const before = [
+      this.#chains.get(key) ?? Promise.resolve(),
+      ...this.#moves
+        .filter((m) => m.from === null || m.from.some((f) => pathInside(path, f)))
+        .map((m) => m.done),
+    ];
+    const run = Promise.all(before).then(job);
+    const tail = run.catch(() => {});
+    this.#chains.set(key, tail);
+    void tail.then(() => {
+      if (this.#chains.get(key) === tail) this.#chains.delete(key);
+    });
     return run;
+  }
+
+  /** Queues the edits to a note being left, in that note's turn. */
+  #writeLeft(edit: PendingEdit): void {
+    this.#queued.add(edit);
+    void this.#onPath(edit.path, () => this.#write(edit))
+      .catch(() => {})
+      .finally(() => this.#queued.delete(edit));
+  }
+
+  /** `edit` now starts from `base`, set on purpose — not from whatever the edit before it lands as. */
+  #rebase(edit: PendingEdit, base: string): void {
+    edit.base = base;
+    this.#prev.delete(edit);
+  }
+
+  /** The nearest edit before `job` that is on disk, if any: `job` was typed on top of it. */
+  #landedBefore(job: PendingEdit): PendingEdit | null {
+    for (let p = this.#prev.get(job); p; p = this.#prev.get(p)) {
+      if (this.#landed.has(p)) return p;
+    }
+    return null;
+  }
+
+  /** `job` landed: every edit before it is on disk inside it. */
+  #landedNow(job: PendingEdit): void {
+    this.#landed.add(job);
+    this.#done.add(job);
+    this.#unstrand(job); // kept outside the app at a close that did not wait for it: not needed now
+    for (let p = this.#prev.get(job); p; p = this.#prev.get(p)) {
+      this.#done.add(p);
+      this.#queued.delete(p);
+      this.#unstrand(p);
+    }
   }
 
   #cancelTimer(): void {
@@ -374,7 +653,18 @@ export class NoteSave {
     }
   }
 
-  async #write(job: PendingEdit, rootOf?: string): Promise<void> {
+  #write(job: PendingEdit, rootOf?: string): Promise<void> {
+    // Already on disk (or held by a later edit that is): nothing to write. Already being written:
+    // the same write, not a second one.
+    if (this.#done.has(job)) return Promise.resolve();
+    const running = this.#running.get(job);
+    if (running) return running;
+    const run = this.#writeOnce(job, rootOf).finally(() => this.#running.delete(job));
+    this.#running.set(job, run);
+    return run;
+  }
+
+  async #writeOnce(job: PendingEdit, rootOf?: string): Promise<void> {
     const root = rootOf ?? this.deps.root();
     if (!root) return;
     const retry = rootOf !== undefined;
@@ -382,8 +672,24 @@ export class NoteSave {
     const open = this.deps.activePath();
     if (job.path === open && (s.conflictDisk !== null || s.removed)) return;
     try {
-      const outcome = await this.deps.write(root, job.path, job.text, job.base);
+      const landedBefore = this.#landedBefore(job);
+      if (landedBefore) this.#rebase(job, landedBefore.text);
+      const slow = setTimeout(() => {
+        this.#slow.add(job);
+        this.#syncStalled();
+      }, this.#stallMs);
+      let outcome: WriteOutcome;
+      try {
+        outcome = await this.deps.write(root, job.path, job.text, job.base);
+      } finally {
+        clearTimeout(slow);
+        if (this.#slow.delete(job)) this.#syncStalled();
+      }
+      // The note already holds exactly these edits: an earlier try that seemed not to finish landed
+      // after all (a write that outlasted the app that sent it). Nothing to keep a copy of.
+      if (outcome.kind === "conflict" && outcome.disk === job.text) outcome = { kind: "written" };
       if (retry) this.#unstrand(job);
+      if (outcome.kind === "written") this.#landedNow(job);
       const active = retry ? null : this.deps.activePath();
       if (outcome.kind === "conflict") {
         if (job.path !== active) {
@@ -420,8 +726,8 @@ export class NoteSave {
       if (this.#pending === job) {
         this.#pending = null;
         this.#syncDirty();
-      } else if (this.#pending?.path === job.path) {
-        this.#pending.base = job.text; // the newer edit now starts from what this save put on disk
+      } else if (this.#pending && samePath(this.#pending.path, job.path)) {
+        this.#rebase(this.#pending, job.text); // the newer edit now starts from what this save put on disk
       }
       // Only the open note's own save speaks for it: a note already left saving fine says nothing
       // about whether the open one's edits are saved.

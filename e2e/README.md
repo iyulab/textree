@@ -6,7 +6,19 @@ it goes through the actual filesystem backend, so it verifies the core value tha
 
 ## Running
 
-Two terminals are required.
+**One command** — `npm run e2e:run` does everything below: it stops a dev build or dev server an
+earlier session left running (only processes whose executable is inside this repository), starts
+the app through the launcher, waits until the app page answers over CDP, runs the suite, and stops
+the app again. Arguments are passed to `playwright test`; `--soak N` repeats the suite N times
+against one app instance. It points `TEXTREE_CANOPY_CLI` at the assembled renderer
+(`src-tauri/resources/canopy/cli.js`) when that exists and the variable is unset. The app's output
+goes to `e2e-results/app.log`.
+
+A leftover app is worth the trouble: the specs cannot tell an app built from older code from the
+current one, so a stale instance answering on the CDP port makes them pass or fail against the
+wrong build.
+
+**By hand** — two terminals.
 
 **Terminal 1 — launch the app with a remote debugging port:**
 
@@ -36,6 +48,15 @@ start. Specs that exercise the first-run flow open whatever folder the app resol
 home; without that isolation it is the developer's real Documents folder, and those specs end up
 asserting against personal notes. Start the app any other way and they fail by name (see
 `expectIsolatedDefaultVault` in `onboarding.spec.ts`) rather than as a puzzling mismatch.
+
+It also sets `TEXTREE_E2E_STALL_FLAG` to a file in the temp directory. While that file exists, the
+development build holds every write just before it lands — a folder that has stopped answering.
+Specs create and remove it with `stallWrites()` / `releaseWrites()`; release builds do not have
+the hold at all.
+
+`TEXTREE_E2E_OPEN_STALL_FLAG` does the same for opening a folder: while the file holds a folder's
+path, opening that folder waits before reading it. Specs use `stallOpening(path)` /
+`releaseOpening()`.
 
 > ⚠️ The old `$env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS` route no longer works — WebView2
 > Runtime 150+ ignores the loader environment variable, so the CDP port silently never opens.

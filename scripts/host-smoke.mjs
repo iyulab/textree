@@ -15,7 +15,10 @@
  *   npm run host:smoke -- --exe src-tauri/resources/host/textree-host.exe   # the shipped build
  *
  * The second form checks what an installer carries: a single self-extracting file whose native
- * libraries only appear at launch, which `dotnet run` never exercises.
+ * libraries only appear at launch, which `dotnet run` never exercises. For the staged sidecar it
+ * first checks that the exe was assembled from the source as it stands (sidecar-provenance.mjs)
+ * and refuses a stale or unrecorded build — passing on some other build proves nothing about
+ * this one. `--any-build` runs it anyway, and the verdict line says what was tested.
  */
 import { spawn, spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -23,12 +26,26 @@ import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { check as checkProvenance, describe as describeProvenance } from "./sidecar-provenance.mjs";
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const PROJECT = join(REPO, "src-host", "src", "Textree.Host");
 const READY_TIMEOUT_MS = 5 * 60_000;
+/** One request may take this long (a first /index loads the embedder path); a host that died mid-request must not hang the smoke. */
+const REQUEST_TIMEOUT_MS = 3 * 60_000;
 const exeArg = process.argv.indexOf("--exe");
 const EXE = exeArg > 0 ? resolve(process.argv[exeArg + 1]) : null;
+const ANY_BUILD = process.argv.includes("--any-build");
+
+const provenance = EXE ? checkProvenance("host", EXE) : null;
+if (provenance) {
+  const line = `[host:smoke] the exe is ${describeProvenance(provenance)}`;
+  if (provenance.verdict !== "current" && !ANY_BUILD) {
+    console.error(`${line}\n[host:smoke] FAILED — the exe is not known to be a build of the current source (pass --any-build to run it anyway)`);
+    process.exit(1);
+  }
+  console.log(line);
+}
 
 const freePort = () =>
   new Promise((ok, fail) => {
@@ -42,8 +59,12 @@ const freePort = () =>
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+let output = "";
+
 function fail(message) {
   console.error(`[host:smoke] FAILED — ${message}`);
+  if (output) console.error(`--- last host output ---
+${output.slice(-3000)}`);
   process.exitCode = 1;
   throw new Error(message);
 }
@@ -62,7 +83,6 @@ const host = EXE
       stdio: ["ignore", "pipe", "pipe"],
       shell: process.platform === "win32",
     });
-let output = "";
 host.stdout.on("data", (d) => (output += d));
 host.stderr.on("data", (d) => (output += d));
 
@@ -71,11 +91,12 @@ const post = (path, body) =>
     method: "POST",
     headers: { "content-type": "application/json" },
     body: body === undefined ? undefined : JSON.stringify(body),
-  });
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+  }).catch((err) => fail(`${path} got no answer (${err.name}) — host ${host.exitCode === null ? "still running" : `exited ${host.exitCode}`}`));
 
 async function health() {
   try {
-    return await (await fetch(`${base}/health`)).json();
+    return await (await fetch(`${base}/health`, { signal: AbortSignal.timeout(5000) })).json();
   } catch {
     return null;
   }
@@ -98,6 +119,7 @@ try {
     if (h?.generatorError) fail(`the generator cannot load: ${h.generatorError}`);
     if (h?.embedderError) fail(`the embedder cannot load: ${h.embedderError}`);
     if (h?.generatorReady && h?.embedderReady) break;
+    if (host.exitCode !== null) fail(`the host exited (${host.exitCode}) while loading`);
     if (Date.now() > deadline) fail(`not ready in time: ${JSON.stringify(h)}`);
     await sleep(2000);
   }
@@ -122,9 +144,21 @@ try {
   if (!chat.ok) fail(`/chat answered ${chat.status}: ${text.slice(0, 300)}`);
   if (!/"content":"[^"]+"/.test(text)) fail(`/chat returned no content: ${text.slice(0, 300)}`);
   console.log("[host:smoke] local generation answers");
-  console.log("[host:smoke] OK");
+
+  // An answer cut off at the length limit says so, so the app can tell the person it is not whole.
+  const cut = await post("/chat", {
+    messages: [{ role: "user", content: "List twenty kinds of vegetables, one per line." }],
+    maxTokens: 8,
+  });
+  const cutText = await cut.text();
+  if (!cut.ok) fail(`/chat (cut off) answered ${cut.status}: ${cutText.slice(0, 300)}`);
+  if (!/"finish_reason":"length"/.test(cutText)) {
+    fail(`/chat did not say the answer reached its length limit: ${cutText.slice(-300)}`);
+  }
+  console.log("[host:smoke] a cut-off answer says why it ended");
+  console.log(provenance && provenance.verdict !== "current" ? "[host:smoke] OK — but for the exe above, not a known build of the current source" : "[host:smoke] OK");
 } finally {
-  await post("/shutdown").catch(() => {});
+  await fetch(`${base}/shutdown`, { method: "POST", signal: AbortSignal.timeout(5000) }).catch(() => {});
   for (let i = 0; i < 20 && host.exitCode === null; i++) await sleep(500);
   // `dotnet run` goes through a shell on Windows: killing the shell leaves the host running,
   // holding the build output locked. End the whole tree.
@@ -133,4 +167,9 @@ try {
     else host.kill();
   }
   rmSync(vault, { recursive: true, force: true });
+  // A host whose process has exited can still hold its output pipes open while the OS finishes
+  // tearing it down; waiting on them would keep the smoke from ever returning its verdict.
+  host.stdout.destroy();
+  host.stderr.destroy();
+  host.unref();
 }

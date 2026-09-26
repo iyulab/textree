@@ -126,8 +126,8 @@ cd textree
 npm install
 
 # The app bundles two helpers; build them once before the first run.
-pwsh scripts/assemble-canopy-sidecar.ps1    # expects ../canopy
-pwsh scripts/assemble-host-sidecar.ps1
+pwsh scripts/assemble-canopy-sidecar.ps1    # expects ../canopy; add -Pinned for the version releases ship
+pwsh scripts/assemble-host-sidecar.ps1      # again after changing src-host/ (host:smoke refuses a stale build)
 
 npm run tauri dev      # run in development
 npm run tauri build    # build an installer

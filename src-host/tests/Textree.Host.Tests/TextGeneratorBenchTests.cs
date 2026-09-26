@@ -56,7 +56,7 @@ public sealed class TextGeneratorBenchTests
         var genSw = Stopwatch.StartNew();
         await foreach (var chunk in gen.GenerateAsync(messages, opts, CancellationToken.None))
         {
-            sb.Append(chunk);
+            sb.Append(chunk.Text);
             chunkCount++;
         }
         genSw.Stop();

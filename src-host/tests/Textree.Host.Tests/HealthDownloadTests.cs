@@ -55,6 +55,9 @@ public sealed class HealthDownloadTests
             FileName = "model.gguf",
             BytesDownloaded = 300_000_000,
             TotalBytes = 2_200_000_000,
+            // First file of two: whole-download done = this file's bytes (LMSupply 0.75+ shape).
+            OverallBytesDownloaded = 300_000_000,
+            OverallTotalBytes = 2_200_000_000,
             CurrentFileIndex = 1,
             TotalFileCount = 2,
         });
@@ -192,6 +195,8 @@ public sealed class HealthDownloadTests
                     FileName = "model.onnx.data",
                     BytesDownloaded = _bytesDownloaded,
                     TotalBytes = _totalBytes,
+                    OverallBytesDownloaded = _bytesDownloaded,
+                    OverallTotalBytes = _totalBytes,
                     CurrentFileIndex = 1,
                     TotalFileCount = 2,
                 });

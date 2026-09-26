@@ -1,4 +1,5 @@
 use crate::host;
+use crate::note_locks::NoteLocks;
 use crate::pathsafe::is_within;
 use crate::search::{IndexHandle, IndexState, SearchHit};
 use crate::self_write::SelfWrites;
@@ -13,11 +14,11 @@ use tauri::{AppHandle, Manager, State};
 use tempfile::NamedTempFile;
 
 /// Name of the staging directory for atomic writes, inside the repository's own storage.
-const TEMP_DIR_NAME: &str = "textree-tmp";
+pub(crate) const TEMP_DIR_NAME: &str = "textree-tmp";
 
 /// Prefix of a temp file staged at the top of a folder no repository governs. The application's
 /// own, so that one left by a crash can be recognized and removed without touching anything else.
-const LOOSE_TEMP_PREFIX: &str = ".textree-tmp-";
+pub(crate) const LOOSE_TEMP_PREFIX: &str = ".textree-tmp-";
 
 /// Legacy staging location, kept only so leftovers from earlier versions get cleaned up.
 const LEGACY_TEMP_DIR: [&str; 2] = [".textree", "tmp"];
@@ -32,7 +33,7 @@ const LEGACY_TEMP_DIR: [&str; 2] = [".textree", "tmp"];
 /// A folder no repository governs has no such place, and gets none: making a directory in it
 /// would be the one thing the folder is promised never to hold: anything but notes. Writes there stage
 /// beside their target instead — see [`atomic_write_bytes`].
-fn temp_dir(root: &Path) -> Option<PathBuf> {
+pub(crate) fn temp_dir(root: &Path) -> Option<PathBuf> {
     crate::git_engine::git_dir(root).map(|git| git.join(TEMP_DIR_NAME))
 }
 
@@ -43,7 +44,7 @@ fn temp_dir(root: &Path) -> Option<PathBuf> {
 /// The older location is swept as well, so upgrading leaves nothing behind — and so is the top of
 /// the folder, for temps staged there before a repository existed. Only names carrying the
 /// application's own prefix go, and only at the top: a sweep never walks the whole folder.
-fn clear_temp_dir(root: &Path) {
+pub(crate) fn clear_temp_dir(root: &Path) {
     let legacy = root.join(LEGACY_TEMP_DIR[0]).join(LEGACY_TEMP_DIR[1]);
     for dir in temp_dir(root).into_iter().chain([legacy]) {
         if let Ok(entries) = std::fs::read_dir(&dir) {
@@ -79,8 +80,7 @@ fn atomic_bytes_beside(path: &Path, content: &[u8]) -> io::Result<()> {
     let mut tmp = NamedTempFile::new_in(dir)?;
     tmp.write_all(content)?;
     tmp.as_file().sync_all()?;
-    tmp.persist(path).map_err(|e| e.error)?;
-    Ok(())
+    persist(tmp, path)
 }
 
 /// Atomic file write: write to a temp file in repository storage (or beside the target when no
@@ -92,7 +92,8 @@ pub(crate) fn atomic_write(root: &Path, path: &Path, content: &str) -> io::Resul
 
 /// The same guarantee for content that is not necessarily text — a restored file can be
 /// anything that was kept alongside the notes.
-fn atomic_write_bytes(root: &Path, path: &Path, content: &[u8]) -> io::Result<()> {
+pub(crate) fn atomic_write_bytes(root: &Path, path: &Path, content: &[u8]) -> io::Result<()> {
+    write_step::before(write_step::Step::CreateTemp)?;
     // No repository: stage at the top of the folder, under a name of our own. It exists only
     // until the rename a moment later; one a crash leaves is swept on the next open. The top of
     // the folder is on the same volume as every note in it, so the rename stays atomic.
@@ -103,14 +104,104 @@ fn atomic_write_bytes(root: &Path, path: &Path, content: &[u8]) -> io::Result<()
         }
         None => tempfile::Builder::new().prefix(LOOSE_TEMP_PREFIX).tempfile_in(root)?,
     };
+    write_step::before(write_step::Step::WriteTemp)?;
     tmp.write_all(content)?;
     // Flush down to physical storage, not just the OS buffer (fsync). Only then is the
     // content guaranteed after the rename even under power loss — persist alone has no durability.
+    write_step::before(write_step::Step::Sync)?;
     tmp.as_file().sync_all()?;
     // persist is a rename within the same volume (both under the vault root), so it is atomic and
     // replaces the existing file.
-    tmp.persist(path).map_err(|e| e.error)?;
-    Ok(())
+    persist(tmp, path)
+}
+
+/// Renames `tmp` onto `path`, waiting out a refusal that passes on its own
+/// ([`patiently`](crate::fs_ops::patiently)) — failing the save on it would say the edits were
+/// not saved when a moment later they would have been.
+fn persist(tmp: NamedTempFile, path: &Path) -> io::Result<()> {
+    let mut tmp = Some(tmp);
+    crate::fs_ops::patiently(|| {
+        write_step::before(write_step::Step::Rename)?;
+        let file = tmp.take().expect("put back after every refused attempt");
+        match file.persist(path) {
+            Ok(_) => Ok(()),
+            Err(e) => {
+                tmp = Some(e.file);
+                Err(e.error)
+            }
+        }
+    })
+}
+
+/// The points between the steps of an atomic write. In a shipped build they do nothing; tests
+/// use them to see the disk as a crash at that instant would leave it, or to make the next step
+/// fail.
+pub(crate) mod write_step {
+    use std::io;
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub(crate) enum Step {
+        CreateTemp,
+        WriteTemp,
+        Sync,
+        Rename,
+    }
+
+    #[cfg(all(not(test), not(debug_assertions)))]
+    #[inline(always)]
+    pub(crate) fn before(_: Step) -> io::Result<()> {
+        Ok(())
+    }
+
+    /// Development builds only: while the file named by `TEXTREE_E2E_STALL_FLAG` exists, every
+    /// write waits just before its rename — how the end-to-end tests make a folder stop answering.
+    #[cfg(all(not(test), debug_assertions))]
+    pub(crate) fn before(step: Step) -> io::Result<()> {
+        if step == Step::Rename {
+            if let Some(flag) = std::env::var_os("TEXTREE_E2E_STALL_FLAG") {
+                let flag = std::path::PathBuf::from(flag);
+                while flag.exists() {
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[cfg(test)]
+    type Hook = Box<dyn FnMut(Step) -> io::Result<()>>;
+
+    #[cfg(test)]
+    thread_local! {
+        static HOOK: std::cell::RefCell<Option<Hook>> = const { std::cell::RefCell::new(None) };
+    }
+
+    #[cfg(test)]
+    pub(crate) fn before(step: Step) -> io::Result<()> {
+        HOOK.with(|h| match h.borrow_mut().as_mut() {
+            Some(hook) => hook(step),
+            None => Ok(()),
+        })
+    }
+
+    /// Runs `hook` before every step of atomic writes made on this thread, until the returned
+    /// guard is dropped — also when an assertion panics, so no later test inherits it.
+    #[cfg(test)]
+    #[must_use]
+    pub(crate) fn install(hook: impl FnMut(Step) -> io::Result<()> + 'static) -> Installed {
+        HOOK.with(|h| *h.borrow_mut() = Some(Box::new(hook)));
+        Installed
+    }
+
+    #[cfg(test)]
+    pub(crate) struct Installed;
+
+    #[cfg(test)]
+    impl Drop for Installed {
+        fn drop(&mut self) {
+            HOOK.with(|h| *h.borrow_mut() = None);
+        }
+    }
 }
 
 /// Seed note written into a freshly created default vault. English only (public repo).
@@ -334,20 +425,151 @@ pub fn read_sidecar(root: String, rel: String) -> Result<Option<String>, String>
     }
 }
 
-/// Writes one of this folder's settings, leaving the folder itself untouched.
+/// Writes one of this folder's settings, leaving the folder itself untouched. Refused while they
+/// are in a format a newer release wrote (see [`prepare_sidecar`]).
 #[tauri::command]
 pub fn write_sidecar(root: String, rel: String, content: String) -> Result<(), String> {
-    let path = sidecar_path(Path::new(&root), &rel)?;
+    let root = Path::new(&root);
+    let path = sidecar_path(root, &rel)?;
+    if !crate::state_dir::writable(&personal_dir(root)?).map_err(|e| e.to_string())? {
+        return Err(NEWER_SETTINGS.into());
+    }
     atomic_write_beside(&path, &content).map_err(|e| e.to_string())
 }
 
+const NEWER_SETTINGS: &str =
+    "this folder's settings were saved by a newer Textree and are kept as they are";
+
+/// What opening this folder's settings found.
+#[derive(Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SidecarState {
+    /// They were saved by a newer release: shown as defaults, and nothing is written over them
+    /// until the application is updated.
+    pub read_only: bool,
+}
+
+/// Brings this folder's settings to the format this release keeps them in, when the folder is
+/// opened — before anything reads them.
 #[tauri::command]
-pub fn list_tree(root: String) -> Result<Vec<TreeNode>, String> {
+pub fn prepare_sidecar(root: String) -> Result<SidecarState, String> {
+    let dir = personal_dir(Path::new(&root))?;
+    let current = crate::state_dir::bring_up_to_date(&dir, atomic_bytes_beside)
+        .map_err(|e| e.to_string())?;
+    Ok(SidecarState { read_only: !current })
+}
+
+/// Moves one of this folder's settings files that could not be read out of the way, keeping it.
+/// Returns the name it now has.
+#[tauri::command]
+pub fn set_aside_sidecar(root: String, rel: String) -> Result<String, String> {
+    let root = Path::new(&root);
+    sidecar_path(root, &rel)?; // the same confinement as reading and writing
+    let dir = personal_dir(root)?;
+    if !crate::state_dir::writable(&dir).map_err(|e| e.to_string())? {
+        return Err(NEWER_SETTINGS.into());
+    }
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let to = crate::state_dir::set_aside(&dir, &rel, now).map_err(|e| e.to_string())?;
+    log::warn!("set_aside_sidecar: {rel} could not be read; kept as {}", to.display());
+    Ok(to.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default())
+}
+
+/// An edit kept because it could not be written to its note yet (see `stranded`).
+#[derive(Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct StrandedEdit {
+    pub id: String,
+    pub path: String,
+    pub text: String,
+    pub base: String,
+}
+
+fn stranded_dir(root: &Path) -> Result<PathBuf, String> {
+    Ok(personal_dir(root)?.join(crate::stranded::DIR))
+}
+
+/// Keeps an edit that could not be written to its note yet, until it is. Returns its id.
+#[tauri::command]
+pub async fn keep_stranded(
+    root: String,
+    path: String,
+    text: String,
+    base: String,
+) -> Result<String, String> {
+    off_main(move || {
+        let root = PathBuf::from(root);
+        let rel = crate::stranded::relative(&root, Path::new(&path))
+            .ok_or_else(|| "path is outside the vault".to_string())?;
+        let at = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+        let kept = crate::stranded::Kept { rel, text, base, at };
+        crate::stranded::keep(&stranded_dir(&root)?, &kept, atomic_bytes_beside)
+            .map_err(|e| e.to_string())
+    })
+    .await
+}
+
+/// Lets go of a kept edit once it has landed.
+#[tauri::command]
+pub async fn forget_stranded(root: String, id: String) -> Result<(), String> {
+    off_main(move || {
+        crate::stranded::forget(&stranded_dir(Path::new(&root))?, &id).map_err(|e| e.to_string())
+    })
+    .await
+}
+
+/// Every edit kept for this folder, oldest first, to be tried again now that it is open.
+#[tauri::command]
+pub async fn list_stranded(root: String) -> Result<Vec<StrandedEdit>, String> {
+    off_main(move || stranded_edits(Path::new(&root))).await
+}
+
+fn stranded_edits(root: &Path) -> Result<Vec<StrandedEdit>, String> {
+    Ok(crate::stranded::list(&stranded_dir(root)?)
+        .into_iter()
+        .map(|(id, kept)| {
+            let mut path = root.to_path_buf();
+            path.extend(kept.rel.split('/'));
+            StrandedEdit {
+                id,
+                path: path.to_string_lossy().to_string(),
+                text: kept.text,
+                base: kept.base,
+            }
+        })
+        .collect())
+}
+
+/// Runs `work` off the main thread. Anything that touches the notes folder goes through here: a
+/// folder that stops answering (a stalled sync or network drive) must hold up that one request, not
+/// the window.
+pub(crate) async fn off_main<T: Send + 'static>(
+    work: impl FnOnce() -> Result<T, String> + Send + 'static,
+) -> Result<T, String> {
+    tauri::async_runtime::spawn_blocking(work).await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn list_tree(root: String) -> Result<Vec<TreeNode>, String> {
+    off_main(move || tree_of(root)).await
+}
+
+pub(crate) fn tree_of(root: String) -> Result<Vec<TreeNode>, String> {
     vault::build_tree(Path::new(&root)).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-pub fn read_note(root: String, path: String) -> Result<String, String> {
+pub async fn read_note(root: String, path: String) -> Result<String, String> {
+    off_main(move || note_text(root, path)).await
+}
+
+pub(crate) fn note_text(root: String, path: String) -> Result<String, String> {
     let root = PathBuf::from(root);
     let path = PathBuf::from(path);
     if !is_within(&root, &path) {
@@ -386,18 +608,40 @@ fn stale_base(path: &Path, expected: &str) -> io::Result<Option<WriteOutcome>> {
     }
 }
 
+/// Saves a note, off the main thread: a folder that stops answering (a stalled sync or network
+/// drive) holds up this save, not the window or the other notes.
 #[tauri::command]
-pub fn write_note(
+pub async fn write_note(
     root: String,
     path: String,
     content: String,
     expected: String,
     self_writes: State<'_, Arc<SelfWrites>>,
-    index: State<'_, Arc<IndexHandle>>,
-    host: State<'_, Arc<host::HostHandle>>,
+    locks: State<'_, Arc<NoteLocks>>,
+    app: AppHandle,
 ) -> Result<WriteOutcome, String> {
-    let root = PathBuf::from(root);
-    let path = PathBuf::from(path);
+    let (self_writes, locks) = (self_writes.inner().clone(), locks.inner().clone());
+    off_main(move || {
+        let (root, path) = (PathBuf::from(root), PathBuf::from(path));
+        let outcome = save_note(&root, &path, &content, &expected, &self_writes, &locks)?;
+        if outcome == WriteOutcome::Written {
+            refresh_indexes(&app, root, path);
+        }
+        Ok(outcome)
+    })
+    .await
+}
+
+/// Replaces the note with `content` if it still holds `expected`. Saves to one note run one at a
+/// time, each checking against what the previous one left (see [`NoteLocks`]).
+pub(crate) fn save_note(
+    root: &Path,
+    path: &Path,
+    content: &str,
+    expected: &str,
+    self_writes: &SelfWrites,
+    locks: &NoteLocks,
+) -> Result<WriteOutcome, String> {
     // The whole folder is gone — the note with it. Nothing can be written, nothing is.
     if !root.is_dir() {
         log::info!("write_note: the folder {} is gone; not written", root.display());
@@ -405,62 +649,114 @@ pub fn write_note(
     }
     // Not `is_within`: that needs the note to exist, and a note deleted outside the app (with or
     // without its folder) must come back as "gone" below, not as an error about where it is.
-    if crate::pathsafe::rel_within(&root, &path).is_none() {
+    if crate::pathsafe::rel_within(root, path).is_none() {
         log::warn!("write_note: rejected unsafe path: {}", path.display());
         return Err("path is outside the vault".into());
     }
-    if let Some(conflict) = stale_base(&path, &expected).map_err(|e| e.to_string())? {
+    let _turn = locks.turn(path);
+    if let Some(conflict) = stale_base(path, expected).map_err(|e| e.to_string())? {
         log::info!("write_note: {} changed since it was loaded; not written", path.display());
         return Ok(conflict);
     }
     // Must register "just before" writing: if the watcher receives the event before
     // record runs right after the write hits disk, an echo loop forms (design §4.1).
-    self_writes.record(&path, &content);
-    match atomic_write(&root, &path, &content) {
+    self_writes.record(path, content);
+    match atomic_write(root, path, content) {
         Ok(()) => {
             log::info!("write_note: {} ({} bytes)", path.display(), content.len());
-            // The watcher suppresses self-writes, so in-app edits update the index here.
-            // An index failure does not fail the save (index = derived cache, graceful).
-            if let Some(state) = index.0.lock().unwrap_or_else(|e| e.into_inner()).as_mut() {
-                let _ = state.index_note(&root, &path, &content);
-            }
-            // Background semantic index. Runs without asking because it only reads: it derives a
-            // search index and never alters what the person wrote.
-            let host_arc = host.inner().clone();
-            let (v, p) = (root.to_string_lossy().to_string(), path.to_string_lossy().to_string());
-            tauri::async_runtime::spawn_blocking(move || {
-                host::index_note(&host_arc, &v, &p);
-            });
             Ok(WriteOutcome::Written)
         }
         Err(e) => {
             // On write failure the disk did not change, so remove the stale registration
             // to keep the registry from diverging from the actual disk state.
-            self_writes.forget(&path);
+            self_writes.forget(path);
             log::error!("write_note failed for {}: {}", path.display(), e);
             Err(e.to_string())
         }
     }
 }
 
-#[tauri::command]
-pub fn open_vault(
-    root: String,
-    app: AppHandle,
-    self_writes: State<'_, Arc<SelfWrites>>,
-    watcher_handle: State<'_, WatcherHandle>,
-    index: State<'_, Arc<IndexHandle>>,
-    host: State<'_, Arc<host::HostHandle>>,
-) -> Result<Vec<TreeNode>, String> {
+/// Brings the search indexes up to date with a saved note, in the background: the full-text index
+/// can be held for a whole rebuild, and the save is already on disk — it must not wait for that.
+/// The watcher skips the app's own writes, so in-app edits reach the index only through here.
+///
+/// The note is read again rather than passed along: two saves in quick succession start two of
+/// these, in no guaranteed order, and whichever runs last must index what the note holds now.
+/// An index failure does not fail anything (the index is a derived cache).
+fn refresh_indexes(app: &AppHandle, root: PathBuf, path: PathBuf) {
+    let index = app.state::<Arc<IndexHandle>>().inner().clone();
+    let host = app.state::<Arc<host::HostHandle>>().inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let Ok(content) = std::fs::read_to_string(&path) else { return };
+        if let Some(state) = index.0.lock().unwrap_or_else(|e| e.into_inner()).as_mut() {
+            let _ = state.index_note(&root, &path, &content);
+        }
+        // Background semantic index. Runs without asking because it only reads: it derives a
+        // search index and never alters what the person wrote.
+        host::index_note(&host, &root.to_string_lossy(), &path.to_string_lossy());
+    });
+}
+
+/// Which opening of a folder is the latest. Opening runs off the main thread, so a folder that
+/// does not answer no longer holds the window — and the person can open another one meanwhile.
+/// Then the later one is what they want: the earlier one, when it finally gets through, installs
+/// nothing.
+static OPENS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Taken while an opening puts its folder in place, so two cannot interleave that.
+static INSTALLING: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// What an opening that another one overtook reports. The window, having started the later one,
+/// does not show it.
+pub(crate) const SUPERSEDED: &str = "another folder was opened meanwhile";
+
+/// Development builds only: while the file named by `TEXTREE_E2E_OPEN_STALL_FLAG` exists and holds
+/// this folder's path, opening it waits before reading anything — how the end-to-end tests make a
+/// folder stop answering when it is opened.
+#[cfg(all(not(test), debug_assertions))]
+fn stall_opening(root: &str) {
+    let Some(flag) = std::env::var_os("TEXTREE_E2E_OPEN_STALL_FLAG") else { return };
+    while std::fs::read_to_string(&flag).is_ok_and(|named| named.trim() == root) {
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+}
+
+#[cfg(any(test, not(debug_assertions)))]
+#[inline(always)]
+fn stall_opening(_: &str) {}
+
+/// Starts an opening; the number it returns is what [`open_vault`] checks before installing.
+pub(crate) fn begin_open() -> u64 {
+    OPENS.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1
+}
+
+/// Opens a folder: reads its tree, installs its search index, points the semantic index at it and
+/// watches it. Everything that reads the folder runs first, where it may take as long as the
+/// folder takes; only then, briefly and one opening at a time, is the folder put in place — and
+/// only if no later opening started meanwhile.
+pub fn open_vault(root: String, app: AppHandle, ticket: u64) -> Result<Vec<TreeNode>, String> {
+    stall_opening(&root);
     let root_path = PathBuf::from(&root);
     // Sweep orphaned atomic-write temps (crash/power-loss leftovers) so they don't linger and sync.
     clear_temp_dir(&root_path);
     let tree = vault::build_tree(&root_path).map_err(|e| e.to_string())?;
     log::info!("open_vault: {} ({} top-level nodes)", root, tree.len());
 
+    let self_writes = app.state::<Arc<SelfWrites>>().inner().clone();
+    let index = app.state::<Arc<IndexHandle>>().inner().clone();
+    let host = app.state::<Arc<host::HostHandle>>().inner().clone();
+    let app_data = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let watchdog =
+        crate::liveness::Watchdog::spawn(app.clone(), &root_path, self_writes, index.clone())?;
+
+    let _installing = INSTALLING.lock().unwrap_or_else(|e| e.into_inner());
+    if OPENS.load(std::sync::atomic::Ordering::SeqCst) != ticket {
+        log::info!("open_vault: {root} was overtaken by a later opening; not installed");
+        return Err(SUPERSEDED.into()); // the watchdog it started stops as it drops
+    }
+
     // Install the index (app data directory, per-vault hash). On failure only search is disabled —
     // graceful degradation (editing, tree, and file search remain intact without the index).
-    let app_data = app.path().app_data_dir().map_err(|e| e.to_string())?;
     let dir = crate::search::index_dir(&app_data, &root_path);
     match IndexState::open_or_create(&dir) {
         Ok(state) => {
@@ -468,7 +764,7 @@ pub fn open_vault(
             *index.0.lock().unwrap_or_else(|e| e.into_inner()) = Some(state);
             if was_empty {
                 // Full build in the background (non-blocking for the UI).
-                let index_arc = index.inner().clone();
+                let index_arc = index.clone();
                 let root_for_build = root_path.clone();
                 tauri::async_runtime::spawn_blocking(move || {
                     if let Some(st) = index_arc.0.lock().unwrap_or_else(|e| e.into_inner()).as_mut() {
@@ -486,29 +782,22 @@ pub fn open_vault(
     // Background semantic reindex. Runs without asking for the same reason as the per-note
     // index above: it only reads, and changes nothing a person wrote.
     host.set_current_vault(root.clone());
-    let host_arc = host.inner().clone();
     let vault_str = root.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        host::reindex_vault(&host_arc, &vault_str);
+        host::reindex_vault(&host, &vault_str);
     });
 
-    // Explicitly drop the previous watchdog (stops its thread and the debouncer) before
-    // starting the new one, so leftover events from the old vault don't bleed into the new.
-    *watcher_handle.0.lock().unwrap() = None;
-    let wd = crate::liveness::Watchdog::spawn(
-        app,
-        &root_path,
-        self_writes.inner().clone(),
-        index.inner().clone(),
-    )?;
-    *watcher_handle.0.lock().unwrap() = Some(wd);
+    // The previous watchdog stops as it is replaced (its thread and debouncer with it), so
+    // leftover events from the old vault don't bleed into the new.
+    let watcher_handle = app.state::<WatcherHandle>();
+    let previous = watcher_handle.0.lock().unwrap().replace(watchdog);
+    drop(previous);
 
     Ok(tree)
 }
 
 // ── Structural edits (M4) — delegated to fs_ops ────────────────────────────────
 
-#[tauri::command]
 pub fn create_note(root: String, parent: String, name: String) -> Result<String, String> {
     let path = crate::fs_ops::create_note(Path::new(&root), Path::new(&parent), &name)
         .map_err(|e| e.to_string())?;
@@ -516,7 +805,6 @@ pub fn create_note(root: String, parent: String, name: String) -> Result<String,
     Ok(path.display().to_string())
 }
 
-#[tauri::command]
 pub fn create_untitled_note(root: String, parent: String) -> Result<String, String> {
     let path = crate::fs_ops::create_untitled_note(Path::new(&root), Path::new(&parent))
         .map_err(|e| e.to_string())?;
@@ -524,7 +812,6 @@ pub fn create_untitled_note(root: String, parent: String) -> Result<String, Stri
     Ok(path.display().to_string())
 }
 
-#[tauri::command]
 pub fn create_note_with_content(
     root: String,
     parent: String,
@@ -542,7 +829,6 @@ pub fn create_note_with_content(
     Ok(path.display().to_string())
 }
 
-#[tauri::command]
 pub fn rename_note_unique(root: String, path: String, name: String) -> Result<String, String> {
     let p = crate::fs_ops::rename_note_unique(Path::new(&root), Path::new(&path), &name)
         .map_err(|e| e.to_string())?;
@@ -550,7 +836,6 @@ pub fn rename_note_unique(root: String, path: String, name: String) -> Result<St
     Ok(p.display().to_string())
 }
 
-#[tauri::command]
 pub fn create_folder(root: String, parent: String, name: String) -> Result<String, String> {
     let dir = crate::fs_ops::create_folder(Path::new(&root), Path::new(&parent), &name)
         .map_err(|e| e.to_string())?;
@@ -558,7 +843,6 @@ pub fn create_folder(root: String, parent: String, name: String) -> Result<Strin
     Ok(dir.display().to_string())
 }
 
-#[tauri::command]
 pub fn promote_node(root: String, path: String) -> Result<String, String> {
     let root_p = Path::new(&root);
     // Resolved first: promoting replaces the file this names.
@@ -685,7 +969,6 @@ fn keep_state_of(root: &Path, target: &Path) -> Result<(), String> {
 ///
 /// The order is not an implementation detail: keeping comes first, because afterwards there is
 /// nowhere left to read the state from.
-#[tauri::command]
 pub fn delete_node(root: String, path: String) -> Result<(), String> {
     let root_p = Path::new(&root);
     let target = Path::new(&path);
@@ -710,9 +993,9 @@ pub fn delete_node(root: String, path: String) -> Result<(), String> {
     }
     keep_state_of(root_p, target)?;
     if target.is_dir() {
-        std::fs::remove_dir_all(target).map_err(|e| e.to_string())?;
+        crate::fs_ops::patiently(|| std::fs::remove_dir_all(target)).map_err(|e| e.to_string())?;
     } else {
-        std::fs::remove_file(target).map_err(|e| e.to_string())?;
+        crate::fs_ops::patiently(|| std::fs::remove_file(target)).map_err(|e| e.to_string())?;
     }
     log::info!("delete_node: {}", path);
     Ok(())
@@ -789,7 +1072,6 @@ fn record_moves(root: &Path, pairs: &[(String, String)]) {
     }
 }
 
-#[tauri::command]
 pub fn rename_node(root: String, path: String, name: String) -> Result<String, String> {
     let root_p = Path::new(&root);
     let target = Path::new(&path);
@@ -814,7 +1096,6 @@ pub fn rename_node(root: String, path: String, name: String) -> Result<String, S
     Ok(p.display().to_string())
 }
 
-#[tauri::command]
 pub fn move_node(root: String, path: String, dest: String) -> Result<String, String> {
     let root_p = Path::new(&root);
     let from_rel = rel_to_root(root_p, Path::new(&path)).ok();
@@ -827,7 +1108,6 @@ pub fn move_node(root: String, path: String, dest: String) -> Result<String, Str
     Ok(p.display().to_string())
 }
 
-#[tauri::command]
 pub fn adopt_node(root: String, path: String, leaf: String) -> Result<String, String> {
     let root_p = Path::new(&root);
     let leaf_p = Path::new(&leaf);
@@ -853,7 +1133,6 @@ pub fn adopt_node(root: String, path: String, leaf: String) -> Result<String, St
 }
 
 /// Saves an attached image. `data` is base64-encoded bytes. Returns the relative link to insert into the body.
-#[tauri::command]
 pub fn save_attachment(
     root: String,
     note: String,
@@ -868,24 +1147,26 @@ pub fn save_attachment(
         .map_err(|e| e.to_string())
 }
 
+/// Off the main thread: the index is held for the whole of a first-open rebuild, and a search made
+/// meanwhile waits for it.
 #[tauri::command]
-pub fn search_content(
+pub async fn search_content(
     query: String,
     limit: usize,
     index: State<'_, Arc<IndexHandle>>,
 ) -> Result<Vec<SearchHit>, String> {
-    let guard = index.0.lock().unwrap_or_else(|e| e.into_inner());
-    match guard.as_ref() {
-        Some(state) => state.search(&query, limit).map_err(|e| e.to_string()),
-        None => Ok(Vec::new()), // no index → empty results (graceful)
-    }
+    let index = index.inner().clone();
+    off_main(move || {
+        let guard = index.0.lock().unwrap_or_else(|e| e.into_inner());
+        match guard.as_ref() {
+            Some(state) => state.search(&query, limit).map_err(|e| e.to_string()),
+            None => Ok(Vec::new()), // no index → empty results (graceful)
+        }
+    })
+    .await
 }
 
-#[tauri::command]
-pub fn rebuild_index(
-    root: String,
-    index: State<'_, Arc<IndexHandle>>,
-) -> Result<(), String> {
+pub fn rebuild_index(root: String, index: &IndexHandle) -> Result<(), String> {
     let root_path = PathBuf::from(root);
     let mut guard = index.0.lock().unwrap_or_else(|e| e.into_inner());
     match guard.as_mut() {
@@ -919,7 +1200,6 @@ fn resolve_canopy(app: &AppHandle) -> Result<crate::publish::CanopyInvocation, S
 
 /// Publishes the open vault to a static site by spawning canopy. Read-only over the source:
 /// the vault `.md` is never mutated; only `out_dir` (which must lie outside the vault) is written.
-#[tauri::command]
 pub fn publish_site(
     app: AppHandle,
     vault_path: String,
@@ -937,7 +1217,6 @@ pub fn publish_site(
 /// Publishes the open vault to the cloud (pub.textree.me): renders locally via canopy, zips the
 /// output, and uploads it to api.textree.me/publish using the stored publish token. Read-only over
 /// the source. Errors if no publish token is set (add one in Settings).
-#[tauri::command]
 pub fn publish_to_cloud(
     app: AppHandle,
     vault_path: String,
@@ -977,7 +1256,6 @@ pub fn open_log_dir(app: tauri::AppHandle) -> Result<(), String> {
 /// Refused rather than half-done when: the repository is in the middle of another operation,
 /// a path lies outside the vault, or a path is covered by an ignore rule (in which case the
 /// history would silently not contain what was asked for).
-#[tauri::command]
 pub fn commit_notes(
     root: String,
     paths: Vec<String>,
@@ -1102,7 +1380,6 @@ fn history_repo(root: &Path) -> Result<Option<crate::git_engine::VaultRepo>, Str
 ///
 /// The note does not have to still be in the folder: this is how a deleted one is looked at
 /// before deciding whether to bring it back.
-#[tauri::command]
 pub fn note_versions(root: String, path: String) -> Result<Vec<NoteVersion>, String> {
     let root_p = Path::new(&root);
     let rel = crate::pathsafe::rel_within(root_p, Path::new(&path))
@@ -1126,7 +1403,6 @@ pub fn note_versions(root: String, path: String) -> Result<Vec<NoteVersion>, Str
 }
 
 /// What a note held at one recorded state. Reads objects only — the file on disk is not touched.
-#[tauri::command]
 pub fn note_version_text(root: String, path: String, id: String) -> Result<String, String> {
     let root_p = Path::new(&root);
     let rel = crate::pathsafe::rel_within(root_p, Path::new(&path))
@@ -1150,7 +1426,6 @@ pub fn note_version_text(root: String, path: String, id: String) -> Result<Strin
 /// Two things end up here and the difference does not matter to whoever is looking for what
 /// they deleted: notes that were recorded and later removed, and notes that were never recorded
 /// but whose contents were kept when they were deleted.
-#[tauri::command]
 pub fn deleted_notes(root: String) -> Result<Vec<DeletedNote>, String> {
     let root_p = Path::new(&root);
     let Some(prepared) = history_repo(root_p)? else {
@@ -1523,7 +1798,7 @@ fn carry_over_set_aside(root: &Path, prepared: &crate::git_engine::VaultRepo) ->
                 }
                 // Held by the history now, file by file — and only the files that were read.
                 for on_disk in &read_from {
-                    if let Err(e) = std::fs::remove_file(on_disk) {
+                    if let Err(e) = crate::fs_ops::patiently(|| std::fs::remove_file(on_disk)) {
                         log::warn!("carry_over_set_aside: {} carried but not removed: {e}", on_disk.display());
                     }
                 }
@@ -1579,7 +1854,6 @@ fn still_inside(root: &Path, dir: &Path) -> Vec<String> {
 /// The copies set aside for deleted notes go into the history rather than being thrown away —
 /// they are still the only copy of anything deleted before the history started keeping them.
 /// Settings go where settings live now. Only then is the empty directory removed.
-#[tauri::command]
 pub fn move_state_out_of_vault(root: String) -> Result<MoveOut, String> {
     let root_p = Path::new(&root);
     let inside = root_p.join(".textree");
@@ -1591,7 +1865,15 @@ pub fn move_state_out_of_vault(root: String) -> Result<MoveOut, String> {
     // Settings first: cheap, and it cannot fail in a way that costs anything.
     // Every settings file the application has ever kept in there. A name missing from this list
     // is a file left behind in a folder the notice claims is clean.
+    //
+    // Not into settings a newer release wrote, though: it may keep them in another shape, and these
+    // are in the old one. They stay where they are, and the notice lists them as left behind.
+    let settings_writable =
+        crate::state_dir::writable(&personal_dir(root_p)?).map_err(|e| e.to_string())?;
     for rel in ["favorites.json", "order.json", "views.json"] {
+        if !settings_writable {
+            break;
+        }
         let from = legacy_sidecar_path(root_p, rel);
         if !from.is_file() {
             continue;
@@ -1609,7 +1891,7 @@ pub fn move_state_out_of_vault(root: String) -> Result<MoveOut, String> {
         // recovery rather than by anything that decided to.
         let content = std::fs::read(&from).map_err(|e| e.to_string())?;
         atomic_bytes_beside(&to, &content).map_err(|e| e.to_string())?;
-        std::fs::remove_file(&from).map_err(|e| e.to_string())?;
+        crate::fs_ops::patiently(|| std::fs::remove_file(&from)).map_err(|e| e.to_string())?;
         moved.settings = true;
     }
 
@@ -1656,7 +1938,6 @@ pub fn move_state_out_of_vault(root: String) -> Result<MoveOut, String> {
 ///
 /// The note has to still be in the folder: bringing back one that is not is `restore_deleted`,
 /// which decides for itself which state that should be.
-#[tauri::command]
 pub fn restore_version(root: String, path: String, id: String) -> Result<(), String> {
     let root_p = Path::new(&root);
     let target = Path::new(&path);
@@ -1692,7 +1973,6 @@ pub fn restore_version(root: String, path: String, id: String) -> Result<(), Str
 ///
 /// An existing file of the same name is never overwritten: the restored copy is numbered
 /// alongside it, and the path it actually landed at is returned so the caller can say where.
-#[tauri::command]
 pub fn restore_deleted(root: String, rel: String) -> Result<RestoredNote, String> {
     let root_p = Path::new(&root);
     validate_vault_rel(&rel)?;
@@ -1768,6 +2048,286 @@ mod tests {
             stale_base(&tmp.path().join("box").join("gone.md"), "loaded").unwrap(),
             Some(WriteOutcome::Conflict { disk: None })
         );
+    }
+
+    /// Starts saving `text` to `path` on another thread and holds it just before the rename — the
+    /// moment a stalled folder would hold it. Returns a way to let it go and its result.
+    fn save_held_before_rename(
+        root: &Path,
+        path: &Path,
+        text: &'static str,
+        expected: &'static str,
+        self_writes: &Arc<SelfWrites>,
+        locks: &Arc<NoteLocks>,
+    ) -> (std::sync::mpsc::Sender<()>, std::thread::JoinHandle<Result<WriteOutcome, String>>) {
+        use std::sync::mpsc;
+        let (reached_tx, reached) = mpsc::channel();
+        let (release, release_rx) = mpsc::channel::<()>();
+        let (root, path) = (root.to_path_buf(), path.to_path_buf());
+        let (self_writes, locks) = (Arc::clone(self_writes), Arc::clone(locks));
+        let handle = std::thread::spawn(move || {
+            let _hook = write_step::install(move |step| {
+                if step == write_step::Step::Rename {
+                    reached_tx.send(()).unwrap();
+                    release_rx.recv().unwrap();
+                }
+                Ok(())
+            });
+            save_note(&root, &path, text, expected, &self_writes, &locks)
+        });
+        reached.recv_timeout(std::time::Duration::from_secs(5)).expect("the held save starts");
+        (release, handle)
+    }
+
+    #[test]
+    fn a_save_that_lands_late_cannot_overwrite_a_newer_one() {
+        // The stalled save goes first and the newer one waits for it to finish, then checks the
+        // note against what it left. Without that, the stalled save would land last and put the
+        // older text back.
+        let tmp = TempDir::new().unwrap();
+        let (root, note) = (tmp.path(), tmp.path().join("a.md"));
+        std::fs::write(&note, "0").unwrap();
+        let (self_writes, locks) = (Arc::new(SelfWrites::default()), Arc::new(NoteLocks::default()));
+
+        let (release, older) = save_held_before_rename(root, &note, "older", "0", &self_writes, &locks);
+
+        let newer = {
+            let (root, note) = (root.to_path_buf(), note.clone());
+            let (self_writes, locks) = (Arc::clone(&self_writes), Arc::clone(&locks));
+            std::thread::spawn(move || save_note(&root, &note, "newer", "older", &self_writes, &locks))
+        };
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        assert!(!newer.is_finished(), "the newer save waits while the older one is still writing");
+        assert_eq!(std::fs::read_to_string(&note).unwrap(), "0");
+
+        release.send(()).unwrap();
+        assert_eq!(older.join().unwrap(), Ok(WriteOutcome::Written));
+        assert_eq!(newer.join().unwrap(), Ok(WriteOutcome::Written));
+        assert_eq!(std::fs::read_to_string(&note).unwrap(), "newer", "the newest text is what stays");
+    }
+
+    /// Renames `a.md` to `b.md` on another thread the way the command does: holding a turn over
+    /// the note first, then renaming.
+    fn rename_in_turn(
+        root: &Path,
+        locks: &Arc<NoteLocks>,
+    ) -> std::thread::JoinHandle<Result<String, String>> {
+        let (root, locks) = (root.to_path_buf(), Arc::clone(locks));
+        std::thread::spawn(move || {
+            let note = root.join("a.md");
+            let _turn = locks.subtree(&[note.as_path()]);
+            rename_node(root.to_string_lossy().into(), note.to_string_lossy().into(), "b".into())
+        })
+    }
+
+    #[test]
+    fn a_rename_waits_for_a_stalled_save_so_the_old_name_does_not_come_back() {
+        let tmp = TempDir::new().unwrap();
+        let (root, note) = (tmp.path(), tmp.path().join("a.md"));
+        std::fs::write(&note, "0").unwrap();
+        let (self_writes, locks) = (Arc::new(SelfWrites::default()), Arc::new(NoteLocks::default()));
+
+        let (release, save) = save_held_before_rename(root, &note, "newest", "0", &self_writes, &locks);
+        let rename = rename_in_turn(root, &locks);
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        assert!(!rename.is_finished(), "the rename waits while a save to the note is still writing");
+
+        release.send(()).unwrap();
+        assert_eq!(save.join().unwrap(), Ok(WriteOutcome::Written));
+        rename.join().unwrap().unwrap();
+        assert!(!note.exists(), "the old name must not come back");
+        assert_eq!(std::fs::read_to_string(root.join("b.md")).unwrap(), "newest");
+    }
+
+    #[test]
+    fn negative_control_a_rename_without_a_turn_lets_a_late_save_bring_the_old_name_back() {
+        let tmp = TempDir::new().unwrap();
+        let (root, note) = (tmp.path(), tmp.path().join("a.md"));
+        std::fs::write(&note, "0").unwrap();
+        let (self_writes, locks) = (Arc::new(SelfWrites::default()), Arc::new(NoteLocks::default()));
+
+        let (release, save) = save_held_before_rename(root, &note, "newest", "0", &self_writes, &locks);
+        let root_s = root.to_string_lossy().to_string();
+        rename_node(root_s, note.to_string_lossy().into(), "b".into()).unwrap();
+        release.send(()).unwrap();
+        assert_eq!(save.join().unwrap(), Ok(WriteOutcome::Written));
+
+        assert_eq!(std::fs::read_to_string(&note).unwrap(), "newest", "the old name came back");
+        assert_eq!(std::fs::read_to_string(root.join("b.md")).unwrap(), "0", "without the edit");
+    }
+
+    #[test]
+    fn a_save_arriving_during_a_rename_is_told_the_note_is_gone() {
+        // After the rename the note is elsewhere: a save still aimed at the old name must not
+        // create it again, and reports it gone so the editor follows the move instead.
+        let tmp = TempDir::new().unwrap();
+        let (root, note) = (tmp.path(), tmp.path().join("a.md"));
+        std::fs::write(&note, "0").unwrap();
+        let (self_writes, locks) = (Arc::new(SelfWrites::default()), Arc::new(NoteLocks::default()));
+
+        let turn = locks.subtree(&[note.as_path()]);
+        let late = {
+            let (root, note) = (root.to_path_buf(), note.clone());
+            let (self_writes, locks) = (Arc::clone(&self_writes), Arc::clone(&locks));
+            std::thread::spawn(move || save_note(&root, &note, "late", "0", &self_writes, &locks))
+        };
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        assert!(!late.is_finished(), "a save to a note being renamed waits for the rename");
+        let root_s = root.to_string_lossy().to_string();
+        rename_node(root_s, note.to_string_lossy().into(), "b".into()).unwrap();
+        drop(turn);
+
+        assert_eq!(late.join().unwrap(), Ok(WriteOutcome::Conflict { disk: None }));
+        assert!(!note.exists());
+        assert_eq!(std::fs::read_to_string(root.join("b.md")).unwrap(), "0");
+    }
+
+    #[test]
+    fn a_stalled_save_does_not_hold_up_another_note() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        std::fs::write(root.join("a.md"), "a").unwrap();
+        std::fs::write(root.join("b.md"), "b").unwrap();
+        let (self_writes, locks) = (Arc::new(SelfWrites::default()), Arc::new(NoteLocks::default()));
+
+        let (release, stalled) =
+            save_held_before_rename(root, &root.join("a.md"), "a2", "a", &self_writes, &locks);
+
+        let other = save_note(root, &root.join("b.md"), "b2", "b", &self_writes, &locks);
+        assert_eq!(other, Ok(WriteOutcome::Written));
+        assert_eq!(std::fs::read_to_string(root.join("b.md")).unwrap(), "b2");
+
+        release.send(()).unwrap();
+        assert_eq!(stalled.join().unwrap(), Ok(WriteOutcome::Written));
+    }
+
+    #[test]
+    fn negative_control_without_taking_turns_the_newer_save_is_refused() {
+        // The same two saves with the order left to chance: the newer one checks the note before the
+        // stalled one lands, sees what it expects to replace is not there yet, and refuses — so the
+        // person is told of a conflict with their own edit. With turns, it goes after (see above).
+        let tmp = TempDir::new().unwrap();
+        let (root, note) = (tmp.path(), tmp.path().join("a.md"));
+        std::fs::write(&note, "0").unwrap();
+        let self_writes = Arc::new(SelfWrites::default());
+        // A fresh set of locks per save is no locking at all.
+        let (release, older) =
+            save_held_before_rename(root, &note, "older", "0", &self_writes, &Arc::new(NoteLocks::default()));
+        let newer = save_note(root, &note, "newer", "older", &self_writes, &NoteLocks::default());
+        assert!(matches!(newer, Ok(WriteOutcome::Conflict { .. })), "{newer:?}");
+        release.send(()).unwrap();
+        older.join().unwrap().unwrap();
+    }
+
+    #[test]
+    fn opening_a_folder_marks_its_settings_with_the_current_format() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path().to_string_lossy().to_string();
+        assert_eq!(prepare_sidecar(root.clone()).unwrap(), SidecarState { read_only: false });
+        let marker = personal_dir(tmp.path()).unwrap().join(crate::state_dir::FORMAT_FILE);
+        assert_eq!(
+            std::fs::read_to_string(marker).unwrap(),
+            crate::state_dir::CURRENT.to_string()
+        );
+        write_sidecar(root.clone(), "favorites.json".into(), "[]".into()).unwrap();
+    }
+
+    #[test]
+    fn settings_a_newer_release_saved_are_shown_but_never_written_over() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path().to_string_lossy().to_string();
+        let dir = personal_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join(crate::state_dir::FORMAT_FILE), "99").unwrap();
+        std::fs::write(dir.join("order.json"), b"{\"another\":\"shape\"}").unwrap();
+
+        for _ in 0..2 {
+            assert_eq!(prepare_sidecar(root.clone()).unwrap(), SidecarState { read_only: true });
+        }
+        assert!(write_sidecar(root.clone(), "order.json".into(), "{}".into()).is_err());
+        assert!(write_sidecar(root.clone(), "favorites.json".into(), "[]".into()).is_err());
+        assert!(set_aside_sidecar(root.clone(), "order.json".into()).is_err());
+
+        assert_eq!(std::fs::read(dir.join("order.json")).unwrap(), b"{\"another\":\"shape\"}");
+        assert!(!dir.join("favorites.json").exists());
+        assert_eq!(std::fs::read_to_string(dir.join(crate::state_dir::FORMAT_FILE)).unwrap(), "99");
+    }
+
+    #[test]
+    fn settings_left_inside_the_folder_are_not_carried_into_ones_a_newer_release_saved() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path().to_string_lossy().to_string();
+        let dir = personal_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join(crate::state_dir::FORMAT_FILE), "99").unwrap();
+        let legacy = legacy_sidecar_path(tmp.path(), "favorites.json");
+        std::fs::create_dir_all(legacy.parent().unwrap()).unwrap();
+        std::fs::write(&legacy, "[\"old.md\"]").unwrap();
+
+        let moved = move_state_out_of_vault(root).unwrap();
+
+        assert!(!dir.join("favorites.json").exists());
+        assert_eq!(std::fs::read_to_string(&legacy).unwrap(), "[\"old.md\"]");
+        assert!(moved.left_behind.iter().any(|p| p.ends_with("favorites.json")), "{:?}", moved.left_behind);
+    }
+
+    #[test]
+    fn settings_left_inside_the_folder_are_still_carried_out_after_the_format_is_marked() {
+        // The marker describes the settings kept outside the folder. What an older release on
+        // another machine leaves inside a synced folder is carried out whatever the marker says.
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path().to_string_lossy().to_string();
+        prepare_sidecar(root.clone()).unwrap();
+        let legacy = legacy_sidecar_path(tmp.path(), "order.json");
+        std::fs::create_dir_all(legacy.parent().unwrap()).unwrap();
+        std::fs::write(&legacy, "{}").unwrap();
+
+        assert!(move_state_out_of_vault(root).unwrap().happened());
+        assert!(!legacy.exists());
+        assert!(!tmp.path().join(".textree").exists());
+    }
+
+    #[test]
+    fn a_settings_file_that_cannot_be_read_is_set_aside_and_kept() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path().to_string_lossy().to_string();
+        prepare_sidecar(root.clone()).unwrap();
+        write_sidecar(root.clone(), "favorites.json".into(), "{half".into()).unwrap();
+
+        let name = set_aside_sidecar(root.clone(), "favorites.json".into()).unwrap();
+
+        assert!(name.starts_with("favorites.json.unreadable-"), "{name}");
+        let dir = personal_dir(tmp.path()).unwrap();
+        assert_eq!(std::fs::read_to_string(dir.join(&name)).unwrap(), "{half");
+        assert_eq!(read_sidecar(root.clone(), "favorites.json".into()).unwrap(), None);
+        assert!(set_aside_sidecar(root, "../elsewhere".into()).is_err());
+    }
+
+    #[test]
+    fn kept_edits_come_back_as_paths_in_the_folder_they_were_typed_in() {
+        let tmp = TempDir::new().unwrap();
+        let dir = stranded_dir(tmp.path()).unwrap();
+        let kept = crate::stranded::Kept {
+            rel: "sub/a.md".into(),
+            text: "typed".into(),
+            base: "before".into(),
+            at: 1,
+        };
+        let id = crate::stranded::keep(&dir, &kept, atomic_bytes_beside).unwrap();
+
+        let back = stranded_edits(tmp.path()).unwrap();
+        assert_eq!(
+            back,
+            vec![StrandedEdit {
+                id: id.clone(),
+                path: tmp.path().join("sub").join("a.md").to_string_lossy().to_string(),
+                text: "typed".into(),
+                base: "before".into(),
+            }]
+        );
+        assert!(!tmp.path().join("stranded").exists(), "kept outside the folder, not in it");
+        crate::stranded::forget(&dir, &id).unwrap();
+        assert!(stranded_edits(tmp.path()).unwrap().is_empty());
     }
 
     #[test]
@@ -1872,6 +2432,45 @@ mod tests {
 
         // Trash holds the moved files, so nothing above depended on them still being in place.
         assert!(!root.join("kept.md").exists());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_note_another_program_looks_at_for_a_moment_is_still_deleted_and_kept() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        git2::Repository::init(root).unwrap();
+        let root_s = root.to_string_lossy().to_string();
+        let note = seed_note(root, "sub/held.md", "held a moment");
+        // Open the way a scanner does: others may read, not delete.
+        let held = std::fs::OpenOptions::new().read(true).share_mode(0x1).open(&note).unwrap();
+        let release = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(150));
+            drop(held);
+        });
+
+        delete_node(root_s.clone(), note.clone()).unwrap();
+        release.join().unwrap();
+
+        assert!(!Path::new(&note).exists());
+        let deleted = deleted_notes(root_s).unwrap();
+        assert_eq!(deleted.len(), 1, "and it can be brought back");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn negative_control_a_note_held_the_whole_time_is_not_deleted() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        git2::Repository::init(root).unwrap();
+        let root_s = root.to_string_lossy().to_string();
+        let note = seed_note(root, "sub/held.md", "held");
+        let _held = std::fs::OpenOptions::new().read(true).share_mode(0x1).open(&note).unwrap();
+
+        assert!(delete_node(root_s, note.clone()).is_err(), "the system refuses while it is held");
+        assert!(Path::new(&note).exists());
     }
 
     #[test]

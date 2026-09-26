@@ -195,7 +195,10 @@ class ChatStore {
         // ref to the pushed object is the un-proxied original and is NOT reactive.
         if (e.kind === 'token') this.turns[assistantIdx].text += e.text;
         else if (e.kind === 'citations') this.turns[assistantIdx].citations = extractCitations(e.hits);
-        else if (e.kind === 'done') this.status = 'done';
+        else if (e.kind === 'done') {
+          if (e.reason) this.turns[assistantIdx].end = e.reason;
+          this.status = 'done';
+        }
         else if (e.kind === 'error') {
           this.status = 'error';
           this.errorMessage = e.message;

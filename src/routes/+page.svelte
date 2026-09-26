@@ -27,6 +27,10 @@
     prepareAiModel,
     openLogDir,
     moveStateOutOfVault,
+    prepareSidecar,
+    keepStranded,
+    forgetStranded,
+    listStranded,
     type TreeNode,
     type SearchHit,
     type MoveOut,
@@ -68,6 +72,7 @@
   import { buildCommands, activeCommands, type PaletteActions } from "$lib/commands";
   import { matchKeybinding, isFormFieldTag } from "$lib/keybinding.helpers";
   import { mergeOrder, nav } from "$lib/nav.svelte";
+  import { describeSettingsOnOpen } from "$lib/settingsFile.helpers";
   import { moveInArray, findFirstOpenableNote } from "$lib/nav.helpers";
   import { checkForUpdate, type UpdateInfo } from "$lib/updater";
   import UpdateBanner from "$lib/UpdateBanner.svelte";
@@ -122,6 +127,9 @@
         createNoteWithContent(vault, vault, noteStem(path), text),
       ),
     landedOnOpen: (text) => applyReload(text),
+    // Edits to a note left that could not be written yet outlast the app: kept with its settings.
+    keepStranded: (vault, e) => keepStranded(vault, e.path, e.text, e.base),
+    forgetStranded,
     moved: (remap) => {
       if (!activePath) return;
       const to = remap(activePath);
@@ -176,6 +184,9 @@
   // Saved views whose folder key doesn't belong to this vault root (moved vault / other device).
   // Surfaced so the views don't appear to silently vanish; reset per vault load.
   let dismissedForeignViews = $state(false);
+  // What opening the folder's settings found: saved by a newer release (kept as they are), or files
+  // that could not be read (kept aside, defaults used). Said once per open, dismissible.
+  let settingsNotice = $state<string | null>(null);
   let showForeignViews = $derived(views.foreignFolders.length > 0 && !dismissedForeignViews);
 
   // External change (M3) state.
@@ -229,13 +240,30 @@
     if (activePath) save.schedule(activePath, text);
   }
 
+  // Counts openings. Opening no longer holds the window, so a folder that is slow to answer can be
+  // left for another one — and then the later opening is the one that counts.
+  let vaultLoads = 0;
+
   /** Open a vault path and load the tree (separate from the dialog — reused by the test bridge). */
-  /** Returns false when the switch did not happen: the open note's edits are not saved yet. */
+  /** Returns false when the switch did not happen: the open note's edits are not saved yet, or
+   *  another folder was opened before this one answered. */
   async function loadVault(path: string): Promise<boolean> {
     // preserve unsaved edits before switching vault
     if ((await save.beforeLeaving()) !== "saved") return false;
+    const mine = ++vaultLoads;
     root = path;
-    tree = await openVault(path);
+    let opened: TreeNode[];
+    try {
+      opened = await openVault(path);
+    } catch (e) {
+      if (mine !== vaultLoads) return false; // overtaken: what it says is about a folder left behind
+      throw e;
+    }
+    // Each step below puts something of this folder on screen; once a later opening has started,
+    // none of it is wanted.
+    const overtaken = () => mine !== vaultLoads;
+    if (overtaken()) return false;
+    tree = opened;
     // When the vault changes, the previous vault's selection, open note, and edit-mode context are invalid.
     // If not cleared, a stale selectedNode would wrongly target the previous vault's path as the
     // parent for creation/move, sending operations to the wrong location or failing.
@@ -251,13 +279,37 @@
     // version, and this is what carries them out. Keeping every file is its own guarantee.
     try {
       const moved = await moveStateOutOfVault(path);
+      if (overtaken()) return false;
       movedOut = worthShowing(moved) ? moved : null;
     } catch (e) {
+      if (overtaken()) return false;
       // A folder that could not be tidied still opens; the notes are what matter.
       opError = friendlyError(e);
     }
-    await nav.load(path); // load favorites/order settings
-    await views.load(path); // load saved folder views (views.json, kept with the app)
+    // Settings a newer release saved are shown as defaults and never written over.
+    let readOnly = false;
+    try {
+      readOnly = (await prepareSidecar(path)).readOnly;
+    } catch (e) {
+      opError = friendlyError(e); // the folder still opens; writing is refused where it must be
+    }
+    if (overtaken()) return false;
+    const setAside = await nav.load(path, readOnly); // load favorites/order settings
+    const viewsSetAside = await views.load(path, readOnly); // saved folder views (views.json)
+    if (viewsSetAside) setAside.push(viewsSetAside);
+    if (overtaken()) return false;
+    settingsNotice = describeSettingsOnOpen(readOnly, setAside);
+    // Edits an earlier run could not write to this folder's notes: try them now.
+    try {
+      const kept = await listStranded(path);
+      if (overtaken()) return false;
+      if (kept.length > 0) {
+        save.adopt(path, kept);
+        void save.flush();
+      }
+    } catch (e) {
+      console.warn("Could not read edits kept from an earlier run:", e);
+    }
     dismissedForeignViews = false; // re-evaluate the foreign-views notice for the new vault
     return true;
   }
@@ -308,13 +360,20 @@
     }
   }
 
+  // True while a publish (to a folder or to the web) is in flight — shows the "Publishing…" banner
+  // and keeps a second publish from starting alongside it.
+  let publishing = $state(false);
+
   /**
    * Publish the open vault to a static site at `out` (outside the vault). Read-only over the
    * source. The app's tokens are rewritten for prefers-color-scheme so the site auto-themes.
    * Split from the folder picker so the E2E bridge can drive it without the native dialog.
    */
   async function publishToDir(out: string) {
-    if (!root) return;
+    // Same busy flag as publishing to the web: the render can take a while (the first one after
+    // install reads the renderer's files cold), and without it nothing on screen says it started.
+    if (!root || publishing) return;
+    publishing = true;
     publishNotice = null;
     try {
       const result = await publishSite(root, out, {
@@ -331,11 +390,13 @@
         text: `Publish failed: ${fe.summary}`,
         detail: fe.raw !== fe.summary ? fe.raw : undefined,
       };
+    } finally {
+      publishing = false;
     }
   }
 
   async function choosePublishTarget() {
-    if (!root) return;
+    if (!root || publishing) return;
     const out = await open({
       directory: true,
       multiple: false,
@@ -344,7 +405,6 @@
     if (typeof out === "string") await publishToDir(out);
   }
 
-  let cloudPublishing = $state(false);
   // True while the browser OAuth round-trip (connect_publish) is in flight — shows a distinct
   // "Connecting…" banner instead of "Publishing…".
   let cloudConnecting = $state(false);
@@ -355,11 +415,11 @@
    * source (same canopy render as the local publish).
    */
   async function publishToWeb() {
-    if (!root || cloudPublishing) return;
+    if (!root || publishing) return;
     // Claim the busy flag synchronously, before the first await, so two rapid invocations can't both
     // pass the guard and start concurrent uploads. `finally` resets it on every path (including the
     // no-token early return below).
-    cloudPublishing = true;
+    publishing = true;
     publishNotice = null;
     try {
       // First-time publish: no token yet → run the in-app sign-in (browser OAuth loopback + PKCE)
@@ -378,7 +438,7 @@
       publishNotice = { ...cloudPublishErrorNotice(e), onRetry: () => void publishToWeb() };
     } finally {
       cloudConnecting = false;
-      cloudPublishing = false;
+      publishing = false;
     }
   }
 
@@ -431,8 +491,10 @@
     }
     try {
       const vault = root;
-      await save.move(async () =>
-        remapRenamed(node.path, await renameNode(vault, node.path, name), node.kind !== "leaf"),
+      await save.move(
+        async () =>
+          remapRenamed(node.path, await renameNode(vault, node.path, name), node.kind !== "leaf"),
+        node.path,
       );
       await refreshTree();
       selectedNode = null;
@@ -474,7 +536,7 @@
       await save.move(async () => {
         newPath = await renameNoteUnique(vault, pathToRename, candidate);
         return remapRenamed(pathToRename, newPath, false);
-      });
+      }, pathToRename);
       await refreshTree();
       if (activePath === newPath) selectedNode = null; // still on the renamed note
       opError = null;
@@ -518,8 +580,10 @@
     try {
       const vault = root;
       // The open note, if it is the renamed one or inside it, stays open at its new path.
-      await save.move(async () =>
-        remapRenamed(node.path, await renameNode(vault, node.path, name), node.kind !== "leaf"),
+      await save.move(
+        async () =>
+          remapRenamed(node.path, await renameNode(vault, node.path, name), node.kind !== "leaf"),
+        node.path,
       );
       await refreshTree();
       selectedNode = null;
@@ -648,7 +712,7 @@
       await save.move(async () => {
         newDir = await promoteNode(vault, leaf);
         return remapPromoted(leaf, newDir);
-      });
+      }, leaf);
       await refreshTree();
       selectedNode = null;
       void createNewNote(newDir); // target the new container
@@ -756,7 +820,7 @@
       const vault = root;
       await save.move(async () => {
         return remapMoved(src, await moveNode(vault, src, destDir));
-      });
+      }, src);
       await refreshTree();
       selectedNode = null;
       opError = null;
@@ -787,7 +851,7 @@
       const vault = root;
       await save.move(async () => {
         return remapAdopted(src, leaf, await adoptNode(vault, src, leaf));
-      });
+      }, [src, leaf]);
       await refreshTree();
       selectedNode = null;
       opError = null;
@@ -1313,7 +1377,7 @@
 
     const win = getCurrentWindow();
     const unlistenClose = win.onCloseRequested(async (event) => {
-      if (!save.pending && save.stranded === 0) return; // nothing to save → proceed with default close
+      if (!save.pending && save.stranded === 0 && save.writing === 0) return; // nothing to save → proceed with default close
       event.preventDefault();
       // Unsaved edits keep the window open, with the banner or warning saying why (see beforeClosing).
       if ((await save.beforeClosing()) === "close") await win.destroy();
@@ -1484,7 +1548,7 @@
     {#if updateInfo}
       <UpdateBanner info={updateInfo} />
     {/if}
-    {#if cloudPublishing}
+    {#if publishing}
       <div class="publish-banner publishing" role="status" aria-busy="true">
         <span>{cloudConnecting ? "Connecting… (sign in in the browser window that opened)" : "Publishing…"}</span>
       </div>
@@ -1548,6 +1612,18 @@
             </button>
           </li>
         </ul>
+      </div>
+    {/if}
+    {#if root && settingsNotice}
+      <div class="conflict-banner" role="status" aria-label="Settings" data-testid="settings-notice">
+        <div class="conflict-head">
+          <span>⚠ {settingsNotice}</span>
+          <button
+            class="banner-dismiss"
+            onclick={() => (settingsNotice = null)}
+            aria-label="Dismiss"
+          >×</button>
+        </div>
       </div>
     {/if}
     {#if root && showForeignViews}
@@ -1631,7 +1707,17 @@
         {/if}
         <div class="title-tools">
           {#if !saveState.saveError && !saveState.removed}
-            <span class="status">{saveState.dirty ? "● Saving…" : "Saved"}</span>
+            <span
+              class="status"
+              data-testid="save-status"
+              title={saveState.stalled
+                ? "Your edits are kept and will be written as soon as the folder responds."
+                : undefined}
+            >{saveState.stalled
+                ? "● Still saving — the folder isn't answering"
+                : saveState.dirty
+                  ? "● Saving…"
+                  : "Saved"}</span>
           {/if}
           <button
             class="icon-btn read-toggle"

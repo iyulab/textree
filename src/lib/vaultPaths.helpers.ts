@@ -7,6 +7,9 @@ import type { Remap } from "./noteSave";
 
 const normalize = (p: string) => p.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
 
+/** One key per place: two spellings {@link samePath} equates give the same key. */
+export const pathKey = normalize;
+
 /** Is `child` equal to or below `ancestor`. */
 export function pathInside(child: string, ancestor: string): boolean {
   const c = normalize(child);

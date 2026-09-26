@@ -9,9 +9,13 @@ mod gate_deletion_recoverable;
 #[cfg(test)]
 mod gate_foreground_latency;
 #[cfg(test)]
+mod gate_history_kept;
+#[cfg(test)]
 mod gate_staging_untouched;
 #[cfg(test)]
 mod gate_vault_untouched;
+#[cfg(test)]
+mod gate_write_interrupted;
 pub(crate) mod git_engine;
 pub(crate) mod pathsafe;
 pub(crate) mod process_ext;
@@ -24,6 +28,10 @@ mod telemetry;
 pub(crate) mod vault;
 pub(crate) mod watcher;
 pub(crate) mod liveness;
+pub(crate) mod note_locks;
+pub(crate) mod state_dir;
+pub(crate) mod stranded;
+pub(crate) mod tree_commands;
 
 use host::HostHandle;
 use search::IndexHandle;
@@ -83,38 +91,44 @@ pub fn run() {
         })
         // Managed via Arc so the watcher thread and the write_note command share one registry.
         .manage(Arc::new(SelfWrites::default()))
+        .manage(Arc::new(note_locks::NoteLocks::default()))
         .manage(WatcherHandle::default())
         .manage(Arc::new(IndexHandle::default()))
         .manage(Arc::new(HostHandle::default()))
         .invoke_handler(tauri::generate_handler![
-            commands::open_vault,
+            tree_commands::open_vault,
             commands::list_tree,
             commands::read_note,
             commands::write_note,
-            commands::commit_notes,
-            commands::note_versions,
-            commands::note_version_text,
-            commands::deleted_notes,
-            commands::restore_deleted,
-            commands::restore_version,
-            commands::move_state_out_of_vault,
-            commands::create_note,
-            commands::create_untitled_note,
-            commands::create_note_with_content,
-            commands::create_folder,
-            commands::promote_node,
-            commands::delete_node,
-            commands::rename_node,
-            commands::rename_note_unique,
-            commands::move_node,
-            commands::adopt_node,
-            commands::save_attachment,
+            tree_commands::commit_notes,
+            tree_commands::note_versions,
+            tree_commands::note_version_text,
+            tree_commands::deleted_notes,
+            tree_commands::restore_deleted,
+            tree_commands::restore_version,
+            tree_commands::move_state_out_of_vault,
+            tree_commands::create_note,
+            tree_commands::create_untitled_note,
+            tree_commands::create_note_with_content,
+            tree_commands::create_folder,
+            tree_commands::promote_node,
+            tree_commands::delete_node,
+            tree_commands::rename_node,
+            tree_commands::rename_note_unique,
+            tree_commands::move_node,
+            tree_commands::adopt_node,
+            tree_commands::save_attachment,
             commands::read_sidecar,
             commands::write_sidecar,
+            commands::prepare_sidecar,
+            commands::set_aside_sidecar,
+            commands::keep_stranded,
+            commands::forget_stranded,
+            commands::list_stranded,
             commands::search_content,
-            commands::rebuild_index,
-            commands::publish_site,
-            commands::publish_to_cloud,
+            tree_commands::rebuild_index,
+            tree_commands::publish_site,
+            tree_commands::publish_to_cloud,
             cloud_auth::connect_publish,
             commands::ensure_default_vault,
             commands::open_log_dir,

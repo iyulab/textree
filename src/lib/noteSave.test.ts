@@ -1,5 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { initialNoteSaveState, NoteSave, type LeaveQuestion, type NoteSaveState } from "./noteSave";
+import {
+  initialNoteSaveState,
+  NoteSave,
+  type LeaveQuestion,
+  type NoteSaveDeps,
+  type NoteSaveState,
+} from "./noteSave";
 import type { WriteOutcome } from "./ipc";
 
 interface Call {
@@ -10,7 +16,7 @@ interface Call {
 }
 
 /** A disk whose writes finish only when the test says so, in any order it chooses. */
-function harness(opts: { active?: string } = {}) {
+function harness(opts: { active?: string; deps?: Partial<NoteSaveDeps> } = {}) {
   let active: string | null = opts.active ?? "A.md";
   const calls: Call[] = [];
   const asked: LeaveQuestion[] = [];
@@ -38,6 +44,7 @@ function harness(opts: { active?: string } = {}) {
       copies.push({ path, text });
       return path.replace(/\.md$/, " (2).md");
     },
+    ...opts.deps,
   });
   return {
     save,
@@ -57,7 +64,7 @@ const written: WriteOutcome = { kind: "written" };
 
 /** Let queued promise callbacks run (the save chain hops a few microtasks between writes). */
 async function settle() {
-  for (let i = 0; i < 10; i++) await Promise.resolve();
+  for (let i = 0; i < 30; i++) await Promise.resolve();
 }
 
 beforeEach(() => vi.useFakeTimers());
@@ -362,6 +369,44 @@ describe("NoteSave — switching notes", () => {
     expect(await second).toBe("close");
   });
 
+  it("a write that never returns does not keep the app from closing: it warns once, then closes", async () => {
+    const hung: string[] = [];
+    const save = new NoteSave(initialNoteSaveState(), {
+      root: () => "/v",
+      activePath: () => "A.md",
+      // The folder stopped answering: the write neither lands nor fails.
+      write: (_r, path) => {
+        hung.push(path);
+        return new Promise<WriteOutcome>(() => {});
+      },
+      closeWaitMs: 10,
+    });
+    save.opened("a0");
+    save.schedule("A.md", "a1");
+
+    const first = save.beforeClosing();
+    await vi.advanceTimersByTimeAsync(10);
+    expect(await first).toBe("stay");
+    expect(save.state.saveError?.summary).toContain("still being written");
+    expect(save.state.saveError?.summary).toContain("Close again");
+    expect(hung).toEqual(["A.md"]);
+
+    const second = save.beforeClosing();
+    await vi.advanceTimersByTimeAsync(10);
+    expect(await second).toBe("close");
+  });
+
+  it("a write that comes back while the close waits is not mistaken for a stuck one", async () => {
+    const h = harness();
+    h.save.opened("a0");
+    h.save.schedule("A.md", "a1");
+    const closing = h.save.beforeClosing();
+    await settle();
+    h.calls[0].settle(written);
+    expect(await closing).toBe("close");
+    expect(h.state.saveError).toBeNull();
+  });
+
   it("a later close warns again about edits kept after an earlier warning was answered", async () => {
     let active: string | null = "A.md";
     // Only the notes being left refuse the write; the open one saves fine, so a "stay" can only come
@@ -600,12 +645,15 @@ describe("NoteSave — unsaved marker", () => {
     expect(h.state.dirty).toBe(false);
   });
 
-  it("an edit to the note being left does not mark the next one unsaved", async () => {
+  it("an edit to the note being left does not mark the next one unsaved, and goes on its way", async () => {
     const h = harness();
     h.save.schedule("A.md", "a1");
     h.open("B.md", "b0");
     expect(h.state.dirty).toBe(false);
-    expect(h.save.pending?.path).toBe("A.md");
+    expect(h.save.pending).toBeNull(); // no longer the open note's: an edit to a note left
+    expect(h.save.writing).toBe(1);
+    await settle();
+    expect(h.calls.map((c) => [c.path, c.text])).toEqual([["A.md", "a1"]]);
   });
 
   it("follows the open note through a move", async () => {
@@ -613,5 +661,342 @@ describe("NoteSave — unsaved marker", () => {
     h.save.schedule("A.md", "a1");
     await h.save.move(async () => (p) => (p === "A.md" ? "dest/A.md" : p));
     expect(h.state.dirty).toBe(true);
+  });
+});
+
+describe("NoteSave — saves to different notes", () => {
+  it("edits typed while a save runs, then left, are written on top of that save — not kept as a copy", async () => {
+    const h = harness();
+    h.save.opened("a0");
+    h.save.schedule("A.md", "a1");
+    void h.save.flush();
+    await settle();
+    h.save.schedule("A.md", "a2"); // typed while "a1" is being written
+    h.open("B.md", "b0");
+    h.save.schedule("B.md", "b1"); // the edits to A are sent on their way
+    await settle();
+    h.calls[0].settle(written);
+    await settle();
+    const second = h.calls.find((c) => c.path === "A.md" && c.text === "a2");
+    // It started from what the note held before "a1" — but "a1" is its own earlier edit, not a
+    // change made elsewhere, so it replaces "a1".
+    expect(second).toMatchObject({ expected: "a1" });
+    expect(h.copies).toEqual([]);
+  });
+
+  it("a save to one note that never comes back does not hold up another note's", async () => {
+    const h = harness();
+    h.save.opened("a0");
+    h.save.schedule("A.md", "a1");
+    void h.save.flush();
+    await settle();
+    h.open("B.md", "b0");
+    h.save.schedule("B.md", "b1");
+    vi.advanceTimersByTime(500);
+    await settle();
+    expect(h.calls.map((c) => [c.path, c.text])).toEqual([
+      ["A.md", "a1"],
+      ["B.md", "b1"],
+    ]);
+  });
+
+  it("an edit already being written is not written a second time when its note is left", async () => {
+    const h = harness();
+    h.save.opened("a0");
+    h.save.schedule("A.md", "a1");
+    void h.save.flush();
+    await settle();
+    h.open("B.md", "b0");
+    h.save.schedule("B.md", "b1"); // would send A's edit again
+    await settle();
+    h.calls[0].settle(written);
+    await settle();
+    expect(h.calls.filter((c) => c.path === "A.md")).toHaveLength(1);
+  });
+
+  it("a move waits only for saves to what it moves", async () => {
+    const h = harness();
+    h.save.opened("a0");
+    h.save.schedule("A.md", "a1");
+    void h.save.flush();
+    await settle(); // A's save hangs
+    h.open("B.md", "b0");
+    let moved = false;
+    await h.save.move(async () => {
+      moved = true;
+      return (p) => p;
+    }, "B.md");
+    expect(moved).toBe(true);
+
+    let movedA = false;
+    const movingA = h.save.move(async () => {
+      movedA = true;
+      return (p) => p;
+    }, "A.md");
+    await settle();
+    expect(movedA).toBe(false); // not while a save to it is still running
+    h.calls[0].settle(written);
+    await movingA;
+    expect(movedA).toBe(true);
+  });
+
+  it("edits to a note left while it is being moved go where it went", async () => {
+    const h = harness();
+    h.save.opened("a0");
+    let finishMove!: () => void;
+    const moving = h.save.move(
+      () => new Promise((resolve) => (finishMove = () => resolve((p) => p.replace("A.md", "dest/A.md")))),
+      "A.md",
+    );
+    h.save.schedule("A.md", "typed");
+    h.open("B.md", "b0");
+    h.save.schedule("B.md", "b1"); // A's edits are queued while the move runs
+    await settle();
+    expect(h.calls.some((c) => c.path === "A.md")).toBe(false);
+    finishMove();
+    await moving;
+    await settle();
+    expect(h.calls.find((c) => c.text === "typed")).toMatchObject({ path: "dest/A.md" });
+  });
+
+  it("kept edits whose note was moved are tried at its new place", async () => {
+    const h = harness();
+    h.save.opened("a0");
+    h.save.schedule("A.md", "a1");
+    h.open("B.md", "b0");
+    h.save.schedule("B.md", "b1");
+    await settle();
+    h.calls[0].settle(new Error("disk full")); // A's edits are kept
+    await settle();
+    expect(h.save.stranded).toBe(1);
+    await h.save.move(async () => (p) => p.replace("A.md", "dest/A.md"), "A.md");
+    void h.save.flush();
+    await settle();
+    expect(h.calls.at(-1)).toMatchObject({ path: "dest/A.md", text: "a1" });
+  });
+});
+
+describe("NoteSave — a folder that stops answering", () => {
+  it("a save running past the threshold says so, and stops saying so when it lands", async () => {
+    const h = harness();
+    h.save.opened("a0");
+    h.save.schedule("A.md", "a1");
+    void h.save.flush();
+    await settle();
+    vi.advanceTimersByTime(9_999);
+    expect(h.state.stalled).toBe(false);
+    vi.advanceTimersByTime(1);
+    expect(h.state.stalled).toBe(true);
+    h.calls[0].settle(written);
+    await settle();
+    expect(h.state.stalled).toBe(false);
+  });
+
+  it("leaving a note whose save has stalled goes ahead, and the edits land once, when the folder answers", async () => {
+    const h = harness();
+    h.save.opened("a0");
+    h.save.schedule("A.md", "a1");
+    void h.save.flush();
+    await settle();
+    vi.advanceTimersByTime(10_000);
+    // Leaving waits for nothing more: the save is on its way, and the note cannot take it any sooner.
+    expect(await h.save.beforeLeaving()).toBe("busy");
+
+    h.open("B.md", "b0");
+    expect(h.state.stalled).toBe(false); // what is on screen now is saving fine
+    h.save.schedule("B.md", "b1");
+    await settle();
+    h.calls[0].settle(written);
+    await settle();
+    expect(h.calls.filter((c) => c.path === "A.md")).toHaveLength(1);
+    expect(h.copies).toEqual([]);
+    expect(h.save.stranded).toBe(0);
+  });
+
+  it("leaving the next note is not held by the stalled one left before it", async () => {
+    const h = harness();
+    h.save.opened("a0");
+    h.save.schedule("A.md", "a1");
+    void h.save.flush();
+    await settle();
+    vi.advanceTimersByTime(10_000);
+    expect(await h.save.beforeLeaving()).toBe("busy");
+    h.open("B.md", "b0"); // nothing typed here
+
+    // Opening a third note, renaming this one: B has nothing unsaved, so nothing to wait for.
+    expect(await h.save.beforeLeaving()).toBe("saved");
+    expect(h.save.writing).toBe(1); // A's save, still on its way
+
+    h.calls[0].settle(written);
+    await settle();
+    expect(h.calls.filter((c) => c.path === "A.md")).toHaveLength(1);
+    expect(h.copies).toEqual([]);
+    expect(h.save.writing).toBe(0);
+  });
+
+  it("the edits of a stalled note left behind are kept if the folder then refuses them", async () => {
+    const h = harness();
+    h.save.opened("a0");
+    h.save.schedule("A.md", "a1");
+    void h.save.flush();
+    await settle();
+    vi.advanceTimersByTime(10_000);
+    expect(await h.save.beforeLeaving()).toBe("busy");
+    h.open("B.md", "b0");
+    h.save.schedule("B.md", "b1");
+    await settle();
+    h.calls[0].settle(new Error("network path not found"));
+    await settle();
+    expect(h.save.stranded).toBe(1);
+    expect(h.state.saveError?.summary).toMatch(/not saved yet/);
+  });
+
+  it("a save to a note already left that hangs is not shown on the note that is open", async () => {
+    const h = harness();
+    h.save.opened("a0");
+    h.save.schedule("A.md", "a1");
+    h.open("B.md", "b0");
+    h.save.schedule("B.md", "b1"); // A's edits go on their way and hang
+    await settle();
+    vi.advanceTimersByTime(10_000);
+    expect(h.state.stalled).toBe(false);
+  });
+
+  it("closing waits for a save still on its way to a note already left", async () => {
+    const h = harness();
+    h.save.opened("a0");
+    h.save.schedule("A.md", "a1");
+    h.open("B.md", "b0");
+    h.save.schedule("B.md", "b1");
+    vi.advanceTimersByTime(500);
+    await settle();
+    h.calls.find((c) => c.path === "B.md")!.settle(written);
+    await settle();
+    expect(h.save.pending).toBeNull();
+    expect(h.save.writing).toBe(1); // A's save, hanging
+
+    const closing = h.save.beforeClosing();
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(await closing).toBe("stay");
+    expect(h.state.saveError?.summary).toMatch(/still being written/);
+    const again = h.save.beforeClosing(); // the second close is not held past the wait
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(await again).toBe("close");
+  });
+});
+
+/** Where kept edits outlast the app, in memory: id → what was kept. */
+function outlasting() {
+  const kept = new Map<string, { root: string; path: string; text: string; base: string }>();
+  const forgotten: string[] = [];
+  let next = 0;
+  return {
+    kept,
+    forgotten,
+    deps: {
+      keepStranded: async (root: string, e: { path: string; text: string; base: string }) => {
+        const id = `k${++next}`;
+        kept.set(id, { root, ...e });
+        return id;
+      },
+      forgetStranded: async (_root: string, id: string) => {
+        kept.delete(id);
+        forgotten.push(id);
+      },
+    } satisfies Partial<NoteSaveDeps>,
+  };
+}
+
+describe("NoteSave — edits kept past closing the app", () => {
+  it("edits to a note left that cannot be written are kept outside the app, and let go of once they land", async () => {
+    const o = outlasting();
+    const h = harness({ deps: o.deps });
+    h.save.opened("a0");
+    h.save.schedule("A.md", "a1");
+    h.open("B.md", "b0");
+    await settle();
+    h.calls[0].settle(new Error("network path not found"));
+    await settle();
+    expect([...o.kept.values()]).toEqual([{ root: "/vault", path: "A.md", text: "a1", base: "a0" }]);
+
+    void h.save.flush();
+    await settle();
+    h.calls.at(-1)!.settle(written);
+    await settle();
+    expect(o.kept.size).toBe(0);
+    expect(h.save.stranded).toBe(0);
+  });
+
+  it("closing with such edits kept closes at once: nothing is lost by it", async () => {
+    const o = outlasting();
+    const h = harness({ deps: o.deps });
+    h.save.opened("a0");
+    h.save.schedule("A.md", "a1");
+    h.open("B.md", "b0");
+    await settle();
+    h.calls[0].settle(new Error("network path not found"));
+    await settle();
+
+    const closing = h.save.beforeClosing();
+    await settle();
+    h.calls.at(-1)?.settle(new Error("still not found")); // the retry on the way out
+    expect(await closing).toBe("close");
+    expect(o.kept.size).toBe(1);
+  });
+
+  it("closing while a save hangs keeps it outside the app and closes the first time", async () => {
+    const o = outlasting();
+    const h = harness({ deps: { ...o.deps, closeWaitMs: 10 } });
+    h.save.opened("a0");
+    h.save.schedule("A.md", "a1");
+    void h.save.flush();
+    await settle(); // the folder never answers
+
+    const closing = h.save.beforeClosing();
+    await vi.advanceTimersByTimeAsync(10);
+    expect(await closing).toBe("close");
+    expect([...o.kept.values()].map((k) => k.text)).toEqual(["a1"]);
+  });
+
+  it("edits kept from an earlier run are tried when the folder opens, and let go of when they land", async () => {
+    const o = outlasting();
+    const h = harness({ deps: o.deps });
+    h.open("B.md", "b0");
+    h.save.adopt("/vault", [{ id: "old1", path: "A.md", text: "a1", base: "a0" }]);
+    expect(h.save.stranded).toBe(1);
+
+    void h.save.flush();
+    await settle();
+    expect(h.calls.at(-1)).toMatchObject({ path: "A.md", text: "a1", expected: "a0" });
+    h.calls.at(-1)!.settle(written);
+    await settle();
+    expect(o.forgotten).toEqual(["old1"]);
+    expect(h.save.stranded).toBe(0);
+  });
+
+  it("a kept edit the note already holds is taken as landed, not kept as a copy", async () => {
+    // The save the app closed on landed after all, before it exited.
+    const o = outlasting();
+    const h = harness({ deps: o.deps });
+    h.open("B.md", "b0");
+    h.save.adopt("/vault", [{ id: "old1", path: "A.md", text: "a1", base: "a0" }]);
+    void h.save.flush();
+    await settle();
+    h.calls.at(-1)!.settle({ kind: "conflict", disk: "a1" });
+    await settle();
+    expect(h.copies).toEqual([]);
+    expect(o.forgotten).toEqual(["old1"]);
+    expect(h.state.saveError).toBeNull();
+  });
+
+  it("a kept edit whose note is moved is kept again under its new place", async () => {
+    const o = outlasting();
+    const h = harness({ deps: o.deps });
+    h.open("B.md", "b0");
+    h.save.adopt("/vault", [{ id: "old1", path: "A.md", text: "a1", base: "a0" }]);
+    await h.save.move(async () => (p) => p.replace("A.md", "dest/A.md"), "A.md");
+    await settle();
+    expect(o.forgotten).toEqual(["old1"]);
+    expect([...o.kept.values()]).toEqual([{ root: "/vault", path: "dest/A.md", text: "a1", base: "a0" }]);
   });
 });

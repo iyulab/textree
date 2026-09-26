@@ -518,6 +518,20 @@ pub fn commit_paths(
     committer: &Signature<'_>,
     unchanged: WhenUnchanged,
 ) -> Result<Option<Oid>, git2::Error> {
+    advancing(|| {
+        commit_paths_once(repo, reference, entries, message, author, committer, unchanged)
+    })
+}
+
+fn commit_paths_once(
+    repo: &Repository,
+    reference: &str,
+    entries: &[(PathBuf, Vec<u8>)],
+    message: &str,
+    author: &Signature<'_>,
+    committer: &Signature<'_>,
+    unchanged: WhenUnchanged,
+) -> Result<Option<Oid>, git2::Error> {
     if entries.is_empty() {
         return Err(git2::Error::from_str("nothing to commit"));
     }
@@ -566,7 +580,7 @@ pub fn commit_paths(
     // Passing `None` as the update target keeps libgit2 from moving any reference on our
     // behalf: only the reference named by the caller is advanced, below.
     let commit = repo.commit(None, author, committer, &message, &tree, &parents)?;
-    repo.reference(reference, commit, true, &message)?;
+    advance(repo, reference, commit, parent.as_ref().map(|c| c.id()), &message)?;
     Ok(Some(commit))
 }
 
@@ -605,10 +619,22 @@ pub fn move_recorded(
     author: &Signature<'_>,
     committer: &Signature<'_>,
 ) -> Result<Option<Oid>, git2::Error> {
-    let Some(base) = tip_tree(repo, reference) else {
+    advancing(|| move_recorded_once(repo, reference, moves, author, committer))
+}
+
+fn move_recorded_once(
+    repo: &Repository,
+    reference: &str,
+    moves: &[(PathBuf, PathBuf)],
+    author: &Signature<'_>,
+    committer: &Signature<'_>,
+) -> Result<Option<Oid>, git2::Error> {
+    // The tip is read once: the moves are applied to its tree, and the revision is written on top
+    // of that same tip or not at all (see [`advance`]).
+    let Some(parent) = repo.find_reference(reference).and_then(|r| r.peel_to_commit()).ok() else {
         return Ok(None);
     };
-    let mut tree = base;
+    let mut tree = parent.tree()?;
     let mut moved_any = false;
     let mut described: Vec<String> = Vec::new();
 
@@ -645,11 +671,75 @@ pub fn move_recorded(
         return Ok(None);
     }
 
-    let parent = repo.find_reference(reference)?.peel_to_commit()?;
     let message = format!("moved {}", described.join(", "));
     let commit = repo.commit(None, author, committer, &message, &tree, &[&parent])?;
-    repo.reference(reference, commit, true, &message)?;
+    advance(repo, reference, commit, Some(parent.id()), &message)?;
     Ok(Some(commit))
+}
+
+/// How many times a revision is rebuilt when another one reached the reference first.
+const ADVANCE_ATTEMPTS: u32 = 8;
+
+/// Writers of a reference in this process, one at a time. Only the repository work runs under it
+/// — reading the tip, building the tree, writing the objects — never a read of the notes folder,
+/// which callers do before, so a folder that stops answering does not hold it.
+static REFERENCE_WRITERS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Builds and lands a revision, again while it loses the race for the reference (see
+/// [`advance`]). Each attempt reads the tip afresh, so the revision that finally lands is built on
+/// everything before it.
+///
+/// Writers in this process take turns ([`REFERENCE_WRITERS`]); the check in [`advance`] is what
+/// covers everything else that can move the reference — another instance of the app, or git
+/// itself — and the retry is for those.
+fn advancing<T>(mut attempt: impl FnMut() -> Result<T, git2::Error>) -> Result<T, git2::Error> {
+    let mut tries = 1;
+    loop {
+        let result = {
+            let _turn = REFERENCE_WRITERS.lock().unwrap_or_else(|e| e.into_inner());
+            attempt()
+        };
+        match result {
+            Err(e) if lost_race(&e) && tries < ADVANCE_ATTEMPTS => {
+                // Spread out, so writers that collided do not collide again in step.
+                let jitter = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_or(0, |d| u64::from(d.subsec_nanos()) % 5);
+                std::thread::sleep(std::time::Duration::from_millis(u64::from(tries.min(10)) + jitter));
+                tries += 1;
+            }
+            done => return done,
+        }
+    }
+}
+
+fn lost_race(e: &git2::Error) -> bool {
+    matches!(
+        e.code(),
+        git2::ErrorCode::Modified | git2::ErrorCode::Locked | git2::ErrorCode::Exists
+    )
+}
+
+/// Points `reference` at `commit` — only if it still points at `parent`, the tip the revision
+/// was built on (or is still absent, when `parent` is `None`).
+///
+/// Two revisions built on the same tip must not both land: the second would replace the first
+/// instead of following it, and whatever the first recorded would drop out of the history — the
+/// one place a deleted note or an earlier state can be brought back from. Git's own answer is
+/// the one used here: the update names the value it expects to replace, and is refused if the
+/// reference moved meanwhile.
+fn advance(
+    repo: &Repository,
+    reference: &str,
+    commit: Oid,
+    parent: Option<Oid>,
+    message: &str,
+) -> Result<(), git2::Error> {
+    match parent {
+        Some(parent) => repo.reference_matching(reference, commit, true, parent, message),
+        None => repo.reference(reference, commit, false, message),
+    }
+    .map(drop)
 }
 
 /// Commits a single path. Convenience over [`commit_paths`] for callers with one file and no
@@ -850,6 +940,99 @@ mod tests {
 
     fn author() -> Signature<'static> {
         Signature::now("Test", "test@example.invalid").unwrap()
+    }
+
+    /// Records one note onto the notes reference.
+    fn record_note(
+        repo: &Repository,
+        rel: PathBuf,
+        body: &[u8],
+    ) -> Result<Option<Oid>, git2::Error> {
+        let entries = [(rel, body.to_vec())];
+        commit_paths(repo, NOTES_REF, &entries, "rec", &author(), &author(), WhenUnchanged::Skip)
+    }
+
+    #[test]
+    fn a_revision_built_on_an_old_tip_is_refused() {
+        let tmp = TempDir::new().unwrap();
+        let repo = Repository::init(tmp.path()).unwrap();
+        let first = record_note(&repo, PathBuf::from("a.md"), b"1").unwrap().unwrap();
+        let second = record_note(&repo, PathBuf::from("a.md"), b"2").unwrap().unwrap();
+        // Something built on `first` while `second` landed.
+        let stale = repo.find_commit(first).unwrap();
+        let orphan = repo
+            .commit(None, &author(), &author(), "late", &stale.tree().unwrap(), &[&stale])
+            .unwrap();
+        let refused = advance(&repo, NOTES_REF, orphan, Some(first), "late").unwrap_err();
+        assert!(lost_race(&refused), "{refused:?}");
+        assert_eq!(repo.refname_to_id(NOTES_REF).unwrap(), second, "the newer revision stays");
+    }
+
+    #[test]
+    fn a_first_revision_does_not_replace_one_that_appeared_meanwhile() {
+        let tmp = TempDir::new().unwrap();
+        let repo = Repository::init(tmp.path()).unwrap();
+        let there = record_note(&repo, PathBuf::from("a.md"), b"1").unwrap().unwrap();
+        let tree = repo.find_commit(there).unwrap().tree().unwrap();
+        let rival = repo.commit(None, &author(), &author(), "rival", &tree, &[]).unwrap();
+        assert!(lost_race(&advance(&repo, NOTES_REF, rival, None, "rival").unwrap_err()));
+        assert_eq!(repo.refname_to_id(NOTES_REF).unwrap(), there);
+    }
+
+    #[test]
+    fn revisions_made_at_the_same_time_all_stay_in_the_history() {
+        // Many threads record different notes onto one reference at once. Each must end up in
+        // the history: with a blind update, revisions built on the same tip replace each other.
+        let tmp = TempDir::new().unwrap();
+        Repository::init(tmp.path()).unwrap();
+        const THREADS: usize = 6;
+        const EACH: usize = 5;
+        let workers: Vec<_> = (0..THREADS)
+            .map(|t| {
+                let dir = tmp.path().to_path_buf();
+                std::thread::spawn(move || {
+                    let repo = Repository::open(&dir).unwrap();
+                    for i in 0..EACH {
+                        let rel = PathBuf::from(format!("n{t}-{i}.md"));
+                        record_note(&repo, rel, b"x").unwrap();
+                    }
+                })
+            })
+            .collect();
+        for w in workers {
+            w.join().unwrap();
+        }
+        let repo = Repository::open(tmp.path()).unwrap();
+        let mut walk = repo.revwalk().unwrap();
+        walk.push(repo.refname_to_id(NOTES_REF).unwrap()).unwrap();
+        assert_eq!(walk.count(), THREADS * EACH, "every revision is an ancestor of the tip");
+        let tree = repo.find_reference(NOTES_REF).unwrap().peel_to_tree().unwrap();
+        assert_eq!(tree.len(), THREADS * EACH, "every note is in the latest state");
+    }
+
+    #[test]
+    fn a_move_and_a_revision_made_at_the_same_time_both_stay() {
+        let tmp = TempDir::new().unwrap();
+        let repo = Repository::init(tmp.path()).unwrap();
+        record_note(&repo, PathBuf::from("old.md"), b"o").unwrap();
+        let dir = tmp.path().to_path_buf();
+        let mover = std::thread::spawn(move || {
+            let repo = Repository::open(&dir).unwrap();
+            for i in 0..10 {
+                let (from, to) = if i % 2 == 0 { ("old.md", "new.md") } else { ("new.md", "old.md") };
+                let moves = [(PathBuf::from(from), PathBuf::from(to))];
+                move_recorded(&repo, NOTES_REF, &moves, &author(), &author()).unwrap();
+            }
+        });
+        for i in 0..10 {
+            record_note(&repo, PathBuf::from(format!("k{i}.md")), b"k").unwrap();
+        }
+        mover.join().unwrap();
+        let tree = repo.find_reference(NOTES_REF).unwrap().peel_to_tree().unwrap();
+        assert!(tree.get_name("old.md").is_some(), "ten moves end where they started");
+        for i in 0..10 {
+            assert!(tree.get_name(&format!("k{i}.md")).is_some(), "k{i}.md was dropped by a move");
+        }
     }
 
     /// Signs at a stated moment, so a test can put two revisions in different seconds.

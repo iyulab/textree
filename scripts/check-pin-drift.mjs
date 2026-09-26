@@ -1,11 +1,11 @@
 /*
- * Pin drift check for the host's package families.
+ * Pin drift check for the host's sibling packages.
  *
- * The host consumes a few package families that release often and are meant to be consumed at
- * their current line. Falling behind them is silent: restore, build and tests all stay green on an
- * old pin, so the gap only grows until an upgrade becomes a migration. This compares each pin in
- * src-host/Directory.Packages.props that belongs to one of those families against the newest
- * version on nuget.org and fails when:
+ * The host consumes packages from its own publisher that release often and are meant to be
+ * consumed at their current line. Falling behind them is silent: restore, build and tests all stay
+ * green on an old pin, so the gap only grows until an upgrade becomes a migration. This compares
+ * each such pin in src-host/Directory.Packages.props against the newest version on nuget.org and
+ * fails when:
  *
  *   - the major version differs (always a human decision), or
  *   - the pin is more than MAX_MINOR_GAP minor versions behind,
@@ -17,10 +17,13 @@
  *
  * Smaller gaps are reported and pass — drift alone is not a defect, drift nobody sees is.
  *
- * Two more things are read from the restored dependency graph (src-host's project.assets.json,
- * so `dotnet restore` has to have run):
+ * Everything is read from the restored dependency graph (src-host's project.assets.json, so
+ * `dotnet restore` has to have run). A package counts as a sibling when its restored nuspec names
+ * PUBLISHER among its authors — read from the package itself rather than from a list of name
+ * prefixes kept here, because such a list silently leaves out the next sibling nobody added to it.
+ * In addition:
  *
- *   - Packages from these families that arrive only transitively — through a pinned package —
+ *   - Sibling packages that arrive only transitively — through a pinned package —
  *     are held to the same threshold. Nothing pins them, so nothing else would notice them
  *     falling behind; the fix is to move the package that brings them in.
  *   - A pinned package whose own declared floor on a sibling lags far behind that sibling's
@@ -39,12 +42,9 @@ const PROPS = join(REPO, "src-host", "Directory.Packages.props");
 const WAIVERS = join(REPO, "scripts", "pin-drift-waivers.json");
 const ASSETS = join(REPO, "src-host", "src", "Textree.Host", "obj", "project.assets.json");
 
-/** Package id prefixes whose pins are held to the current line. */
-const FAMILIES = ["FluxIndex", "FileFlux", "FluxCurator", "LMSupply", "IronProw"];
+/** The nuspec author that marks a package as a sibling, held to its current line. */
+const PUBLISHER = "iyulab";
 const MAX_MINOR_GAP = 5;
-
-/** Families that may also arrive only transitively, through a pinned package. */
-const TRANSITIVE_FAMILIES = [...FAMILIES, "IronHive", "Flux", "FluxImprover", "FluxGuard"];
 
 function parseVersion(v) {
   const [core, pre] = v.split("-", 2);
@@ -52,16 +52,15 @@ function parseVersion(v) {
   return { major, minor: minor ?? 0, patch: patch ?? 0, pre: pre ?? null, raw: v };
 }
 
-function inFamily(id, families = FAMILIES) {
-  return families.some((f) => id === f || id.startsWith(`${f}.`));
-}
-
-/** Every package the restore resolved, as id → version. */
-function readResolved() {
+function readAssets() {
   if (!existsSync(ASSETS)) {
     throw new Error(`${ASSETS} not found — run \`dotnet restore src-host/TextreeHost.slnx\` first`);
   }
-  const assets = JSON.parse(readFileSync(ASSETS, "utf8"));
+  return JSON.parse(readFileSync(ASSETS, "utf8"));
+}
+
+/** Every package the restore resolved, as id → version. */
+function readResolved(assets) {
   const resolved = new Map();
   for (const target of Object.values(assets.targets ?? {})) {
     for (const [key, entry] of Object.entries(target)) {
@@ -71,6 +70,19 @@ function readResolved() {
     }
   }
   return resolved;
+}
+
+/** Whether a restored package lists PUBLISHER among its nuspec authors. */
+function isSibling(assets, id, version) {
+  const library = assets.libraries?.[`${id}/${version}`];
+  if (!library?.path) return false;
+  for (const folder of Object.keys(assets.packageFolders ?? {})) {
+    const nuspec = join(folder, library.path, `${id.toLowerCase()}.nuspec`);
+    if (!existsSync(nuspec)) continue;
+    const authors = /<authors>([^<]*)<\/authors>/.exec(readFileSync(nuspec, "utf8"))?.[1] ?? "";
+    return authors.split(",").some((a) => a.trim().toLowerCase() === PUBLISHER);
+  }
+  throw new Error(`the restored nuspec of ${id} ${version} was not found — run \`dotnet restore src-host/TextreeHost.slnx\``);
 }
 
 /** The lower bound a package's nuspec declares on each dependency, as id → version. */
@@ -87,13 +99,20 @@ async function declaredFloors(id, version) {
   return floors;
 }
 
-function readPins() {
+function readPins(assets, resolved) {
   const xml = readFileSync(PROPS, "utf8");
   const pins = [];
   for (const m of xml.matchAll(/<PackageVersion\s+Include="([^"]+)"\s+Version="([^"]+)"/g)) {
-    if (inFamily(m[1])) pins.push({ id: m[1], version: m[2] });
+    // A pin the restore did not resolve (e.g. a test-only package outside the host project's
+    // graph) is judged by its own nuspec on disk only when it is there.
+    const version = resolved.get(m[1]) ?? m[2];
+    if (isSiblingSafe(assets, m[1], version)) pins.push({ id: m[1], version: m[2] });
   }
   return pins;
+}
+
+function isSiblingSafe(assets, id, version) {
+  return assets.libraries?.[`${id}/${version}`] ? isSibling(assets, id, version) : false;
 }
 
 function readWaivers(today) {
@@ -123,9 +142,11 @@ async function latestVersion(id, allowPrerelease) {
 
 const today = new Date().toISOString().slice(0, 10);
 const waivers = readWaivers(today);
-const pins = readPins();
+const assets = readAssets();
+const resolved = readResolved(assets);
+const pins = readPins(assets, resolved);
 if (pins.length === 0) {
-  throw new Error(`No pins from the tracked families found in ${PROPS} — the family list or the file moved`);
+  throw new Error(`No pins of ${PUBLISHER} packages found in ${PROPS} — the file moved, or the restore graph is empty`);
 }
 
 const latestCache = new Map();
@@ -168,9 +189,8 @@ for (const pin of pins) {
   if (await judge(pin.id, pin.version, "pinned")) failures++;
 }
 
-const resolved = readResolved();
 const pinnedIds = new Set(pins.map((p) => p.id));
-const transitive = [...resolved].filter(([id]) => !pinnedIds.has(id) && inFamily(id, TRANSITIVE_FAMILIES));
+const transitive = [...resolved].filter(([id, version]) => !pinnedIds.has(id) && isSibling(assets, id, version));
 for (const [id, version] of transitive) {
   if (await judge(id, version, "transitive")) failures++;
 }
@@ -179,7 +199,8 @@ for (const [id, version] of transitive) {
 for (const pin of pins) {
   const floors = await declaredFloors(pin.id, pin.version);
   for (const [dep, floor] of floors) {
-    if (!inFamily(dep, TRANSITIVE_FAMILIES)) continue;
+    const depVersion = resolved.get(dep);
+    if (!depVersion || !isSiblingSafe(assets, dep, depVersion)) continue;
     const have = parseVersion(floor);
     const latest = parseVersion(await latestOf(dep, have.pre !== null));
     const gap = latest.major !== have.major ? Infinity : latest.minor - have.minor;

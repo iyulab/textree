@@ -6,7 +6,7 @@ import {
   removeTempVault,
   dragNodeOnto,
 } from "./helpers";
-import { existsSync } from "node:fs";
+import { existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 let browser: Browser;
@@ -242,6 +242,27 @@ test("delete → the note leaves the folder (original disappears)", async () => 
   }
 });
 
+test("the key goes to the note that has focus even after a note appears above it", async () => {
+  const vault = createTempVault({ "mango.md": "mango\n", "zebra.md": "zebra\n" });
+  try {
+    await loadVault(page, vault);
+    const zebra = page.getByRole("treeitem", { name: /zebra/ });
+    await zebra.focus();
+    // A note arrives from outside and sorts above the focused one; the tree redraws around the focus.
+    writeFileSync(join(vault, "apple.md"), "apple\n");
+    await expect(page.getByRole("treeitem", { name: /apple/ })).toBeVisible();
+
+    await page.keyboard.press("Delete");
+
+    await expect(page.getByRole("treeitem", { name: /zebra/ })).toHaveCount(0);
+    expect(exists(vault, "zebra.md")).toBe(false);
+    expect(exists(vault, "apple.md")).toBe(true);
+    expect(exists(vault, "mango.md")).toBe(true);
+  } finally {
+    removeTempVault(vault);
+  }
+});
+
 test("create after vault switch targets new vault — stale selection isolation (regression)", async () => {
   // Regression: if loadVault does not clear the previous vault's selectedNode,
   // ＋note's targetParent points at the previous vault path and creates in the wrong place.
@@ -299,7 +320,8 @@ test("＋child → promote leaf then create child note", async () => {
 
     // Promote: parent.md → parent/parent.md, and create parent/child.md.
     await expect.poll(() => exists(vault, "parent/parent.md"), { timeout: 5000 }).toBe(true);
-    expect(exists(vault, "parent/child.md")).toBe(true);
+    // The title is applied by a rename after the body is saved — it lands a moment after Enter.
+    await expect.poll(() => exists(vault, "parent/child.md"), { timeout: 5000 }).toBe(true);
     expect(exists(vault, "parent.md")).toBe(false);
   } finally {
     removeTempVault(vault);

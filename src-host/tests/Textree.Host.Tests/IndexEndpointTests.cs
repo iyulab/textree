@@ -46,7 +46,7 @@ public sealed class IndexEndpointTests
         public string? LastError => null;
         public Task PrepareAsync(CancellationToken ct) => Task.CompletedTask;
 
-        public async IAsyncEnumerable<string> GenerateAsync(
+        public async IAsyncEnumerable<GenerationChunk> GenerateAsync(
             IReadOnlyList<ChatMessage> messages,
             GenerationOptions options,
             [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default)

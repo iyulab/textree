@@ -58,4 +58,35 @@ public class VaultManagerScopeTests
         // Re-indexing the same unchanged content must not grow the index (idempotent upsert).
         Assert.Equal(after1.Count, after2.Count);
     }
+
+    [Fact]
+    public async Task RememorizingAnEditedNoteReplacesItsOldPassages()
+    {
+        using var mgr = await NewManagerAsync();
+        var vault = Path.Combine(Path.GetTempPath(), "textree-test", Guid.NewGuid().ToString("n"));
+        Directory.CreateDirectory(vault);
+        var note = Path.Combine(vault, "note.md");
+        try
+        {
+            await File.WriteAllTextAsync(note, "# Migration\n\nThe zebra herd crosses the river every winter.\n");
+            await mgr.MemorizeAsync(vault, note, default);
+            var before = await mgr.SearchAsync(vault, "zebra herd river", vault, 10, default);
+            Assert.Contains(before, h => h.Snippet.Contains("zebra"));
+
+            await File.WriteAllTextAsync(note, "# Lighthouse\n\nThe keeper trims the lamp before the storm.\n");
+            await mgr.MemorizeAsync(vault, note, default);
+
+            // The file is indexed once, under its new content only: the old passage is gone
+            // rather than left beside the new one.
+            var after = await mgr.SearchAsync(vault, "zebra herd river", vault, 10, default);
+            Assert.NotEmpty(after);
+            Assert.All(after, h => Assert.DoesNotContain("zebra", h.Snippet));
+            Assert.Contains(after, h => h.Snippet.Contains("keeper"));
+        }
+        finally
+        {
+            mgr.Dispose();
+            try { Directory.Delete(vault, recursive: true); } catch (IOException) { }
+        }
+    }
 }
