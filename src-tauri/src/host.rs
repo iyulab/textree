@@ -755,8 +755,12 @@ pub enum AskEvent {
     Token { text: String },
     /// The semantic-search hits that were used to ground the answer (sent once, after Done).
     Citations { hits: Vec<SemanticHit> },
-    /// Stream complete — no more events will follow on this channel.
-    Done,
+    /// Stream complete — no more events will follow on this channel. `reason`: why the answer
+    /// ended, when it ended short of finishing — absent when it finished or nobody said.
+    Done {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        reason: Option<AnswerEnd>,
+    },
     /// A non-fatal error; the frontend should display the message to the user.
     Error { message: String },
 }
@@ -768,7 +772,40 @@ struct ChatChunk {
 }
 #[derive(Deserialize)]
 struct ChatChoice {
-    delta: ChatDelta,
+    #[serde(default)]
+    delta: Option<ChatDelta>,
+    #[serde(default)]
+    finish_reason: Option<String>,
+}
+
+/// Why an answer ended short of finishing. Only the reasons the person is told about: an answer
+/// that finished ("stop") or whose end nobody explained is told nothing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AnswerEnd {
+    /// It reached the length limit.
+    Length,
+    /// It fell into repeating itself and was stopped.
+    Degeneration,
+}
+
+impl AnswerEnd {
+    fn from_reason(reason: &str) -> Option<Self> {
+        match reason {
+            "length" => Some(Self::Length),
+            "degeneration" => Some(Self::Degeneration),
+            _ => None,
+        }
+    }
+}
+
+/// What one SSE line of an answer carries.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct ChatLine {
+    /// A piece of the answer.
+    pub text: Option<String>,
+    /// Why the answer ended, on the last line before `[DONE]`.
+    pub end: Option<AnswerEnd>,
 }
 #[derive(Deserialize)]
 struct ChatDelta {
@@ -776,27 +813,26 @@ struct ChatDelta {
     content: String,
 }
 
-/// Parse one SSE line (`"data: {...}"`) into a token string.
+/// Parse one SSE line (`"data: {...}"`): a piece of the answer, why it ended, or both.
 ///
-/// Returns `Some(text)` when the line carries a non-empty content delta.
 /// Returns `None` for:
 /// - `data: [DONE]` (stream terminator)
 /// - blank lines (SSE field separator)
 /// - non-`data:` lines (event/id/comment fields)
 /// - JSON parse failures (malformed chunk)
-/// - empty `content` field (role-only or heartbeat deltas)
-pub fn parse_chat_chunk(line: &str) -> Option<String> {
+/// - a line with neither text nor a reason told to the person (role-only, heartbeat, "stop")
+pub fn parse_chat_line(line: &str) -> Option<ChatLine> {
     let payload = line.strip_prefix("data: ")?;
     if payload.trim() == "[DONE]" {
         return None;
     }
     let chunk: ChatChunk = serde_json::from_str(payload).ok()?;
-    let text = chunk.choices.first()?.delta.content.clone();
-    if text.is_empty() {
-        None
-    } else {
-        Some(text)
-    }
+    let choice = chunk.choices.into_iter().next()?;
+    let parsed = ChatLine {
+        text: choice.delta.map(|d| d.content).filter(|t| !t.is_empty()),
+        end: choice.finish_reason.as_deref().and_then(AnswerEnd::from_reason),
+    };
+    (parsed != ChatLine::default()).then_some(parsed)
 }
 
 /// Stream a conversational response from the local-AI host's `/chat` endpoint.
@@ -804,7 +840,7 @@ pub fn parse_chat_chunk(line: &str) -> Option<String> {
 /// Events are pushed over `on_event`:
 /// 1. `Token { text }` — one per SSE delta, in order.
 /// 2. `Citations { hits }` — the pre-fetched semantic hits used to ground the answer.
-/// 3. `Done` — stream complete.
+/// 3. `Done { reason }` — stream complete, with why it ended short when the host said.
 ///
 /// On any error (host not up, connection failure, I/O) an `Error { message }` event is sent
 /// instead of Token/Citations/Done, and the command returns `Ok(())` so the frontend does
@@ -862,30 +898,33 @@ pub async fn ask(
             .send_json(payload)
             .map_err(|e| e.to_string())?;
         let reader = BufReader::new(resp.into_body().into_reader());
+        let mut end = None;
         for line in reader.lines() {
             // A newer `ask` has started — abandon this stream.
             // Dropping `reader` closes the TCP connection; the host sees RequestAborted
             // and stops generating, freeing its CPU/memory budget.
             if handle.ask_generation() != my_gen {
-                return Ok(());
+                return Ok(None);
             }
             let line = line.map_err(|e| e.to_string())?;
-            if let Some(text) = parse_chat_chunk(&line) {
+            let Some(parsed) = parse_chat_line(&line) else { continue };
+            if let Some(text) = parsed.text {
                 let _ = on_event_inner.send(AskEvent::Token { text });
             }
+            end = parsed.end.or(end);
         }
-        Ok::<(), String>(())
+        Ok::<Option<AnswerEnd>, String>(end)
     })
     .await
     .map_err(|e| e.to_string())?;
 
     match result {
-        Ok(()) => {
+        Ok(reason) => {
             // Guard against sending Citations/Done on a superseded channel (cancelled ask).
             // If another ask has since started, our channel is stale — skip the epilogue.
             if host.ask_generation() == my_gen {
                 let _ = on_event.send(AskEvent::Citations { hits: citation_hits });
-                let _ = on_event.send(AskEvent::Done);
+                let _ = on_event.send(AskEvent::Done { reason });
             }
         }
         Err(e) => {
@@ -1218,17 +1257,45 @@ mod tests {
     }
 
     #[test]
-    fn parse_chat_chunk_extracts_delta_content() {
+    fn parse_chat_line_extracts_delta_content() {
         // Valid delta with text.
         let line = r#"data: {"choices":[{"delta":{"content":"Hel"}}]}"#;
-        assert_eq!(parse_chat_chunk(line), Some("Hel".to_string()));
+        assert_eq!(parse_chat_line(line), Some(ChatLine { text: Some("Hel".into()), end: None }));
         // Stream terminator — must return None.
-        assert_eq!(parse_chat_chunk("data: [DONE]"), None);
+        assert_eq!(parse_chat_line("data: [DONE]"), None);
         // Blank line (SSE separator) — must return None.
-        assert_eq!(parse_chat_chunk(""), None);
+        assert_eq!(parse_chat_line(""), None);
         // Empty content field — model emitted an empty delta, not a real token.
         let empty_delta = r#"data: {"choices":[{"delta":{"content":""}}]}"#;
-        assert_eq!(parse_chat_chunk(empty_delta), None);
+        assert_eq!(parse_chat_line(empty_delta), None);
+    }
+
+    #[test]
+    fn parse_chat_line_reads_why_the_answer_ended() {
+        let length = r#"data: {"choices":[{"delta":{},"finish_reason":"length"}]}"#;
+        assert_eq!(parse_chat_line(length), Some(ChatLine { text: None, end: Some(AnswerEnd::Length) }));
+        let repeating = r#"data: {"choices":[{"delta":{},"finish_reason":"degeneration"}]}"#;
+        assert_eq!(parse_chat_line(repeating).and_then(|l| l.end), Some(AnswerEnd::Degeneration));
+        // An answer that finished, or a reason nobody explains to the person, says nothing.
+        assert_eq!(parse_chat_line(r#"data: {"choices":[{"delta":{},"finish_reason":"stop"}]}"#), None);
+        assert_eq!(parse_chat_line(r#"data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}"#), None);
+        // Some servers put the reason on the last text chunk, or send no delta at all.
+        let both = r#"data: {"choices":[{"delta":{"content":"end"},"finish_reason":"length"}]}"#;
+        assert_eq!(parse_chat_line(both), Some(ChatLine { text: Some("end".into()), end: Some(AnswerEnd::Length) }));
+        let no_delta = r#"data: {"choices":[{"finish_reason":"length"}]}"#;
+        assert_eq!(parse_chat_line(no_delta).and_then(|l| l.end), Some(AnswerEnd::Length));
+    }
+
+    #[test]
+    fn done_carries_the_reason_only_when_there_is_one() {
+        assert_eq!(
+            serde_json::to_value(AskEvent::Done { reason: Some(AnswerEnd::Length) }).unwrap(),
+            serde_json::json!({ "kind": "done", "reason": "length" })
+        );
+        assert_eq!(
+            serde_json::to_value(AskEvent::Done { reason: None }).unwrap(),
+            serde_json::json!({ "kind": "done" })
+        );
     }
 
     #[test]

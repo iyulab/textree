@@ -10,6 +10,7 @@
   import Icon from './Icon.svelte';
   import ChatMarkdown from './ChatMarkdown.svelte';
   import { parseChatMarkdown } from './chatMarkdown.helpers';
+  import { answerEndNotice } from './ask.helpers';
 
   let {
     vault,
@@ -219,6 +220,9 @@
                 disabled={busy} onclick={() => saveToNote(turn.text)}>Save to note</button>
             {/if}
           {/if}
+          {#if turn.role === 'assistant' && answerEndNotice(turn.end)}
+            <p class="chat-end" data-testid="answer-end">{answerEndNotice(turn.end)}</p>
+          {/if}
           {#if turn.role === 'assistant' && i === chatStore.turns.length - 1 && chatStore.status === 'done'}
             <button class="chat-regenerate" type="button" aria-label="Regenerate response"
               onclick={regenerateAnswer}>Regenerate</button>
@@ -401,6 +405,11 @@
     cursor: pointer;
   }
   .chat-regenerate:hover { background: var(--bg-secondary-alt); }
+  .chat-end {
+    margin: var(--sp-1) 0 0;
+    font-size: var(--font-size-smaller);
+    color: var(--text-muted);
+  }
   /* Positioned wrapper so the scroll-to-latest button can float over the transcript's bottom
      edge without scrolling away with the content (the button is a sibling of, not inside, the
      overflow container). */

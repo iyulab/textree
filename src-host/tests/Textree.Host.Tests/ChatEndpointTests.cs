@@ -35,6 +35,41 @@ public sealed class ChatEndpointTests
     }
 
     [Fact]
+    public async Task Chat_says_why_the_answer_ended_in_a_last_chunk_before_done()
+    {
+        using var factory = new Factory(new FinishingGenerator(["Hel", "lo"], "length"));
+        var client = factory.CreateClient();
+
+        var resp = await client.PostAsJsonAsync("/chat",
+            new { messages = new[] { new { role = "user", content = "hi" } } });
+        var body = await resp.Content.ReadAsStringAsync();
+
+        var finish = "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"length\"}]}\n\n";
+        Assert.EndsWith(finish + "data: [DONE]\n\n", body);
+        Assert.True(body.IndexOf("\"lo\"", StringComparison.Ordinal) < body.IndexOf(finish, StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Chat_passes_a_reason_the_standard_does_not_name_as_it_is()
+    {
+        using var factory = new Factory(new FinishingGenerator(["x"], "degeneration"));
+        var body = await (await factory.CreateClient().PostAsJsonAsync("/chat",
+            new { messages = new[] { new { role = "user", content = "hi" } } })).Content.ReadAsStringAsync();
+
+        Assert.Contains("\"finish_reason\":\"degeneration\"", body);
+    }
+
+    [Fact]
+    public async Task Chat_without_a_known_reason_streams_as_before()
+    {
+        using var factory = new Factory(new StubGenerator(chunks: ["Hel", "lo"]));
+        var body = await (await factory.CreateClient().PostAsJsonAsync("/chat",
+            new { messages = new[] { new { role = "user", content = "hi" } } })).Content.ReadAsStringAsync();
+
+        Assert.DoesNotContain("finish_reason", body);
+    }
+
+    [Fact]
     public async Task Chat_rejects_empty_messages()
     {
         var stub = new StubGenerator(chunks: ["x"]);
@@ -171,7 +206,7 @@ public sealed class ChatEndpointTests
 
         public void Reset() => _lastMaxTokens = null;
 
-        public async IAsyncEnumerable<string> GenerateAsync(
+        public async IAsyncEnumerable<GenerationChunk> GenerateAsync(
             IReadOnlyList<ChatMessage> messages,
             GenerationOptions opts,
             [EnumeratorCancellation] CancellationToken ct)
@@ -180,9 +215,30 @@ public sealed class ChatEndpointTests
             foreach (var chunk in _chunks)
             {
                 ct.ThrowIfCancellationRequested();
-                yield return chunk;
+                yield return new GenerationChunk(chunk);
                 await Task.Yield();
             }
+        }
+    }
+
+    // ── Generator whose last piece says why the answer ended ──────────────────────────
+    private sealed class FinishingGenerator(string[] chunks, string reason) : ITextGenerator
+    {
+        public bool Ready => true;
+        public string? LastError => null;
+        public Task PrepareAsync(CancellationToken ct) => Task.CompletedTask;
+
+        public async IAsyncEnumerable<GenerationChunk> GenerateAsync(
+            IReadOnlyList<ChatMessage> messages,
+            GenerationOptions opts,
+            [EnumeratorCancellation] CancellationToken ct)
+        {
+            foreach (var chunk in chunks)
+            {
+                yield return new GenerationChunk(chunk);
+                await Task.Yield();
+            }
+            yield return new GenerationChunk(null, reason);
         }
     }
 
@@ -207,7 +263,7 @@ public sealed class ChatEndpointTests
 
         public Task PrepareAsync(CancellationToken ct) => Task.CompletedTask;
 
-        public async IAsyncEnumerable<string> GenerateAsync(
+        public async IAsyncEnumerable<GenerationChunk> GenerateAsync(
             IReadOnlyList<ChatMessage> messages,
             GenerationOptions opts,
             [EnumeratorCancellation] CancellationToken ct)
@@ -215,7 +271,7 @@ public sealed class ChatEndpointTests
             for (var i = 0; i < _chunks.Length; i++)
             {
                 ct.ThrowIfCancellationRequested();
-                yield return _chunks[i];
+                yield return new GenerationChunk(_chunks[i]);
                 _started.TrySetResult();
 
                 if (_blockAfterFirst && i == 0)
@@ -254,7 +310,7 @@ public sealed class ChatEndpointTests
         public bool Ready => false;
         public string? LastError => "model download failed";
         public Task PrepareAsync(CancellationToken ct) => Task.CompletedTask;
-        public IAsyncEnumerable<string> GenerateAsync(
+        public IAsyncEnumerable<GenerationChunk> GenerateAsync(
             IReadOnlyList<ChatMessage> messages, GenerationOptions opts, CancellationToken ct) =>
             throw new InvalidOperationException("generator unavailable");
     }

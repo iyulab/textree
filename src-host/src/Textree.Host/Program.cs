@@ -263,11 +263,21 @@ app.MapPost("/chat", async (ChatRequestDto req, ITextGenerator gen, HttpContext 
     var genOpts = new GenerationOptions(MaxTokens: req.MaxTokens ?? TextGeneratorSelection.DefaultMaxTokens(byoPreset));
 
     // ct = HttpContext.RequestAborted -> client disconnect stops generation, frees CPU.
+    string? finishReason = null;
     await foreach (var chunk in gen.GenerateAsync(msgs, genOpts, ct))
     {
-        var json = JsonSerializer.Serialize(new { choices = new[] { new { delta = new { content = chunk } } } });
+        if (chunk.FinishReason is not null) finishReason = chunk.FinishReason;
+        if (string.IsNullOrEmpty(chunk.Text)) continue;
+        var json = JsonSerializer.Serialize(new { choices = new[] { new { delta = new { content = chunk.Text } } } });
         await ctx.Response.WriteAsync($"data: {json}\n\n", ct);
         await ctx.Response.Body.FlushAsync(ct);
+    }
+    // Why the answer ended, the OpenAI way: an empty delta carrying finish_reason, just before
+    // [DONE]. Only when the backend said — readers that do not look for it see the stream as before.
+    if (finishReason is not null)
+    {
+        var json = JsonSerializer.Serialize(new { choices = new[] { new { delta = new { }, finish_reason = finishReason } } });
+        await ctx.Response.WriteAsync($"data: {json}\n\n", ct);
     }
     await ctx.Response.WriteAsync("data: [DONE]\n\n", ct);
     // The handler streams directly into ctx.Response (SSE); there is no object to return.

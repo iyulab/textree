@@ -27,7 +27,7 @@ public sealed class RemoteChatTextGeneratorTests
         await foreach (var chunk in gen.GenerateAsync(
             [new RagChatMessage("user", "hi")], new GenerationOptions(), CancellationToken.None))
         {
-            chunks.Add(chunk);
+            if (chunk.Text is { } text) chunks.Add(text);
         }
 
         Assert.Equal("hello from byo", string.Concat(chunks));
@@ -94,11 +94,44 @@ public sealed class RemoteChatTextGeneratorTests
         await foreach (var chunk in gen.GenerateAsync(
             [new RagChatMessage("user", "hi")], new GenerationOptions(), CancellationToken.None))
         {
-            chunks.Add(chunk);
+            if (chunk.Text is { } text) chunks.Add(text);
         }
 
         Assert.StartsWith("Answer: concisely ", string.Concat(chunks));
         Assert.True(chunks.Count < 41, $"expected an early stop, streamed {chunks.Count} of 41 chunks");
+    }
+
+    [Fact]
+    public async Task GenerateAsync_says_an_answer_stopped_for_repeating_itself()
+    {
+        var fake = new FakeChatClient(updates: ["Answer: ", .. Enumerable.Repeat("concisely ", 40)]);
+        var gen = new RemoteChatTextGenerator(fake, Model);
+
+        GenerationChunk? last = null;
+        await foreach (var chunk in gen.GenerateAsync(
+            [new RagChatMessage("user", "hi")], new GenerationOptions(), CancellationToken.None))
+        {
+            last = chunk;
+        }
+
+        Assert.Equal("degeneration", last?.FinishReason);
+    }
+
+    [Fact]
+    public async Task GenerateAsync_passes_on_why_the_backend_ended_the_answer()
+    {
+        var gen = new RemoteChatTextGenerator(new FakeChatClient(updates: ["done"], finish: "length"), Model);
+
+        var chunks = new List<GenerationChunk>();
+        await foreach (var chunk in gen.GenerateAsync(
+            [new RagChatMessage("user", "hi")], new GenerationOptions(), CancellationToken.None))
+        {
+            chunks.Add(chunk);
+        }
+
+        Assert.Equal("done", string.Concat(chunks.Select(c => c.Text)));
+        Assert.Equal("length", chunks[^1].FinishReason);
+        Assert.All(chunks[..^1], c => Assert.Null(c.FinishReason));
     }
 
     [Fact]
@@ -111,7 +144,7 @@ public sealed class RemoteChatTextGeneratorTests
         await foreach (var chunk in gen.GenerateAsync(
             [new RagChatMessage("user", "hi")], new GenerationOptions(), CancellationToken.None))
         {
-            chunks.Add(chunk);
+            if (chunk.Text is { } text) chunks.Add(text);
         }
 
         Assert.Equal(string.Concat(table), string.Concat(chunks));
@@ -122,11 +155,13 @@ public sealed class RemoteChatTextGeneratorTests
     {
         private readonly string[] _updates;
         private readonly string? _throwMessage;
+        private readonly string? _finish;
 
-        public FakeChatClient(string[]? updates = null, string? throwMessage = null)
+        public FakeChatClient(string[]? updates = null, string? throwMessage = null, string? finish = null)
         {
             _updates = updates ?? [];
             _throwMessage = throwMessage;
+            _finish = finish;
         }
 
         /// <summary>Number of times <see cref="Dispose"/> was called — must stay 0 in use.</summary>
@@ -146,6 +181,8 @@ public sealed class RemoteChatTextGeneratorTests
                 yield return new ChatResponseUpdate(ChatRole.Assistant, text);
                 await Task.Yield();
             }
+            if (_finish is not null)
+                yield return new ChatResponseUpdate { Role = ChatRole.Assistant, FinishReason = new ChatFinishReason(_finish) };
         }
 
         public Task<ChatResponse> GetResponseAsync(

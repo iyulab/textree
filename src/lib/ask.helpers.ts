@@ -1,4 +1,4 @@
-import type { SemanticHit } from './ipc';
+import type { AnswerEnd, SemanticHit } from './ipc';
 
 export interface ChatMessage {
   role: 'system' | 'user' | 'assistant';
@@ -16,6 +16,23 @@ export interface ChatTurn {
   citations: Citation[];
   /** 'summary' on a synthetic user turn that seeds a scope summary; absent for normal Q&A. */
   kind?: 'summary';
+  /** On an answer that ended short of finishing: why. */
+  end?: AnswerEnd;
+}
+
+/**
+ * The line under an answer that ended short of finishing — so a cut-off answer does not pass for a
+ * complete one. Nothing for an answer that finished, or whose end nobody explained.
+ */
+export function answerEndNotice(end: AnswerEnd | undefined): string | null {
+  switch (end) {
+    case 'length':
+      return 'This answer reached its length limit.';
+    case 'degeneration':
+      return 'This answer stopped because it began repeating itself.';
+    default:
+      return null;
+  }
 }
 
 const MAX_HITS = 5;

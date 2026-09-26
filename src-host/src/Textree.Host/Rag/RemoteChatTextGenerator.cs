@@ -40,7 +40,7 @@ public sealed class RemoteChatTextGenerator : ITextGenerator
 
     public Task PrepareAsync(CancellationToken ct) => Task.CompletedTask;
 
-    public async IAsyncEnumerable<string> GenerateAsync(
+    public async IAsyncEnumerable<GenerationChunk> GenerateAsync(
         IReadOnlyList<ChatMessage> messages,
         GenerationOptions opts,
         [EnumeratorCancellation] CancellationToken ct)
@@ -100,8 +100,9 @@ public sealed class RemoteChatTextGenerator : ITextGenerator
 
                 var update = enumerator.Current;
                 ct.ThrowIfCancellationRequested();
-                if (string.IsNullOrEmpty(update.Text)) continue;
-                yield return update.Text;
+                var reason = update.FinishReason?.Value;
+                if (string.IsNullOrEmpty(update.Text) && reason is null) continue;
+                yield return new GenerationChunk(string.IsNullOrEmpty(update.Text) ? null : update.Text, reason);
             }
         }
         finally

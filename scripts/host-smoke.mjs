@@ -144,6 +144,18 @@ try {
   if (!chat.ok) fail(`/chat answered ${chat.status}: ${text.slice(0, 300)}`);
   if (!/"content":"[^"]+"/.test(text)) fail(`/chat returned no content: ${text.slice(0, 300)}`);
   console.log("[host:smoke] local generation answers");
+
+  // An answer cut off at the length limit says so, so the app can tell the person it is not whole.
+  const cut = await post("/chat", {
+    messages: [{ role: "user", content: "List twenty kinds of vegetables, one per line." }],
+    maxTokens: 8,
+  });
+  const cutText = await cut.text();
+  if (!cut.ok) fail(`/chat (cut off) answered ${cut.status}: ${cutText.slice(0, 300)}`);
+  if (!/"finish_reason":"length"/.test(cutText)) {
+    fail(`/chat did not say the answer reached its length limit: ${cutText.slice(-300)}`);
+  }
+  console.log("[host:smoke] a cut-off answer says why it ended");
   console.log(provenance && provenance.verdict !== "current" ? "[host:smoke] OK — but for the exe above, not a known build of the current source" : "[host:smoke] OK");
 } finally {
   await fetch(`${base}/shutdown`, { method: "POST", signal: AbortSignal.timeout(5000) }).catch(() => {});

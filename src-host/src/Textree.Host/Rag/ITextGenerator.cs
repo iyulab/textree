@@ -3,6 +3,11 @@ namespace Textree.Host.Rag;
 public sealed record ChatMessage(string Role, string Content);
 public sealed record GenerationOptions(int MaxTokens = 512, float Temperature = 0.2f);
 
+// One piece of a streamed answer. FinishReason is set only on the last piece, when the backend says
+// why the answer ended: "stop" (it was done), "length" (it reached the token cap), "degeneration"
+// (it fell into repeating itself and was stopped). Null when not known.
+public sealed record GenerationChunk(string? Text, string? FinishReason = null);
+
 public interface ITextGenerator
 {
     bool Ready { get; }
@@ -16,7 +21,8 @@ public interface ITextGenerator
     IReadOnlyList<string>? ActiveProviders => null;
     // Lazily loads the model on first call if not yet loaded.
     Task PrepareAsync(CancellationToken ct);
-    // Streams token chunks. Honors ct (client disconnect -> stop, free CPU).
-    IAsyncEnumerable<string> GenerateAsync(
+    // Streams token chunks, the last one saying why the answer ended when that is known.
+    // Honors ct (client disconnect -> stop, free CPU).
+    IAsyncEnumerable<GenerationChunk> GenerateAsync(
         IReadOnlyList<ChatMessage> messages, GenerationOptions opts, CancellationToken ct);
 }

@@ -9,6 +9,7 @@ import {
   resolveGenerationGate,
   pruneOrphanedAssistantTurn,
   dropTrailingAssistantTurn,
+  answerEndNotice,
   type ChatTurn,
 } from './ask.helpers';
 import type { SemanticHit } from './ipc';
@@ -202,5 +203,16 @@ describe('dropTrailingAssistantTurn', () => {
   it('preserves multi-turn history before the dropped trailing turn', () => {
     const turns = [u('Q1'), a('A1'), u('Q2'), a('A2')];
     expect(dropTrailingAssistantTurn(turns)).toEqual([u('Q1'), a('A1'), u('Q2')]);
+  });
+});
+
+describe('answerEndNotice', () => {
+  it('says an answer was cut off, and why, in plain words', () => {
+    expect(answerEndNotice('length')).toBe('This answer reached its length limit.');
+    expect(answerEndNotice('degeneration')).toBe('This answer stopped because it began repeating itself.');
+  });
+
+  it('says nothing under an answer that finished', () => {
+    expect(answerEndNotice(undefined)).toBeNull();
   });
 });

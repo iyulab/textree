@@ -435,10 +435,14 @@ export async function hostStatus(): Promise<{
   return invoke("host_status");
 }
 
+/** Why an answer ended short of finishing: it reached the length limit, or it began repeating itself. */
+export type AnswerEnd = 'length' | 'degeneration';
+
 export type AskEvent =
   | { kind: 'token'; text: string }
   | { kind: 'citations'; hits: SemanticHit[] }
-  | { kind: 'done' }
+  /** `reason` only when the answer ended short of finishing and the backend said why. */
+  | { kind: 'done'; reason?: AnswerEnd }
   | { kind: 'error'; message: string };
 
 export function ask(
