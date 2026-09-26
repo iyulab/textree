@@ -23,6 +23,19 @@ export function releaseWrites(): void {
   rmSync(E2E_STALL_FLAG, { force: true });
 }
 
+/** While this file names a folder, opening it hangs. Keep in sync with scripts/dev-e2e.mjs. */
+const E2E_OPEN_STALL_FLAG = join(tmpdir(), "textree-e2e-open-stall");
+
+/** Make opening `vaultPath` hang before it reads anything, as a folder that does not answer. */
+export function stallOpening(vaultPath: string): void {
+  writeFileSync(E2E_OPEN_STALL_FLAG, vaultPath);
+}
+
+/** Let a hanging opening go on. */
+export function releaseOpening(): void {
+  rmSync(E2E_OPEN_STALL_FLAG, { force: true });
+}
+
 function cdpEndpoint(): string {
   if (process.env.TEXTREE_E2E_CDP) return process.env.TEXTREE_E2E_CDP;
   if (existsSync(E2E_CDP_HANDSHAKE)) {

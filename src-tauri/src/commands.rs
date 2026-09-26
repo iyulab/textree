@@ -710,6 +710,21 @@ static INSTALLING: std::sync::Mutex<()> = std::sync::Mutex::new(());
 /// does not show it.
 pub(crate) const SUPERSEDED: &str = "another folder was opened meanwhile";
 
+/// Development builds only: while the file named by `TEXTREE_E2E_OPEN_STALL_FLAG` exists and holds
+/// this folder's path, opening it waits before reading anything — how the end-to-end tests make a
+/// folder stop answering when it is opened.
+#[cfg(all(not(test), debug_assertions))]
+fn stall_opening(root: &str) {
+    let Some(flag) = std::env::var_os("TEXTREE_E2E_OPEN_STALL_FLAG") else { return };
+    while std::fs::read_to_string(&flag).is_ok_and(|named| named.trim() == root) {
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+}
+
+#[cfg(any(test, not(debug_assertions)))]
+#[inline(always)]
+fn stall_opening(_: &str) {}
+
 /// Starts an opening; the number it returns is what [`open_vault`] checks before installing.
 pub(crate) fn begin_open() -> u64 {
     OPENS.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1
@@ -720,6 +735,7 @@ pub(crate) fn begin_open() -> u64 {
 /// folder takes; only then, briefly and one opening at a time, is the folder put in place — and
 /// only if no later opening started meanwhile.
 pub fn open_vault(root: String, app: AppHandle, ticket: u64) -> Result<Vec<TreeNode>, String> {
+    stall_opening(&root);
     let root_path = PathBuf::from(&root);
     // Sweep orphaned atomic-write temps (crash/power-loss leftovers) so they don't linger and sync.
     clear_temp_dir(&root_path);

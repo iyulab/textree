@@ -54,6 +54,10 @@ development build holds every write just before it lands — a folder that has s
 Specs create and remove it with `stallWrites()` / `releaseWrites()`; release builds do not have
 the hold at all.
 
+`TEXTREE_E2E_OPEN_STALL_FLAG` does the same for opening a folder: while the file holds a folder's
+path, opening that folder waits before reading it. Specs use `stallOpening(path)` /
+`releaseOpening()`.
+
 > ⚠️ The old `$env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS` route no longer works — WebView2
 > Runtime 150+ ignores the loader environment variable, so the CDP port silently never opens.
 > Setting `additionalBrowserArgs` replaces wry's default arguments, which is why the overlay

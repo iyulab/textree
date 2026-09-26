@@ -68,6 +68,14 @@ const WATCHDOG_INTERVAL_MS = "3000";
 const STALL_FLAG = join(tmpdir(), "textree-e2e-stall");
 rmSync(STALL_FLAG, { force: true });
 
+/**
+ * While this file exists, the development build holds opening the folder whose path it contains —
+ * a folder that does not answer when opened. Keep in sync with E2E_OPEN_STALL_FLAG in
+ * e2e/helpers.ts. Removed here so a run never starts stalled.
+ */
+const OPEN_STALL_FLAG = join(tmpdir(), "textree-e2e-open-stall");
+rmSync(OPEN_STALL_FLAG, { force: true });
+
 // Only ever recreate a directory we own: inside the temp dir and under our own name.
 for (const [owned, expected] of [
   [DEFAULT_VAULT_BASE, join(tmpdir(), "textree-e2e-default-vault")],
@@ -177,6 +185,7 @@ const child = spawn(`tauri dev --config "${GENERATED_OVERLAY}"`, {
     // whole probe cycles (e2e/lifetime.spec.ts) — and every other spec runs with it probing.
     TEXTREE_WATCHDOG_INTERVAL_MS: WATCHDOG_INTERVAL_MS,
     TEXTREE_E2E_STALL_FLAG: STALL_FLAG,
+    TEXTREE_E2E_OPEN_STALL_FLAG: OPEN_STALL_FLAG,
   },
 });
 
