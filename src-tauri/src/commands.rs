@@ -410,11 +410,57 @@ pub fn read_sidecar(root: String, rel: String) -> Result<Option<String>, String>
     }
 }
 
-/// Writes one of this folder's settings, leaving the folder itself untouched.
+/// Writes one of this folder's settings, leaving the folder itself untouched. Refused while they
+/// are in a format a newer release wrote (see [`prepare_sidecar`]).
 #[tauri::command]
 pub fn write_sidecar(root: String, rel: String, content: String) -> Result<(), String> {
-    let path = sidecar_path(Path::new(&root), &rel)?;
+    let root = Path::new(&root);
+    let path = sidecar_path(root, &rel)?;
+    if !crate::state_dir::writable(&personal_dir(root)?).map_err(|e| e.to_string())? {
+        return Err(NEWER_SETTINGS.into());
+    }
     atomic_write_beside(&path, &content).map_err(|e| e.to_string())
+}
+
+const NEWER_SETTINGS: &str =
+    "this folder's settings were saved by a newer Textree and are kept as they are";
+
+/// What opening this folder's settings found.
+#[derive(Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SidecarState {
+    /// They were saved by a newer release: shown as defaults, and nothing is written over them
+    /// until the application is updated.
+    pub read_only: bool,
+}
+
+/// Brings this folder's settings to the format this release keeps them in, when the folder is
+/// opened — before anything reads them.
+#[tauri::command]
+pub fn prepare_sidecar(root: String) -> Result<SidecarState, String> {
+    let dir = personal_dir(Path::new(&root))?;
+    let current = crate::state_dir::bring_up_to_date(&dir, atomic_bytes_beside)
+        .map_err(|e| e.to_string())?;
+    Ok(SidecarState { read_only: !current })
+}
+
+/// Moves one of this folder's settings files that could not be read out of the way, keeping it.
+/// Returns the name it now has.
+#[tauri::command]
+pub fn set_aside_sidecar(root: String, rel: String) -> Result<String, String> {
+    let root = Path::new(&root);
+    sidecar_path(root, &rel)?; // the same confinement as reading and writing
+    let dir = personal_dir(root)?;
+    if !crate::state_dir::writable(&dir).map_err(|e| e.to_string())? {
+        return Err(NEWER_SETTINGS.into());
+    }
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let to = crate::state_dir::set_aside(&dir, &rel, now).map_err(|e| e.to_string())?;
+    log::warn!("set_aside_sidecar: {rel} could not be read; kept as {}", to.display());
+    Ok(to.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default())
 }
 
 /// Runs `work` off the main thread. Anything that touches the notes folder goes through here: a
@@ -1722,7 +1768,15 @@ pub fn move_state_out_of_vault(root: String) -> Result<MoveOut, String> {
     // Settings first: cheap, and it cannot fail in a way that costs anything.
     // Every settings file the application has ever kept in there. A name missing from this list
     // is a file left behind in a folder the notice claims is clean.
+    //
+    // Not into settings a newer release wrote, though: it may keep them in another shape, and these
+    // are in the old one. They stay where they are, and the notice lists them as left behind.
+    let settings_writable =
+        crate::state_dir::writable(&personal_dir(root_p)?).map_err(|e| e.to_string())?;
     for rel in ["favorites.json", "order.json", "views.json"] {
+        if !settings_writable {
+            break;
+        }
         let from = legacy_sidecar_path(root_p, rel);
         if !from.is_file() {
             continue;
@@ -1992,6 +2046,90 @@ mod tests {
         assert!(matches!(newer, Ok(WriteOutcome::Conflict { .. })), "{newer:?}");
         release.send(()).unwrap();
         older.join().unwrap().unwrap();
+    }
+
+    #[test]
+    fn opening_a_folder_marks_its_settings_with_the_current_format() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path().to_string_lossy().to_string();
+        assert_eq!(prepare_sidecar(root.clone()).unwrap(), SidecarState { read_only: false });
+        let marker = personal_dir(tmp.path()).unwrap().join(crate::state_dir::FORMAT_FILE);
+        assert_eq!(
+            std::fs::read_to_string(marker).unwrap(),
+            crate::state_dir::CURRENT.to_string()
+        );
+        write_sidecar(root.clone(), "favorites.json".into(), "[]".into()).unwrap();
+    }
+
+    #[test]
+    fn settings_a_newer_release_saved_are_shown_but_never_written_over() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path().to_string_lossy().to_string();
+        let dir = personal_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join(crate::state_dir::FORMAT_FILE), "99").unwrap();
+        std::fs::write(dir.join("order.json"), b"{\"another\":\"shape\"}").unwrap();
+
+        for _ in 0..2 {
+            assert_eq!(prepare_sidecar(root.clone()).unwrap(), SidecarState { read_only: true });
+        }
+        assert!(write_sidecar(root.clone(), "order.json".into(), "{}".into()).is_err());
+        assert!(write_sidecar(root.clone(), "favorites.json".into(), "[]".into()).is_err());
+        assert!(set_aside_sidecar(root.clone(), "order.json".into()).is_err());
+
+        assert_eq!(std::fs::read(dir.join("order.json")).unwrap(), b"{\"another\":\"shape\"}");
+        assert!(!dir.join("favorites.json").exists());
+        assert_eq!(std::fs::read_to_string(dir.join(crate::state_dir::FORMAT_FILE)).unwrap(), "99");
+    }
+
+    #[test]
+    fn settings_left_inside_the_folder_are_not_carried_into_ones_a_newer_release_saved() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path().to_string_lossy().to_string();
+        let dir = personal_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join(crate::state_dir::FORMAT_FILE), "99").unwrap();
+        let legacy = legacy_sidecar_path(tmp.path(), "favorites.json");
+        std::fs::create_dir_all(legacy.parent().unwrap()).unwrap();
+        std::fs::write(&legacy, "[\"old.md\"]").unwrap();
+
+        let moved = move_state_out_of_vault(root).unwrap();
+
+        assert!(!dir.join("favorites.json").exists());
+        assert_eq!(std::fs::read_to_string(&legacy).unwrap(), "[\"old.md\"]");
+        assert!(moved.left_behind.iter().any(|p| p.ends_with("favorites.json")), "{:?}", moved.left_behind);
+    }
+
+    #[test]
+    fn settings_left_inside_the_folder_are_still_carried_out_after_the_format_is_marked() {
+        // The marker describes the settings kept outside the folder. What an older release on
+        // another machine leaves inside a synced folder is carried out whatever the marker says.
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path().to_string_lossy().to_string();
+        prepare_sidecar(root.clone()).unwrap();
+        let legacy = legacy_sidecar_path(tmp.path(), "order.json");
+        std::fs::create_dir_all(legacy.parent().unwrap()).unwrap();
+        std::fs::write(&legacy, "{}").unwrap();
+
+        assert!(move_state_out_of_vault(root).unwrap().happened());
+        assert!(!legacy.exists());
+        assert!(!tmp.path().join(".textree").exists());
+    }
+
+    #[test]
+    fn a_settings_file_that_cannot_be_read_is_set_aside_and_kept() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path().to_string_lossy().to_string();
+        prepare_sidecar(root.clone()).unwrap();
+        write_sidecar(root.clone(), "favorites.json".into(), "{half".into()).unwrap();
+
+        let name = set_aside_sidecar(root.clone(), "favorites.json".into()).unwrap();
+
+        assert!(name.starts_with("favorites.json.unreadable-"), "{name}");
+        let dir = personal_dir(tmp.path()).unwrap();
+        assert_eq!(std::fs::read_to_string(dir.join(&name)).unwrap(), "{half");
+        assert_eq!(read_sidecar(root.clone(), "favorites.json".into()).unwrap(), None);
+        assert!(set_aside_sidecar(root, "../elsewhere".into()).is_err());
     }
 
     #[test]

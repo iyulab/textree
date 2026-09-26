@@ -27,6 +27,7 @@
     prepareAiModel,
     openLogDir,
     moveStateOutOfVault,
+    prepareSidecar,
     type TreeNode,
     type SearchHit,
     type MoveOut,
@@ -68,6 +69,7 @@
   import { buildCommands, activeCommands, type PaletteActions } from "$lib/commands";
   import { matchKeybinding, isFormFieldTag } from "$lib/keybinding.helpers";
   import { mergeOrder, nav } from "$lib/nav.svelte";
+  import { describeSettingsOnOpen } from "$lib/settingsFile.helpers";
   import { moveInArray, findFirstOpenableNote } from "$lib/nav.helpers";
   import { checkForUpdate, type UpdateInfo } from "$lib/updater";
   import UpdateBanner from "$lib/UpdateBanner.svelte";
@@ -176,6 +178,9 @@
   // Saved views whose folder key doesn't belong to this vault root (moved vault / other device).
   // Surfaced so the views don't appear to silently vanish; reset per vault load.
   let dismissedForeignViews = $state(false);
+  // What opening the folder's settings found: saved by a newer release (kept as they are), or files
+  // that could not be read (kept aside, defaults used). Said once per open, dismissible.
+  let settingsNotice = $state<string | null>(null);
   let showForeignViews = $derived(views.foreignFolders.length > 0 && !dismissedForeignViews);
 
   // External change (M3) state.
@@ -256,8 +261,17 @@
       // A folder that could not be tidied still opens; the notes are what matter.
       opError = friendlyError(e);
     }
-    await nav.load(path); // load favorites/order settings
-    await views.load(path); // load saved folder views (views.json, kept with the app)
+    // Settings a newer release saved are shown as defaults and never written over.
+    let readOnly = false;
+    try {
+      readOnly = (await prepareSidecar(path)).readOnly;
+    } catch (e) {
+      opError = friendlyError(e); // the folder still opens; writing is refused where it must be
+    }
+    const setAside = await nav.load(path, readOnly); // load favorites/order settings
+    const viewsSetAside = await views.load(path, readOnly); // saved folder views (views.json)
+    if (viewsSetAside) setAside.push(viewsSetAside);
+    settingsNotice = describeSettingsOnOpen(readOnly, setAside);
     dismissedForeignViews = false; // re-evaluate the foreign-views notice for the new vault
     return true;
   }
@@ -1560,6 +1574,18 @@
             </button>
           </li>
         </ul>
+      </div>
+    {/if}
+    {#if root && settingsNotice}
+      <div class="conflict-banner" role="status" aria-label="Settings" data-testid="settings-notice">
+        <div class="conflict-head">
+          <span>⚠ {settingsNotice}</span>
+          <button
+            class="banner-dismiss"
+            onclick={() => (settingsNotice = null)}
+            aria-label="Dismiss"
+          >×</button>
+        </div>
       </div>
     {/if}
     {#if root && showForeignViews}

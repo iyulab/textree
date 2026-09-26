@@ -16,7 +16,9 @@
  * persistence wrapper and is not imported by tests, keeping pure helpers separate from reactive state.
  */
 
-import { readSidecar, writeSidecar } from "./ipc";
+import { writeSidecar } from "./ipc";
+import { readSettings } from "./settingsFile";
+import { isViewsMap } from "./settingsFile.helpers";
 import {
   findForeignViewFolders,
   removeView,
@@ -31,6 +33,8 @@ class ViewsStore {
   private all = $state<Record<string, ViewDefinition[]>>({});
   /** Current vault root (target of persist IPC). null means not loaded. */
   private root: string | null = null;
+  /** Not to be written this time: saved by a newer release, or unreadable and not set aside. */
+  private kept = false;
   /**
    * Stored folder keys that don't belong to the current vault root (vault moved or opened on
    * another device). Surfaced as a non-destructive notice so the views don't appear to vanish
@@ -38,11 +42,18 @@ class ViewsStore {
    */
   foreignFolders = $state<string[]>([]);
 
-  /** Called on vault open/switch — reloads saved views from the sidecar. */
-  async load(root: string): Promise<void> {
+  /**
+   * Called on vault open/switch — reloads saved views from the sidecar. `readOnly`: a newer release
+   * saved them; shown as none, never written over. Returns the name the file was kept under if it
+   * could not be read.
+   */
+  async load(root: string, readOnly = false): Promise<string | null> {
     this.root = root;
-    this.all = (await readJson<Record<string, ViewDefinition[]>>(root, VIEWS_FILE)) ?? {};
+    const read = readOnly ? null : await readSettings(root, VIEWS_FILE, isViewsMap);
+    this.kept = !read || !read.writable;
+    this.all = read?.value ?? {};
     this.foreignFolders = findForeignViewFolders(Object.keys(this.all), root);
+    return read?.setAside ?? null;
   }
 
   /** Saved views for a folder, in saved order (empty if none). */
@@ -68,24 +79,13 @@ class ViewsStore {
   }
 
   private async persist(): Promise<void> {
-    if (this.root === null) return;
+    if (this.root === null || this.kept) return;
     try {
       await writeSidecar(this.root, VIEWS_FILE, JSON.stringify(this.all));
     } catch (e) {
       // Non-blocking: keep the in-memory state. Retry recovery on the next write.
       console.warn(`Sidecar write failed (${VIEWS_FILE}):`, e);
     }
-  }
-}
-
-/** Reads sidecar JSON — null on absence/corruption (the caller falls back to a default). */
-async function readJson<T>(root: string, rel: string): Promise<T | null> {
-  try {
-    const raw = await readSidecar(root, rel);
-    return raw === null ? null : (JSON.parse(raw) as T);
-  } catch (e) {
-    console.warn(`Sidecar read/parse failed (${rel}):`, e);
-    return null;
   }
 }
 

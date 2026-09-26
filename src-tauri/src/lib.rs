@@ -27,6 +27,7 @@ pub(crate) mod vault;
 pub(crate) mod watcher;
 pub(crate) mod liveness;
 pub(crate) mod note_locks;
+pub(crate) mod state_dir;
 
 use host::HostHandle;
 use search::IndexHandle;
@@ -115,6 +116,8 @@ pub fn run() {
             commands::save_attachment,
             commands::read_sidecar,
             commands::write_sidecar,
+            commands::prepare_sidecar,
+            commands::set_aside_sidecar,
             commands::search_content,
             commands::rebuild_index,
             commands::publish_site,

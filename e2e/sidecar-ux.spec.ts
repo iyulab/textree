@@ -6,7 +6,10 @@ import {
   removeTempVault,
   listVaultDir,
   readSidecar,
+  sidecarDir,
 } from "./helpers";
+import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 
 /**
  * Settings UX — verify manual ordering (order.json) and favorites (favorites.json)
@@ -129,6 +132,74 @@ test("tree star: toggle favorite from the row + reflects state + persists", asyn
       .toBe(0);
 
     expect(strayEntries(vault)).toEqual([]);
+  } finally {
+    removeTempVault(vault);
+  }
+});
+
+/**
+ * Opens `vault` once so its settings folder exists, puts `files` in it while another folder is
+ * open, then opens `vault` again — the way settings written by another release are met.
+ */
+async function reopenWithSettings(vault: string, files: Record<string, string>): Promise<string> {
+  await loadVault(page, vault);
+  const dir = sidecarDir(vault);
+  const elsewhere = createTempVault({ "elsewhere.md": "x\n" });
+  try {
+    await loadVault(page, elsewhere);
+    for (const [name, body] of Object.entries(files)) writeFileSync(join(dir, name), body);
+    await loadVault(page, vault);
+  } finally {
+    removeTempVault(elsewhere);
+  }
+  return dir;
+}
+
+test("opening a folder marks its settings with the format they are kept in", async () => {
+  const vault = createTempVault({ "a.md": "x\n" });
+  try {
+    await loadVault(page, vault);
+    expect(readFileSync(join(sidecarDir(vault), "format"), "utf8")).toBe("1");
+    await expect(page.getByTestId("settings-notice")).toHaveCount(0);
+  } finally {
+    removeTempVault(vault);
+  }
+});
+
+test("settings a newer release saved are shown as defaults, said so, and never written over", async () => {
+  const vault = createTempVault({ "pinned-note.md": "x\n" });
+  const newer = '{"favorites":{"pinned":["pinned-note.md"]}}';
+  try {
+    const dir = await reopenWithSettings(vault, { format: "2", "favorites.json": newer });
+    await expect(page.getByTestId("settings-notice")).toContainText("saved by a newer Textree");
+
+    await page.getByRole("treeitem", { name: /pinned-note/ }).click();
+    await runCommand(page, ">favorite");
+    // Nothing reaches the disk, however long it is given.
+    await page.waitForTimeout(500);
+    expect(readFileSync(join(dir, "favorites.json"), "utf8")).toBe(newer);
+    expect(readFileSync(join(dir, "format"), "utf8")).toBe("2");
+  } finally {
+    removeTempVault(vault);
+  }
+});
+
+test("a settings file that cannot be read is kept aside, said so, and the app starts from its default", async () => {
+  const vault = createTempVault({ "pinned-note.md": "x\n" });
+  try {
+    const dir = await reopenWithSettings(vault, { "favorites.json": '["pinned-note.md"' });
+    await expect(page.getByTestId("settings-notice")).toContainText("favorites couldn't be read");
+
+    const kept = readdirSync(dir).filter((n) => n.startsWith("favorites.json.unreadable-"));
+    expect(kept).toHaveLength(1);
+    expect(readFileSync(join(dir, kept[0]), "utf8")).toBe('["pinned-note.md"');
+    expect(existsSync(join(dir, "favorites.json"))).toBe(false);
+
+    // The next change starts a fresh file — beside the one kept, not over it.
+    await page.getByRole("treeitem", { name: /pinned-note/ }).click();
+    await runCommand(page, ">favorite");
+    await expect.poll(() => (readSidecar(vault, "favorites.json") as string[] | null)?.length ?? 0).toBe(1);
+    expect(readFileSync(join(dir, kept[0]), "utf8")).toBe('["pinned-note.md"');
   } finally {
     removeTempVault(vault);
   }

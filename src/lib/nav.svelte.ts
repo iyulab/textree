@@ -6,8 +6,10 @@
  * split into a runes-free module so it can be tested directly under vitest (node environment).
  */
 
-import { readSidecar, writeSidecar } from "./ipc";
+import { writeSidecar } from "./ipc";
 import { dedupePushFront, RECENT_MAX } from "./nav.helpers";
+import { readSettings } from "./settingsFile";
+import { isStringList, isStringListMap } from "./settingsFile.helpers";
 import { RetryingWriter } from "./sidecarWriter.helpers";
 
 // Re-export so components can import the order helper alongside from `$lib/nav.svelte`.
@@ -22,20 +24,39 @@ class NavStore {
   order = $state<Record<string, string[]>>({});
   /** Current vault root (target of persist IPC). null means not loaded. */
   private root: string | null = null;
+  /** Files not to write this time: saved by a newer release, or unreadable and not set aside. */
+  private kept = new Set<string>();
   // Favorites and order are separate files: a failed write of one is retried when the other is
   // written, not only when the same one is.
   private writer = new RetryingWriter(
-    (rel, body) => (this.root === null ? Promise.resolve() : writeSidecar(this.root, rel, body)),
+    (rel, body) =>
+      this.root === null || this.kept.has(rel) ? Promise.resolve() : writeSidecar(this.root, rel, body),
     // Non-blocking: the in-memory state stays as the person left it.
     (rel, e) => console.warn(`Sidecar write failed (${rel}):`, e),
   );
 
-  /** Called on vault open/switch — reloads favorites/order from the sidecar. */
-  async load(root: string): Promise<void> {
+  /**
+   * Called on vault open/switch — reloads favorites/order from the sidecar. `readOnly`: a newer
+   * release saved them; shown as defaults, never written over. Returns the names of files that
+   * could not be read and were kept aside.
+   */
+  async load(root: string, readOnly = false): Promise<string[]> {
     this.writer.reset(); // owed writes belong to the folder being left
     this.root = root;
-    this.favorites = (await readJson<string[]>(root, "favorites.json")) ?? [];
-    this.order = (await readJson<Record<string, string[]>>(root, "order.json")) ?? {};
+    this.kept = new Set();
+    const setAside: string[] = [];
+    const favorites = readOnly ? null : await readSettings(root, "favorites.json", isStringList);
+    const order = readOnly ? null : await readSettings(root, "order.json", isStringListMap);
+    this.favorites = favorites?.value ?? [];
+    this.order = order?.value ?? {};
+    for (const [rel, read] of [
+      ["favorites.json", favorites],
+      ["order.json", order],
+    ] as const) {
+      if (!read || !read.writable) this.kept.add(rel);
+      if (read?.setAside) setAside.push(read.setAside);
+    }
+    return setAside;
   }
 
   isFavorite(path: string): boolean {
@@ -69,17 +90,6 @@ function loadRecent(): string[] {
     return Array.isArray(arr) ? arr : [];
   } catch {
     return [];
-  }
-}
-
-/** Reads sidecar JSON — null on absence/corruption (the caller falls back to a default). */
-async function readJson<T>(root: string, rel: string): Promise<T | null> {
-  try {
-    const raw = await readSidecar(root, rel);
-    return raw === null ? null : (JSON.parse(raw) as T);
-  } catch (e) {
-    console.warn(`Sidecar read/parse failed (${rel}):`, e);
-    return null;
   }
 }
 

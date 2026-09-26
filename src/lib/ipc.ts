@@ -277,6 +277,20 @@ export async function writeSidecar(
   return invoke<void>("write_sidecar", { root, rel, content });
 }
 
+/**
+ * Bring this vault's settings to the format this release keeps them in; run when the vault opens,
+ * before anything reads them. `readOnly`: a newer release saved them, and nothing may be written
+ * over them until the app is updated.
+ */
+export async function prepareSidecar(root: string): Promise<{ readOnly: boolean }> {
+  return invoke<{ readOnly: boolean }>("prepare_sidecar", { root });
+}
+
+/** Move an unreadable settings file aside, keeping it. Returns the name it is kept under. */
+export async function setAsideSidecar(root: string, rel: string): Promise<string> {
+  return invoke<string>("set_aside_sidecar", { root, rel });
+}
+
 // ── Body full-text search (P1b) ──────────────────────────────────────────
 
 export interface SearchHit {
