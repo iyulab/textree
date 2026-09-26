@@ -286,6 +286,29 @@ export async function prepareSidecar(root: string): Promise<{ readOnly: boolean 
   return invoke<{ readOnly: boolean }>("prepare_sidecar", { root });
 }
 
+/** An edit to a note already left, kept because it could not be written to it yet. */
+export interface StrandedEdit {
+  id: string;
+  path: string;
+  text: string;
+  base: string;
+}
+
+/** Keep an unwritten edit where it outlasts the app. Returns its id. */
+export async function keepStranded(root: string, path: string, text: string, base: string): Promise<string> {
+  return invoke<string>("keep_stranded", { root, path, text, base });
+}
+
+/** Let go of a kept edit once it has landed. */
+export async function forgetStranded(root: string, id: string): Promise<void> {
+  return invoke<void>("forget_stranded", { root, id });
+}
+
+/** Edits kept for this vault's notes from an earlier run, oldest first. */
+export async function listStranded(root: string): Promise<StrandedEdit[]> {
+  return invoke<StrandedEdit[]>("list_stranded", { root });
+}
+
 /** Move an unreadable settings file aside, keeping it. Returns the name it is kept under. */
 export async function setAsideSidecar(root: string, rel: string): Promise<string> {
   return invoke<string>("set_aside_sidecar", { root, rel });

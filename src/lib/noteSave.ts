@@ -83,6 +83,13 @@ export interface NoteSaveDeps {
    * Used for edits to a note already left that can no longer be written to it.
    */
   keepCopy?: (root: string, path: string, text: string) => Promise<string>;
+  /**
+   * Keep an edit to a note already left, not written yet, somewhere that outlasts the app — so
+   * closing before its folder takes it does not lose it. Returns an id to let go of it by.
+   */
+  keepStranded?: (root: string, edit: PendingEdit) => Promise<string>;
+  /** A kept edit landed (or was kept as a copy): let go of it. */
+  forgetStranded?: (root: string, id: string) => Promise<void>;
   /** Kept edits landed on the note that is open again (see `#stranded`); show `text`, now on disk. */
   landedOnOpen?: (text: string) => void;
   /** Leaving was refused; the named banner should be brought to the person's attention. */
@@ -105,6 +112,17 @@ const DEFAULT_CLOSE_WAIT_MS = 5000;
  *  large note does not trip it; short enough that someone waiting on it learns why. */
 const DEFAULT_STALL_MS = 10_000;
 
+/** An edit to a note already left that could not be written yet. */
+interface Stranded {
+  root: string;
+  edit: PendingEdit;
+  /** Where it is kept outside the app, once it is (see `keepStranded`). */
+  id: string | null;
+  /** Landed or let go of while it was still being kept: forget it as soon as it is. */
+  gone: boolean;
+  keeping: Promise<void> | null;
+}
+
 export class NoteSave {
   #synced = "";
 
@@ -112,7 +130,7 @@ export class NoteSave {
   // Edits to a note already left whose write failed. Nothing on screen holds them any more, so they
   // are kept here — with the vault they belong to — and tried after every save until they land.
   // Oldest first, and never merged: two kept edits to one note are two things the person typed.
-  #stranded: { root: string; edit: PendingEdit }[] = [];
+  #stranded: Stranded[] = [];
   #warnedOnClose = false;
   #warnedStalledOnClose = false;
   // Saves to one note run one at a time, in order: two in flight would each be based on the same
@@ -244,12 +262,49 @@ export class NoteSave {
   }
 
   #strand(root: string, edit: PendingEdit): void {
-    this.#stranded.push({ root, edit });
+    const entry: Stranded = { root, edit, id: null, gone: false, keeping: null };
+    this.#stranded.push(entry);
     this.#warnedOnClose = false; // new edits waiting: the next close warns about them again
+    this.#keepOutlasting(entry);
+  }
+
+  /** Writes `entry` where it outlasts the app (see `keepStranded`). */
+  #keepOutlasting(entry: Stranded): Promise<void> {
+    const keep = this.deps.keepStranded;
+    if (!keep) return Promise.resolve();
+    entry.keeping = keep(entry.root, { ...entry.edit })
+      .then((id) => {
+        if (entry.gone) void this.#forget(entry.root, id);
+        else entry.id = id;
+      })
+      .catch((e) => console.warn("Could not keep edits outside the app:", e))
+      .finally(() => (entry.keeping = null));
+    return entry.keeping;
+  }
+
+  #forget(root: string, id: string): Promise<void> {
+    return (this.deps.forgetStranded?.(root, id) ?? Promise.resolve()).catch((e) =>
+      console.warn("Could not let go of kept edits:", e),
+    );
   }
 
   #unstrand(edit: PendingEdit): void {
+    for (const entry of this.#stranded.filter((k) => k.edit === edit)) {
+      entry.gone = true;
+      if (entry.id !== null) void this.#forget(entry.root, entry.id);
+    }
     this.#stranded = this.#stranded.filter((k) => k.edit !== edit);
+  }
+
+  /**
+   * Edits kept from an earlier run for `root`'s notes, not written then. They join the ones kept in
+   * this run and are tried with the next save.
+   */
+  adopt(root: string, kept: { id: string; path: string; text: string; base: string }[]): void {
+    for (const { id, path, text, base } of kept) {
+      if (this.#stranded.some((k) => k.id === id)) continue;
+      this.#stranded.push({ root, edit: { path, text, base }, id, gone: false, keeping: null });
+    }
   }
 
   /** Save before leaving the open note — switching, changing vault, restructuring, or closing. */
@@ -309,6 +364,9 @@ export class NoteSave {
     const left = await Promise.race([everything, stalled]);
     clearTimeout(timer);
     if (left === "stalled") {
+      // Keep what is still on its way where it outlasts the app, and nothing is lost by closing: it
+      // is tried again when the folder next opens (and found already there if it landed meanwhile).
+      if (await this.#keepEverythingUnwritten()) return "close";
       if (this.#warnedStalledOnClose) return "close";
       this.#warnedStalledOnClose = true;
       this.state.saveError = friendlyError(
@@ -318,7 +376,8 @@ export class NoteSave {
     }
     this.#warnedStalledOnClose = false;
     if (left !== "saved") return "stay";
-    if (this.#stranded.length > 0 && !this.#warnedOnClose) {
+    await Promise.all(this.#stranded.map((k) => k.keeping));
+    if (this.#stranded.some((k) => k.id === null) && !this.#warnedOnClose) {
       this.#warnedOnClose = true;
       this.state.saveError = friendlyError(
         "Some edits to a note you left are still not saved. Close again to quit without them.",
@@ -464,7 +523,17 @@ export class NoteSave {
       const remap = await relocate();
       if (this.#pending) this.#pending.path = remap(this.#pending.path);
       for (const edit of this.#queued) edit.path = remap(edit.path);
-      for (const { edit } of this.#stranded) edit.path = remap(edit.path);
+      for (const entry of this.#stranded) {
+        const to = remap(entry.edit.path);
+        if (to === entry.edit.path) continue;
+        entry.edit.path = to;
+        // What was kept names the old place: keep it again under the new one, then let the old go.
+        const old = entry.id;
+        entry.id = null;
+        void this.#keepOutlasting(entry).then(() => {
+          if (old !== null) void this.#forget(entry.root, old);
+        });
+      }
       this.deps.moved?.(remap);
       this.#syncDirty();
     });
@@ -493,6 +562,23 @@ export class NoteSave {
         `Your last edits to "${name}" are not saved yet — it changed on disk, and keeping them as a copy failed (${friendlyError(e).summary}). They are kept and tried again with every save.`,
       );
     }
+  }
+
+  /**
+   * Keeps every edit not on disk yet — on its way, waiting its turn, or failed — where it outlasts the
+   * app. True when all of them are kept (or there are none to keep).
+   */
+  async #keepEverythingUnwritten(): Promise<boolean> {
+    if (!this.deps.keepStranded) return false;
+    const root = this.deps.root();
+    const waiting = new Set<PendingEdit>([...this.#running.keys(), ...this.#queued]);
+    if (this.#pending) waiting.add(this.#pending);
+    for (const edit of waiting) {
+      if (this.#done.has(edit) || this.#stranded.some((k) => k.edit === edit) || !root) continue;
+      this.#strand(root, edit);
+    }
+    await Promise.all(this.#stranded.map((k) => k.keeping));
+    return this.#stranded.every((k) => k.id !== null);
   }
 
   #syncDirty(): void {
@@ -552,6 +638,7 @@ export class NoteSave {
   #landedNow(job: PendingEdit): void {
     this.#landed.add(job);
     this.#done.add(job);
+    this.#unstrand(job); // kept outside the app at a close that did not wait for it: not needed now
     for (let p = this.#prev.get(job); p; p = this.#prev.get(p)) {
       this.#done.add(p);
       this.#queued.delete(p);
@@ -598,6 +685,9 @@ export class NoteSave {
         clearTimeout(slow);
         if (this.#slow.delete(job)) this.#syncStalled();
       }
+      // The note already holds exactly these edits: an earlier try that seemed not to finish landed
+      // after all (a write that outlasted the app that sent it). Nothing to keep a copy of.
+      if (outcome.kind === "conflict" && outcome.disk === job.text) outcome = { kind: "written" };
       if (retry) this.#unstrand(job);
       if (outcome.kind === "written") this.#landedNow(job);
       const active = retry ? null : this.deps.activePath();

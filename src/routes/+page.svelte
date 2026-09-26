@@ -28,6 +28,9 @@
     openLogDir,
     moveStateOutOfVault,
     prepareSidecar,
+    keepStranded,
+    forgetStranded,
+    listStranded,
     type TreeNode,
     type SearchHit,
     type MoveOut,
@@ -124,6 +127,9 @@
         createNoteWithContent(vault, vault, noteStem(path), text),
       ),
     landedOnOpen: (text) => applyReload(text),
+    // Edits to a note left that could not be written yet outlast the app: kept with its settings.
+    keepStranded: (vault, e) => keepStranded(vault, e.path, e.text, e.base),
+    forgetStranded,
     moved: (remap) => {
       if (!activePath) return;
       const to = remap(activePath);
@@ -272,6 +278,16 @@
     const viewsSetAside = await views.load(path, readOnly); // saved folder views (views.json)
     if (viewsSetAside) setAside.push(viewsSetAside);
     settingsNotice = describeSettingsOnOpen(readOnly, setAside);
+    // Edits an earlier run could not write to this folder's notes: try them now.
+    try {
+      const kept = await listStranded(path);
+      if (kept.length > 0) {
+        save.adopt(path, kept);
+        void save.flush();
+      }
+    } catch (e) {
+      console.warn("Could not read edits kept from an earlier run:", e);
+    }
     dismissedForeignViews = false; // re-evaluate the foreign-views notice for the new vault
     return true;
   }

@@ -1,5 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { initialNoteSaveState, NoteSave, type LeaveQuestion, type NoteSaveState } from "./noteSave";
+import {
+  initialNoteSaveState,
+  NoteSave,
+  type LeaveQuestion,
+  type NoteSaveDeps,
+  type NoteSaveState,
+} from "./noteSave";
 import type { WriteOutcome } from "./ipc";
 
 interface Call {
@@ -10,7 +16,7 @@ interface Call {
 }
 
 /** A disk whose writes finish only when the test says so, in any order it chooses. */
-function harness(opts: { active?: string } = {}) {
+function harness(opts: { active?: string; deps?: Partial<NoteSaveDeps> } = {}) {
   let active: string | null = opts.active ?? "A.md";
   const calls: Call[] = [];
   const asked: LeaveQuestion[] = [];
@@ -38,6 +44,7 @@ function harness(opts: { active?: string } = {}) {
       copies.push({ path, text });
       return path.replace(/\.md$/, " (2).md");
     },
+    ...opts.deps,
   });
   return {
     save,
@@ -875,5 +882,121 @@ describe("NoteSave — a folder that stops answering", () => {
     const again = h.save.beforeClosing(); // the second close is not held past the wait
     await vi.advanceTimersByTimeAsync(5_000);
     expect(await again).toBe("close");
+  });
+});
+
+/** Where kept edits outlast the app, in memory: id → what was kept. */
+function outlasting() {
+  const kept = new Map<string, { root: string; path: string; text: string; base: string }>();
+  const forgotten: string[] = [];
+  let next = 0;
+  return {
+    kept,
+    forgotten,
+    deps: {
+      keepStranded: async (root: string, e: { path: string; text: string; base: string }) => {
+        const id = `k${++next}`;
+        kept.set(id, { root, ...e });
+        return id;
+      },
+      forgetStranded: async (_root: string, id: string) => {
+        kept.delete(id);
+        forgotten.push(id);
+      },
+    } satisfies Partial<NoteSaveDeps>,
+  };
+}
+
+describe("NoteSave — edits kept past closing the app", () => {
+  it("edits to a note left that cannot be written are kept outside the app, and let go of once they land", async () => {
+    const o = outlasting();
+    const h = harness({ deps: o.deps });
+    h.save.opened("a0");
+    h.save.schedule("A.md", "a1");
+    h.open("B.md", "b0");
+    await settle();
+    h.calls[0].settle(new Error("network path not found"));
+    await settle();
+    expect([...o.kept.values()]).toEqual([{ root: "/vault", path: "A.md", text: "a1", base: "a0" }]);
+
+    void h.save.flush();
+    await settle();
+    h.calls.at(-1)!.settle(written);
+    await settle();
+    expect(o.kept.size).toBe(0);
+    expect(h.save.stranded).toBe(0);
+  });
+
+  it("closing with such edits kept closes at once: nothing is lost by it", async () => {
+    const o = outlasting();
+    const h = harness({ deps: o.deps });
+    h.save.opened("a0");
+    h.save.schedule("A.md", "a1");
+    h.open("B.md", "b0");
+    await settle();
+    h.calls[0].settle(new Error("network path not found"));
+    await settle();
+
+    const closing = h.save.beforeClosing();
+    await settle();
+    h.calls.at(-1)?.settle(new Error("still not found")); // the retry on the way out
+    expect(await closing).toBe("close");
+    expect(o.kept.size).toBe(1);
+  });
+
+  it("closing while a save hangs keeps it outside the app and closes the first time", async () => {
+    const o = outlasting();
+    const h = harness({ deps: { ...o.deps, closeWaitMs: 10 } });
+    h.save.opened("a0");
+    h.save.schedule("A.md", "a1");
+    void h.save.flush();
+    await settle(); // the folder never answers
+
+    const closing = h.save.beforeClosing();
+    await vi.advanceTimersByTimeAsync(10);
+    expect(await closing).toBe("close");
+    expect([...o.kept.values()].map((k) => k.text)).toEqual(["a1"]);
+  });
+
+  it("edits kept from an earlier run are tried when the folder opens, and let go of when they land", async () => {
+    const o = outlasting();
+    const h = harness({ deps: o.deps });
+    h.open("B.md", "b0");
+    h.save.adopt("/vault", [{ id: "old1", path: "A.md", text: "a1", base: "a0" }]);
+    expect(h.save.stranded).toBe(1);
+
+    void h.save.flush();
+    await settle();
+    expect(h.calls.at(-1)).toMatchObject({ path: "A.md", text: "a1", expected: "a0" });
+    h.calls.at(-1)!.settle(written);
+    await settle();
+    expect(o.forgotten).toEqual(["old1"]);
+    expect(h.save.stranded).toBe(0);
+  });
+
+  it("a kept edit the note already holds is taken as landed, not kept as a copy", async () => {
+    // The save the app closed on landed after all, before it exited.
+    const o = outlasting();
+    const h = harness({ deps: o.deps });
+    h.open("B.md", "b0");
+    h.save.adopt("/vault", [{ id: "old1", path: "A.md", text: "a1", base: "a0" }]);
+    void h.save.flush();
+    await settle();
+    h.calls.at(-1)!.settle({ kind: "conflict", disk: "a1" });
+    await settle();
+    expect(h.copies).toEqual([]);
+    expect(o.forgotten).toEqual(["old1"]);
+    expect(h.state.saveError).toBeNull();
+  });
+
+  it("a kept edit whose note is moved is kept again under its new place", async () => {
+    const o = outlasting();
+    const h = harness({ deps: o.deps });
+    h.open("B.md", "b0");
+    h.save.adopt("/vault", [{ id: "old1", path: "A.md", text: "a1", base: "a0" }]);
+    await h.save.move(async () => (p) => p.replace("A.md", "dest/A.md"), "A.md");
+    await settle();
+    expect(o.forgotten).toEqual(["old1"]);
+    expect([...o.kept.values()]).toEqual([{ root: "/vault", path: "dest/A.md", text: "a1", base: "a0" }]);
   });
 });

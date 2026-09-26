@@ -497,6 +497,74 @@ pub fn set_aside_sidecar(root: String, rel: String) -> Result<String, String> {
     Ok(to.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default())
 }
 
+/// An edit kept because it could not be written to its note yet (see `stranded`).
+#[derive(Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct StrandedEdit {
+    pub id: String,
+    pub path: String,
+    pub text: String,
+    pub base: String,
+}
+
+fn stranded_dir(root: &Path) -> Result<PathBuf, String> {
+    Ok(personal_dir(root)?.join(crate::stranded::DIR))
+}
+
+/// Keeps an edit that could not be written to its note yet, until it is. Returns its id.
+#[tauri::command]
+pub async fn keep_stranded(
+    root: String,
+    path: String,
+    text: String,
+    base: String,
+) -> Result<String, String> {
+    off_main(move || {
+        let root = PathBuf::from(root);
+        let rel = crate::stranded::relative(&root, Path::new(&path))
+            .ok_or_else(|| "path is outside the vault".to_string())?;
+        let at = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+        let kept = crate::stranded::Kept { rel, text, base, at };
+        crate::stranded::keep(&stranded_dir(&root)?, &kept, atomic_bytes_beside)
+            .map_err(|e| e.to_string())
+    })
+    .await
+}
+
+/// Lets go of a kept edit once it has landed.
+#[tauri::command]
+pub async fn forget_stranded(root: String, id: String) -> Result<(), String> {
+    off_main(move || {
+        crate::stranded::forget(&stranded_dir(Path::new(&root))?, &id).map_err(|e| e.to_string())
+    })
+    .await
+}
+
+/// Every edit kept for this folder, oldest first, to be tried again now that it is open.
+#[tauri::command]
+pub async fn list_stranded(root: String) -> Result<Vec<StrandedEdit>, String> {
+    off_main(move || stranded_edits(Path::new(&root))).await
+}
+
+fn stranded_edits(root: &Path) -> Result<Vec<StrandedEdit>, String> {
+    Ok(crate::stranded::list(&stranded_dir(root)?)
+        .into_iter()
+        .map(|(id, kept)| {
+            let mut path = root.to_path_buf();
+            path.extend(kept.rel.split('/'));
+            StrandedEdit {
+                id,
+                path: path.to_string_lossy().to_string(),
+                text: kept.text,
+                base: kept.base,
+            }
+        })
+        .collect())
+}
+
 /// Runs `work` off the main thread. Anything that touches the notes folder goes through here: a
 /// folder that stops answering (a stalled sync or network drive) must hold up that one request, not
 /// the window.
@@ -2164,6 +2232,33 @@ mod tests {
         assert_eq!(std::fs::read_to_string(dir.join(&name)).unwrap(), "{half");
         assert_eq!(read_sidecar(root.clone(), "favorites.json".into()).unwrap(), None);
         assert!(set_aside_sidecar(root, "../elsewhere".into()).is_err());
+    }
+
+    #[test]
+    fn kept_edits_come_back_as_paths_in_the_folder_they_were_typed_in() {
+        let tmp = TempDir::new().unwrap();
+        let dir = stranded_dir(tmp.path()).unwrap();
+        let kept = crate::stranded::Kept {
+            rel: "sub/a.md".into(),
+            text: "typed".into(),
+            base: "before".into(),
+            at: 1,
+        };
+        let id = crate::stranded::keep(&dir, &kept, atomic_bytes_beside).unwrap();
+
+        let back = stranded_edits(tmp.path()).unwrap();
+        assert_eq!(
+            back,
+            vec![StrandedEdit {
+                id: id.clone(),
+                path: tmp.path().join("sub").join("a.md").to_string_lossy().to_string(),
+                text: "typed".into(),
+                base: "before".into(),
+            }]
+        );
+        assert!(!tmp.path().join("stranded").exists(), "kept outside the folder, not in it");
+        crate::stranded::forget(&dir, &id).unwrap();
+        assert!(stranded_edits(tmp.path()).unwrap().is_empty());
     }
 
     #[test]

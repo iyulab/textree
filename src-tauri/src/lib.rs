@@ -28,6 +28,7 @@ pub(crate) mod watcher;
 pub(crate) mod liveness;
 pub(crate) mod note_locks;
 pub(crate) mod state_dir;
+pub(crate) mod stranded;
 
 use host::HostHandle;
 use search::IndexHandle;
@@ -118,6 +119,9 @@ pub fn run() {
             commands::write_sidecar,
             commands::prepare_sidecar,
             commands::set_aside_sidecar,
+            commands::keep_stranded,
+            commands::forget_stranded,
+            commands::list_stranded,
             commands::search_content,
             commands::rebuild_index,
             commands::publish_site,
