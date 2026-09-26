@@ -638,12 +638,15 @@ describe("NoteSave — unsaved marker", () => {
     expect(h.state.dirty).toBe(false);
   });
 
-  it("an edit to the note being left does not mark the next one unsaved", async () => {
+  it("an edit to the note being left does not mark the next one unsaved, and goes on its way", async () => {
     const h = harness();
     h.save.schedule("A.md", "a1");
     h.open("B.md", "b0");
     expect(h.state.dirty).toBe(false);
-    expect(h.save.pending?.path).toBe("A.md");
+    expect(h.save.pending).toBeNull(); // no longer the open note's: an edit to a note left
+    expect(h.save.writing).toBe(1);
+    await settle();
+    expect(h.calls.map((c) => [c.path, c.text])).toEqual([["A.md", "a1"]]);
   });
 
   it("follows the open note through a move", async () => {
@@ -801,6 +804,27 @@ describe("NoteSave — a folder that stops answering", () => {
     expect(h.calls.filter((c) => c.path === "A.md")).toHaveLength(1);
     expect(h.copies).toEqual([]);
     expect(h.save.stranded).toBe(0);
+  });
+
+  it("leaving the next note is not held by the stalled one left before it", async () => {
+    const h = harness();
+    h.save.opened("a0");
+    h.save.schedule("A.md", "a1");
+    void h.save.flush();
+    await settle();
+    vi.advanceTimersByTime(10_000);
+    expect(await h.save.beforeLeaving()).toBe("busy");
+    h.open("B.md", "b0"); // nothing typed here
+
+    // Opening a third note, renaming this one: B has nothing unsaved, so nothing to wait for.
+    expect(await h.save.beforeLeaving()).toBe("saved");
+    expect(h.save.writing).toBe(1); // A's save, still on its way
+
+    h.calls[0].settle(written);
+    await settle();
+    expect(h.calls.filter((c) => c.path === "A.md")).toHaveLength(1);
+    expect(h.copies).toEqual([]);
+    expect(h.save.writing).toBe(0);
   });
 
   it("the edits of a stalled note left behind are kept if the folder then refuses them", async () => {

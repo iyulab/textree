@@ -330,9 +330,18 @@ export class NoteSave {
 
   /**
    * A note holding `text` on disk was opened (or none, with ""). An edit still pending for the one
-   * left keeps its own path.
+   * left is written to it — to its own path — as an edit to a note left.
    */
   opened(text: string): void {
+    // An edit still pending for a note that is no longer open is an edit to a note left, whether or
+    // not anything is typed into the next one: it goes on its way now. Kept as the open note's, it
+    // would be what leaving the next note waits for — and a folder that stopped answering would hold
+    // every note opened after it.
+    const open = this.deps.activePath();
+    if (this.#pending && (open === null || !samePath(this.#pending.path, open))) {
+      this.#writeLeft(this.#pending);
+      this.#pending = null;
+    }
     this.#synced = text;
     this.state.removed = false;
     this.state.conflictDisk = null;

@@ -26,7 +26,11 @@ test.afterAll(async () => {
 });
 
 test("a save the folder does not take: the note says so, another note opens, and the edits land once it answers", async () => {
-  const vault = createTempVault({ "slow.md": "before\n", "other.md": "# other\n" });
+  const vault = createTempVault({
+    "slow.md": "before\n",
+    "other.md": "# other\n",
+    "third.md": "# third\n",
+  });
   try {
     await loadVault(page, vault);
     await page.getByRole("treeitem", { name: /slow/ }).click();
@@ -48,11 +52,14 @@ test("a save the folder does not take: the note says so, another note opens, and
     await page.getByRole("treeitem", { name: /other/ }).click();
     await expect(page.locator(".cm-content")).toContainText("other");
     await expect(page.getByTestId("save-status")).toHaveText("Saved");
+    // Nor is leaving the note after it, left untouched.
+    await page.getByRole("treeitem", { name: /third/ }).click();
+    await expect(page.locator(".cm-content")).toContainText("third");
 
     releaseWrites();
     await expect.poll(() => readVaultFile(vault, "slow.md")).toMatch(/^before\s*typed/);
     // Landed once, where it belongs — no copy beside it.
-    expect(listVaultDir(vault, "").sort()).toEqual(["other.md", "slow.md"]);
+    expect(listVaultDir(vault, "").sort()).toEqual(["other.md", "slow.md", "third.md"]);
   } finally {
     releaseWrites();
     removeTempVault(vault);
