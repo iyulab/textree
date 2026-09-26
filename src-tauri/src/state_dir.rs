@@ -80,7 +80,7 @@ pub fn set_aside(dir: &Path, rel: &str, now_secs: u64) -> io::Result<PathBuf> {
         n += 1;
         to = dir.join(format!("{rel}.unreadable-{now_secs}-{n}"));
     }
-    std::fs::rename(&from, &to)?;
+    crate::fs_ops::patiently(|| std::fs::rename(&from, &to))?;
     Ok(to)
 }
 

@@ -9,6 +9,44 @@ use std::io;
 use std::path::{Component, Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+/// How long a refusal that passes on its own is waited out before it is reported.
+const PATIENCE: std::time::Duration = std::time::Duration::from_millis(1_000);
+
+/// Runs `op` again for a moment while Windows refuses it because another program has a file it
+/// touches open — a virus scanner, a search indexer or a sync tool looking at what was just
+/// written. That refusal passes on its own; reporting it would say a rename or a save failed when
+/// a moment later it would have gone through. Any other failure is reported at once, and so is
+/// this one when it lasts: then something really does hold the file.
+pub(crate) fn patiently<T>(mut op: impl FnMut() -> io::Result<T>) -> io::Result<T> {
+    let started = std::time::Instant::now();
+    let mut pause = std::time::Duration::from_millis(10);
+    loop {
+        match op() {
+            Err(e) if passes_on_its_own(&e) && started.elapsed() < PATIENCE => {
+                std::thread::sleep(pause);
+                pause = (pause * 2).min(std::time::Duration::from_millis(200));
+            }
+            done => return done,
+        }
+    }
+}
+
+/// Windows refuses a rename with "access denied" or "sharing violation" while another process has
+/// a file it moves open without allowing it to be deleted — for a folder, any file inside it.
+/// Elsewhere a rename is not refused that way.
+pub(crate) fn passes_on_its_own(e: &io::Error) -> bool {
+    const ERROR_ACCESS_DENIED: i32 = 5;
+    const ERROR_SHARING_VIOLATION: i32 = 32;
+    cfg!(windows) && matches!(e.raw_os_error(), Some(ERROR_ACCESS_DENIED | ERROR_SHARING_VIOLATION))
+}
+
+/// Renames a file or folder, waiting out a refusal that passes on its own ([`patiently`]).
+/// Every move in this module goes through here — the ones that undo a half-done change most of
+/// all: an undo that gives up on a scanner's glance leaves the change half-done.
+fn rename(from: &Path, to: &Path) -> io::Result<()> {
+    patiently(|| std::fs::rename(from, to))
+}
+
 /// Supported image extensions (lowercase). Other formats are rejected.
 const IMAGE_EXTS: &[&str] = &["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "avif"];
 
@@ -105,7 +143,7 @@ pub fn promote_leaf(root: &Path, leaf_md: &Path) -> io::Result<PathBuf> {
     }
     std::fs::create_dir(&new_dir)?;
     let new_body = new_dir.join(format!("{stem}.md"));
-    std::fs::rename(leaf_md, &new_body)?;
+    rename(leaf_md, &new_body)?;
     Ok(new_dir)
 }
 
@@ -151,14 +189,23 @@ pub fn rename_node(root: &Path, target: &Path, new_name: &str) -> io::Result<Pat
         if new_dir.exists() {
             return Err(err("an item with the same name already exists"));
         }
-        std::fs::rename(target, &new_dir)?;
+        rename(target, &new_dir)?;
         // If a folder note exists, rename it along to match the new folder name.
         let old_body = new_dir.join(format!("{old_name}.md"));
         if old_body.is_file() {
-            if let Err(e) = std::fs::rename(&old_body, new_dir.join(format!("{new_name}.md"))) {
-                // Step 2 failed → roll back step 1 (the directory rename, best-effort) to avoid partial corruption.
-                let _ = std::fs::rename(&new_dir, target);
-                return Err(e);
+            if let Err(e) = rename(&old_body, &new_dir.join(format!("{new_name}.md"))) {
+                // Step 2 failed → put the folder back, so it is not left renamed without its note.
+                // If that fails too, say where things are rather than leave a half-done rename
+                // looking like one that did not happen.
+                return Err(match rename(&new_dir, target) {
+                    Ok(()) => e,
+                    Err(back) => err(format!(
+                        "the folder was renamed but its note could not be, and putting the folder \
+                         back failed too. The folder is now at {}. (rename error: {e}; rollback \
+                         error: {back})",
+                        new_dir.display()
+                    )),
+                });
             }
         }
         Ok(new_dir)
@@ -170,7 +217,7 @@ pub fn rename_node(root: &Path, target: &Path, new_name: &str) -> io::Result<Pat
         if new_path.exists() {
             return Err(err("an item with the same name already exists"));
         }
-        std::fs::rename(target, &new_path)?;
+        rename(target, &new_path)?;
         Ok(new_path)
     }
 }
@@ -191,7 +238,7 @@ pub fn rename_note_unique(root: &Path, target: &Path, desired_name: &str) -> io:
     }
     let parent = target.parent().ok_or_else(|| err("no parent directory"))?;
     let dest = unique_in(parent, &format!("{desired_name}.md"), false);
-    std::fs::rename(target, &dest)?;
+    rename(target, &dest)?;
     Ok(dest)
 }
 
@@ -217,7 +264,7 @@ pub fn move_node(root: &Path, src: &Path, dest_dir: &Path) -> io::Result<PathBuf
     if dest.exists() {
         return Err(err("an item with the same name already exists in the destination folder"));
     }
-    std::fs::rename(src, &dest)?;
+    rename(src, &dest)?;
     Ok(dest)
 }
 
@@ -249,7 +296,7 @@ pub fn adopt_into_leaf(root: &Path, src: &Path, leaf_md: &Path) -> io::Result<Pa
             // If the rollback rename fails (e.g. a transient lock from Windows AV/indexer), the
             // original note vanishes trapped inside new_dir. Rather than swallow it silently, report
             // its location so it can be recovered.
-            match std::fs::rename(&body, leaf_md) {
+            match rename(&body, leaf_md) {
                 Ok(()) => {
                     let _ = std::fs::remove_dir(&new_dir);
                     Err(move_err)
@@ -396,6 +443,103 @@ impl PresentFiles {
 mod tests {
     use super::*;
     use tempfile::TempDir;
+
+    #[cfg(windows)]
+    #[test]
+    fn a_refusal_that_passes_is_waited_out() {
+        let mut tries = 0;
+        let done = patiently(|| {
+            tries += 1;
+            if tries < 3 {
+                Err(io::Error::from_raw_os_error(32))
+            } else {
+                Ok(tries)
+            }
+        });
+        assert_eq!(done.unwrap(), 3);
+    }
+
+    #[test]
+    fn any_other_failure_is_reported_at_once() {
+        let mut tries = 0;
+        let done: io::Result<()> = patiently(|| {
+            tries += 1;
+            Err(io::Error::other("the disk is full"))
+        });
+        assert!(done.is_err());
+        assert_eq!(tries, 1);
+    }
+
+    /// Opens `path` the way a scanner or indexer does: letting others read it, but not move it.
+    #[cfg(windows)]
+    fn hold_open(path: &Path) -> std::fs::File {
+        use std::os::windows::fs::OpenOptionsExt;
+        const FILE_SHARE_READ: u32 = 0x1;
+        std::fs::OpenOptions::new().read(true).share_mode(FILE_SHARE_READ).open(path).unwrap()
+    }
+
+    /// A folder `box` holding its note and one other note, with the other note held open.
+    #[cfg(windows)]
+    fn folder_with_a_held_note(root: &Path) -> std::fs::File {
+        let dir = root.join("box");
+        std::fs::create_dir(&dir).unwrap();
+        std::fs::write(dir.join("box.md"), "folder").unwrap();
+        std::fs::write(dir.join("inside.md"), "inside").unwrap();
+        hold_open(&dir.join("inside.md"))
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_folder_another_program_looks_into_for_a_moment_is_still_renamed() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        let held = folder_with_a_held_note(root);
+        let release = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(150));
+            drop(held);
+        });
+
+        let renamed = rename_node(root, &root.join("box"), "crate").unwrap();
+        release.join().unwrap();
+
+        assert_eq!(renamed, root.join("crate"));
+        assert!(root.join("crate").join("crate.md").is_file(), "its note follows");
+        assert!(root.join("crate").join("inside.md").is_file());
+        assert!(!root.join("box").exists());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn negative_control_a_folder_held_the_whole_time_is_refused_by_the_system() {
+        // Holding a note inside really makes the system refuse the rename — so the test above
+        // passes because the rename waited, not because nothing was refused.
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        let _held = folder_with_a_held_note(root);
+
+        let refused = rename_node(root, &root.join("box"), "crate").unwrap_err();
+        assert!(matches!(refused.raw_os_error(), Some(5 | 32)), "{refused:?}");
+        assert!(root.join("box").join("box.md").is_file(), "nothing moved");
+        assert!(!root.join("crate").exists());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_note_moved_while_another_program_looks_at_it_still_moves() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir(root.join("to")).unwrap();
+        std::fs::write(root.join("a.md"), "a").unwrap();
+        let held = hold_open(&root.join("a.md"));
+        let release = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(150));
+            drop(held);
+        });
+
+        let moved = move_node(root, &root.join("a.md"), &root.join("to")).unwrap();
+        release.join().unwrap();
+        assert_eq!(std::fs::read_to_string(moved).unwrap(), "a");
+    }
 
     #[test]
     fn present_files_agrees_with_a_per_file_check() {

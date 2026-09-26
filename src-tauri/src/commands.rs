@@ -115,41 +115,22 @@ pub(crate) fn atomic_write_bytes(root: &Path, path: &Path, content: &[u8]) -> io
     persist(tmp, path)
 }
 
-/// Renames `tmp` onto `path`, trying again for a moment when Windows refuses because another
-/// program has one of the two open — a virus scanner, a search indexer or a sync tool looking at the
-/// file just written. That refusal passes on its own; failing the save on it would say the edits
-/// were not saved when a moment later they would have been. Any other failure is reported at once,
-/// and so is this one when it lasts: then something really does hold the file.
-fn persist(mut tmp: NamedTempFile, path: &Path) -> io::Result<()> {
-    const PATIENCE: std::time::Duration = std::time::Duration::from_millis(1_000);
-    let started = std::time::Instant::now();
-    let mut pause = std::time::Duration::from_millis(10);
-    loop {
-        let refused = match write_step::before(write_step::Step::Rename) {
-            Err(e) => e,
-            Ok(()) => match tmp.persist(path) {
-                Ok(_) => return Ok(()),
-                Err(e) => {
-                    tmp = e.file;
-                    e.error
-                }
-            },
-        };
-        if !passes_on_its_own(&refused) || started.elapsed() >= PATIENCE {
-            return Err(refused);
+/// Renames `tmp` onto `path`, waiting out a refusal that passes on its own
+/// ([`patiently`](crate::fs_ops::patiently)) — failing the save on it would say the edits were
+/// not saved when a moment later they would have been.
+fn persist(tmp: NamedTempFile, path: &Path) -> io::Result<()> {
+    let mut tmp = Some(tmp);
+    crate::fs_ops::patiently(|| {
+        write_step::before(write_step::Step::Rename)?;
+        let file = tmp.take().expect("put back after every refused attempt");
+        match file.persist(path) {
+            Ok(_) => Ok(()),
+            Err(e) => {
+                tmp = Some(e.file);
+                Err(e.error)
+            }
         }
-        std::thread::sleep(pause);
-        pause = (pause * 2).min(std::time::Duration::from_millis(200));
-    }
-}
-
-/// Windows refuses a rename with "access denied" or "sharing violation" while another process has
-/// either file open without allowing it to be deleted — the transient case above. Elsewhere a
-/// rename is not refused that way.
-fn passes_on_its_own(e: &io::Error) -> bool {
-    const ERROR_ACCESS_DENIED: i32 = 5;
-    const ERROR_SHARING_VIOLATION: i32 = 32;
-    cfg!(windows) && matches!(e.raw_os_error(), Some(ERROR_ACCESS_DENIED | ERROR_SHARING_VIOLATION))
+    })
 }
 
 /// The points between the steps of an atomic write. In a shipped build they do nothing; tests
