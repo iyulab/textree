@@ -11,7 +11,11 @@
 //!   one temp file only where the application stages them, and — once the sweep that runs when a
 //!   folder is opened has been through — must hold exactly what it held before the write began.
 //!
-//! Negative controls at the bottom show the check is falsifiable.
+//! A third case is Windows refusing the rename because another program has the note open for a
+//! moment (a scanner, an indexer, a sync tool): the write waits it out and lands, and when the
+//! refusal lasts it fails with the note as it was. Checked both injected and with a real handle.
+//!
+//! Negative controls show the check is falsifiable.
 
 #![cfg(test)]
 
@@ -384,4 +388,123 @@ fn negative_control_the_shapes_are_built_where_they_claim() {
     let vault: PathBuf = tmp.path().join(shape.vault);
     assert!(!vault.join(".git").exists());
     assert!(tmp.path().join(".git").is_dir());
+}
+
+// --- a rename refused for a moment (Windows: another program has the file open) ---
+
+/// Makes the first `times` renames of this thread's writes be refused with `code`, then lets them
+/// through. Returns how many renames were tried.
+fn refuse_renames(times: usize, refusal: fn() -> io::Error) -> (write_step::Installed, Rc<RefCell<usize>>) {
+    let tried = Rc::new(RefCell::new(0usize));
+    let hook = write_step::install({
+        let tried = Rc::clone(&tried);
+        move |step| {
+            if step != Step::Rename {
+                return Ok(());
+            }
+            *tried.borrow_mut() += 1;
+            if *tried.borrow() <= times {
+                Err(refusal())
+            } else {
+                Ok(())
+            }
+        }
+    });
+    (hook, tried)
+}
+
+fn nothing_staged_left(base: &Path, shape: &Shape) -> Vec<String> {
+    read_disk(base).into_keys().filter(|rel| is_staged_temp(rel, shape.vault)).collect()
+}
+
+#[cfg(windows)]
+#[test]
+fn a_rename_refused_for_a_moment_still_lands() {
+    for shape in SHAPES {
+        let tmp = build(shape);
+        let base = tmp.path().to_path_buf();
+        let (_hook, tried) = refuse_renames(3, || io::Error::from_raw_os_error(32));
+
+        atomic_write_bytes(&base.join(shape.vault), &base.join(shape.target), shape.new)
+            .unwrap_or_else(|e| panic!("{}: a passing refusal failed the write: {e}", shape.name));
+
+        assert_eq!(*tried.borrow(), 4, "{}: tried again until it went through", shape.name);
+        assert_eq!(std::fs::read(base.join(shape.target)).unwrap(), shape.new, "{}", shape.name);
+        assert_eq!(nothing_staged_left(&base, shape), Vec::<String>::new(), "{}", shape.name);
+    }
+}
+
+#[cfg(windows)]
+#[test]
+fn a_rename_refused_for_good_fails_and_leaves_the_note_as_it_was() {
+    let shape = shape_named("a note in a repository");
+    let tmp = build(shape);
+    let base = tmp.path().to_path_buf();
+    let before = read_disk(&base);
+    let (_hook, tried) = refuse_renames(usize::MAX, || io::Error::from_raw_os_error(5));
+
+    let started = std::time::Instant::now();
+    let result = atomic_write_bytes(&base.join(shape.vault), &base.join(shape.target), shape.new);
+
+    assert!(result.is_err(), "a refusal that lasts is reported");
+    assert!(*tried.borrow() > 1, "it was tried again before giving up");
+    assert!(started.elapsed() < std::time::Duration::from_secs(3), "and it gave up");
+    assert_eq!(read_disk(&base).get(shape.target), before.get(shape.target));
+    assert_eq!(nothing_staged_left(&base, shape), Vec::<String>::new());
+}
+
+#[test]
+fn any_other_refusal_is_reported_at_once() {
+    let shape = shape_named("a note in a plain folder");
+    let tmp = build(shape);
+    let base = tmp.path().to_path_buf();
+    let (_hook, tried) = refuse_renames(usize::MAX, || io::Error::other("the disk is full"));
+
+    assert!(atomic_write_bytes(&base.join(shape.vault), &base.join(shape.target), shape.new).is_err());
+    assert_eq!(*tried.borrow(), 1);
+}
+
+/// Opens `path` the way a scanner or indexer does: letting others read it, but not replace it.
+#[cfg(windows)]
+fn hold_open(path: &Path) -> std::fs::File {
+    use std::os::windows::fs::OpenOptionsExt;
+    const FILE_SHARE_READ: u32 = 0x1;
+    std::fs::OpenOptions::new().read(true).share_mode(FILE_SHARE_READ).open(path).unwrap()
+}
+
+#[cfg(windows)]
+#[test]
+fn a_note_another_program_looks_at_for_a_moment_is_still_written() {
+    // Not injected: the operating system itself refuses the rename while the note is held.
+    let shape = shape_named("a note in a plain folder");
+    let tmp = build(shape);
+    let base = tmp.path().to_path_buf();
+    let held = hold_open(&base.join(shape.target));
+    let release = std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(150));
+        drop(held);
+    });
+
+    atomic_write_bytes(&base.join(shape.vault), &base.join(shape.target), shape.new).unwrap();
+    release.join().unwrap();
+
+    assert_eq!(std::fs::read(base.join(shape.target)).unwrap(), shape.new);
+    assert_eq!(nothing_staged_left(&base, shape), Vec::<String>::new());
+}
+
+#[cfg(windows)]
+#[test]
+fn negative_control_a_note_held_the_whole_time_is_refused_by_the_system() {
+    // Establishes that holding the note really makes the system refuse the rename — so the test
+    // above passes because the write waited, not because nothing was refused.
+    let shape = shape_named("a note in a plain folder");
+    let tmp = build(shape);
+    let base = tmp.path().to_path_buf();
+    let _held = hold_open(&base.join(shape.target));
+
+    let err = atomic_write_bytes(&base.join(shape.vault), &base.join(shape.target), shape.new)
+        .unwrap_err();
+    assert!(matches!(err.raw_os_error(), Some(5 | 32)), "{err:?}");
+    assert_eq!(std::fs::read(base.join(shape.target)).unwrap(), b"# before\n");
+    assert_eq!(nothing_staged_left(&base, shape), Vec::<String>::new());
 }
