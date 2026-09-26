@@ -9,6 +9,8 @@ mod gate_deletion_recoverable;
 #[cfg(test)]
 mod gate_foreground_latency;
 #[cfg(test)]
+mod gate_history_kept;
+#[cfg(test)]
 mod gate_staging_untouched;
 #[cfg(test)]
 mod gate_vault_untouched;
