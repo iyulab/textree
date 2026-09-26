@@ -259,7 +259,10 @@
       if (mine !== vaultLoads) return false; // overtaken: what it says is about a folder left behind
       throw e;
     }
-    if (mine !== vaultLoads) return false;
+    // Each step below puts something of this folder on screen; once a later opening has started,
+    // none of it is wanted.
+    const overtaken = () => mine !== vaultLoads;
+    if (overtaken()) return false;
     tree = opened;
     // When the vault changes, the previous vault's selection, open note, and edit-mode context are invalid.
     // If not cleared, a stale selectedNode would wrongly target the previous vault's path as the
@@ -276,8 +279,10 @@
     // version, and this is what carries them out. Keeping every file is its own guarantee.
     try {
       const moved = await moveStateOutOfVault(path);
+      if (overtaken()) return false;
       movedOut = worthShowing(moved) ? moved : null;
     } catch (e) {
+      if (overtaken()) return false;
       // A folder that could not be tidied still opens; the notes are what matter.
       opError = friendlyError(e);
     }
@@ -288,13 +293,16 @@
     } catch (e) {
       opError = friendlyError(e); // the folder still opens; writing is refused where it must be
     }
+    if (overtaken()) return false;
     const setAside = await nav.load(path, readOnly); // load favorites/order settings
     const viewsSetAside = await views.load(path, readOnly); // saved folder views (views.json)
     if (viewsSetAside) setAside.push(viewsSetAside);
+    if (overtaken()) return false;
     settingsNotice = describeSettingsOnOpen(readOnly, setAside);
     // Edits an earlier run could not write to this folder's notes: try them now.
     try {
       const kept = await listStranded(path);
+      if (overtaken()) return false;
       if (kept.length > 0) {
         save.adopt(path, kept);
         void save.flush();
