@@ -1325,7 +1325,7 @@
 
     const win = getCurrentWindow();
     const unlistenClose = win.onCloseRequested(async (event) => {
-      if (!save.pending && save.stranded === 0) return; // nothing to save → proceed with default close
+      if (!save.pending && save.stranded === 0 && save.writing === 0) return; // nothing to save → proceed with default close
       event.preventDefault();
       // Unsaved edits keep the window open, with the banner or warning saying why (see beforeClosing).
       if ((await save.beforeClosing()) === "close") await win.destroy();
@@ -1643,7 +1643,17 @@
         {/if}
         <div class="title-tools">
           {#if !saveState.saveError && !saveState.removed}
-            <span class="status">{saveState.dirty ? "● Saving…" : "Saved"}</span>
+            <span
+              class="status"
+              data-testid="save-status"
+              title={saveState.stalled
+                ? "Your edits are kept and will be written as soon as the folder responds."
+                : undefined}
+            >{saveState.stalled
+                ? "● Still saving — the folder isn't answering"
+                : saveState.dirty
+                  ? "● Saving…"
+                  : "Saved"}</span>
           {/if}
           <button
             class="icon-btn read-toggle"

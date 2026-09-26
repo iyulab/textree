@@ -49,6 +49,11 @@ home; without that isolation it is the developer's real Documents folder, and th
 asserting against personal notes. Start the app any other way and they fail by name (see
 `expectIsolatedDefaultVault` in `onboarding.spec.ts`) rather than as a puzzling mismatch.
 
+It also sets `TEXTREE_E2E_STALL_FLAG` to a file in the temp directory. While that file exists, the
+development build holds every write just before it lands — a folder that has stopped answering.
+Specs create and remove it with `stallWrites()` / `releaseWrites()`; release builds do not have
+the hold at all.
+
 > ⚠️ The old `$env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS` route no longer works — WebView2
 > Runtime 150+ ignores the loader environment variable, so the CDP port silently never opens.
 > Setting `additionalBrowserArgs` replaces wry's default arguments, which is why the overlay

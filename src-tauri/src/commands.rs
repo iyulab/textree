@@ -132,9 +132,24 @@ pub(crate) mod write_step {
         Rename,
     }
 
-    #[cfg(not(test))]
+    #[cfg(all(not(test), not(debug_assertions)))]
     #[inline(always)]
     pub(crate) fn before(_: Step) -> io::Result<()> {
+        Ok(())
+    }
+
+    /// Development builds only: while the file named by `TEXTREE_E2E_STALL_FLAG` exists, every
+    /// write waits just before its rename — how the end-to-end tests make a folder stop answering.
+    #[cfg(all(not(test), debug_assertions))]
+    pub(crate) fn before(step: Step) -> io::Result<()> {
+        if step == Step::Rename {
+            if let Some(flag) = std::env::var_os("TEXTREE_E2E_STALL_FLAG") {
+                let flag = std::path::PathBuf::from(flag);
+                while flag.exists() {
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                }
+            }
+        }
         Ok(())
     }
 

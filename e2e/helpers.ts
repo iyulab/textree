@@ -10,6 +10,19 @@ import { tmpdir } from "node:os";
  */
 export const E2E_CDP_HANDSHAKE = join(tmpdir(), "textree-e2e-cdp.json");
 
+/** While this file exists the app's writes hang before landing. Keep in sync with scripts/dev-e2e.mjs. */
+const E2E_STALL_FLAG = join(tmpdir(), "textree-e2e-stall");
+
+/** Make every write the app starts from now on hang, as on a folder that stopped answering. */
+export function stallWrites(): void {
+  writeFileSync(E2E_STALL_FLAG, "");
+}
+
+/** Let hanging writes land. */
+export function releaseWrites(): void {
+  rmSync(E2E_STALL_FLAG, { force: true });
+}
+
 function cdpEndpoint(): string {
   if (process.env.TEXTREE_E2E_CDP) return process.env.TEXTREE_E2E_CDP;
   if (existsSync(E2E_CDP_HANDSHAKE)) {
