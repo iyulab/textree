@@ -80,7 +80,7 @@ fn atomic_bytes_beside(path: &Path, content: &[u8]) -> io::Result<()> {
     let mut tmp = NamedTempFile::new_in(dir)?;
     tmp.write_all(content)?;
     tmp.as_file().sync_all()?;
-    persist(tmp, path)
+    persist(tmp, path, Landing::Replace)
 }
 
 /// [`atomic_bytes_beside`] for a file that must not exist yet: refuses with
@@ -93,17 +93,7 @@ fn atomic_new_beside(path: &Path, content: &[u8]) -> io::Result<()> {
     let mut tmp = NamedTempFile::new_in(dir)?;
     tmp.write_all(content)?;
     tmp.as_file().sync_all()?;
-    let mut tmp = Some(tmp);
-    crate::fs_ops::patiently(|| {
-        let file = tmp.take().expect("put back after every refused attempt");
-        match file.persist_noclobber(path) {
-            Ok(_) => Ok(()),
-            Err(e) => {
-                tmp = Some(e.file);
-                Err(e.error)
-            }
-        }
-    })
+    persist(tmp, path, Landing::New)
 }
 
 /// Atomic file write: write to a temp file in repository storage (or beside the target when no
@@ -116,6 +106,24 @@ pub(crate) fn atomic_write(root: &Path, path: &Path, content: &str) -> io::Resul
 /// The same guarantee for content that is not necessarily text — a restored file can be
 /// anything that was kept alongside the notes.
 pub(crate) fn atomic_write_bytes(root: &Path, path: &Path, content: &[u8]) -> io::Result<()> {
+    atomic_write_in_vault(root, path, content, Landing::Replace)
+}
+
+/// [`atomic_write_bytes`] for a file that must not exist yet: refuses with
+/// [`io::ErrorKind::AlreadyExists`] rather than replacing one that arrived after its place was
+/// found free.
+fn atomic_create_bytes(root: &Path, path: &Path, content: &[u8]) -> io::Result<()> {
+    atomic_write_in_vault(root, path, content, Landing::New)
+}
+
+/// Whether an atomic write may replace what is at its target.
+#[derive(Clone, Copy)]
+enum Landing {
+    Replace,
+    New,
+}
+
+fn atomic_write_in_vault(root: &Path, path: &Path, content: &[u8], landing: Landing) -> io::Result<()> {
     write_step::before(write_step::Step::CreateTemp)?;
     // No repository: stage at the top of the folder, under a name of our own. It exists only
     // until the rename a moment later; one a crash leaves is swept on the next open. The top of
@@ -134,19 +142,23 @@ pub(crate) fn atomic_write_bytes(root: &Path, path: &Path, content: &[u8]) -> io
     write_step::before(write_step::Step::Sync)?;
     tmp.as_file().sync_all()?;
     // persist is a rename within the same volume (both under the vault root), so it is atomic and
-    // replaces the existing file.
-    persist(tmp, path)
+    // replaces the existing file — or, landing new, refuses to.
+    persist(tmp, path, landing)
 }
 
 /// Renames `tmp` onto `path`, waiting out a refusal that passes on its own
 /// ([`patiently`](crate::fs_ops::patiently)) — failing the save on it would say the edits were
 /// not saved when a moment later they would have been.
-fn persist(tmp: NamedTempFile, path: &Path) -> io::Result<()> {
+fn persist(tmp: NamedTempFile, path: &Path, landing: Landing) -> io::Result<()> {
     let mut tmp = Some(tmp);
     crate::fs_ops::patiently(|| {
         write_step::before(write_step::Step::Rename)?;
         let file = tmp.take().expect("put back after every refused attempt");
-        match file.persist(path) {
+        let landed = match landing {
+            Landing::Replace => file.persist(path),
+            Landing::New => file.persist_noclobber(path),
+        };
+        match landed {
             Ok(_) => Ok(()),
             Err(e) => {
                 tmp = Some(e.file);
@@ -2016,8 +2028,15 @@ pub fn restore_deleted(root: String, rel: String) -> Result<RestoredNote, String
         .map_err(|e| e.message().to_string())?
         .ok_or_else(|| format!("'{rel}' is not in this folder's history"))?;
 
-    let dest = crate::fs_ops::place_restored(root_p, &rel).map_err(|e| e.to_string())?;
-    atomic_write_bytes(root_p, &dest, &content).map_err(|e| e.to_string())?;
+    // Found free, then taken before it is written (a sync client, another program): the next free
+    // place instead — bringing something back never costs what is there.
+    let dest = loop {
+        let dest = crate::fs_ops::place_restored(root_p, &rel).map_err(|e| e.to_string())?;
+        match atomic_create_bytes(root_p, &dest, &content) {
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
+            written => break written.map(|()| dest).map_err(|e| e.to_string())?,
+        }
+    };
     log::info!("restore_deleted: {} (as deleted: {as_deleted})", dest.display());
     Ok(RestoredNote { rel: rel_to_root(root_p, &dest)?, as_deleted })
 }
@@ -2519,6 +2538,21 @@ mod tests {
 
         assert!(delete_node(root_s, note.clone()).is_err(), "the system refuses while it is held");
         assert!(Path::new(&note).exists());
+    }
+
+    #[test]
+    fn a_note_brought_back_never_lands_on_a_file_that_arrived_first() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        git2::Repository::init(root).unwrap();
+        let there = root.join("a.md");
+        std::fs::write(&there, "arrived first").unwrap();
+
+        let refused = atomic_create_bytes(root, &there, b"brought back").unwrap_err();
+        assert_eq!(refused.kind(), io::ErrorKind::AlreadyExists);
+        assert_eq!(std::fs::read_to_string(&there).unwrap(), "arrived first");
+        atomic_create_bytes(root, &root.join("b.md"), b"new").unwrap();
+        assert_eq!(std::fs::read_to_string(root.join("b.md")).unwrap(), "new");
     }
 
     #[test]

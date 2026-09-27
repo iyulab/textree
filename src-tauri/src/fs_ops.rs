@@ -105,10 +105,10 @@ fn check_parent_and_name(root: &Path, parent: &Path, name: &str) -> io::Result<(
 pub fn create_note(root: &Path, parent: &Path, stem: &str) -> io::Result<PathBuf> {
     check_parent_and_name(root, parent, stem)?;
     let path = parent.join(format!("{stem}.md"));
-    if path.exists() {
-        return Err(err("an item with the same name already exists"));
-    }
-    std::fs::write(&path, "")?;
+    write_new(&path, b"").map_err(|e| match e.kind() {
+        io::ErrorKind::AlreadyExists => err("an item with the same name already exists"),
+        _ => e,
+    })?;
     Ok(path)
 }
 
@@ -122,15 +122,13 @@ pub fn create_untitled_note(root: &Path, parent: &Path) -> io::Result<PathBuf> {
     if !is_within(root, parent) {
         return Err(err("path is outside the vault"));
     }
-    let path = unique_in(parent, "Untitled.md", false);
-    std::fs::write(&path, "")?;
-    Ok(path)
+    write_unique(parent, "Untitled.md", b"")
 }
 
 /// Creates `parent/<stem>.md` with `content`, auto-numbering on collision via `unique_in`
-/// (`Summary of X`, `Summary of X (1)`, …). Like the other `create_*` fns it always writes a
-/// brand-new unique path, so it uses a plain `fs::write` (no atomic_write / self_write: no
-/// existing data is at risk, and the watcher reflects the new file into the tree).
+/// (`Summary of X`, `Summary of X (1)`, …). Like the other `create_*` fns it only ever creates a
+/// file ([`write_new`]), so no existing data is at risk and no atomic_write / self_write is needed
+/// (the watcher reflects the new file into the tree).
 pub fn create_note_with_content(
     root: &Path,
     parent: &Path,
@@ -138,9 +136,7 @@ pub fn create_note_with_content(
     content: &str,
 ) -> io::Result<PathBuf> {
     check_parent_and_name(root, parent, stem)?;
-    let path = unique_in(parent, &format!("{stem}.md"), false);
-    std::fs::write(&path, content)?;
-    Ok(path)
+    write_unique(parent, &format!("{stem}.md"), content.as_bytes())
 }
 
 /// Creates the `parent/name/` container and its folder note `parent/name/name.md`.
@@ -152,7 +148,7 @@ pub fn create_folder(root: &Path, parent: &Path, name: &str) -> io::Result<PathB
         return Err(err("an item with the same name already exists"));
     }
     std::fs::create_dir(&dir)?;
-    std::fs::write(dir.join(format!("{name}.md")), "")?;
+    write_new(&dir.join(format!("{name}.md")), b"")?;
     Ok(dir)
 }
 
@@ -178,6 +174,26 @@ pub fn promote_leaf(root: &Path, leaf_md: &Path) -> io::Result<PathBuf> {
     let new_body = new_dir.join(format!("{stem}.md"));
     rename(leaf_md, &new_body)?;
     Ok(new_dir)
+}
+
+/// Creates `path` holding `bytes`, refusing with [`io::ErrorKind::AlreadyExists`] if anything is
+/// there. Creating is never writing over: a name checked free can be taken before the write — by a
+/// sync client, another program — and `std::fs::write` would then empty that file into this one.
+fn write_new(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    use std::io::Write;
+    std::fs::File::create_new(path)?.write_all(bytes)
+}
+
+/// Creates a new file for `file_name` in `dir` under the first free name ([`unique_in`]), moving on
+/// to the next if that one is taken before it is created. Returns where it went.
+fn write_unique(dir: &Path, file_name: &str, bytes: &[u8]) -> io::Result<PathBuf> {
+    loop {
+        let path = unique_in(dir, file_name, false);
+        match write_new(&path, bytes) {
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
+            written => return written.map(|()| path),
+        }
+    }
 }
 
 /// Finds a non-colliding path for `file_name` inside `dir` (`name`, `name (1)`, …).
@@ -375,8 +391,7 @@ pub fn save_attachment(
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis())
         .unwrap_or(0);
-    let dest = unique_in(&assets, &format!("Pasted-{millis}.{ext}"), false);
-    std::fs::write(&dest, bytes)?;
+    let dest = write_unique(&assets, &format!("Pasted-{millis}.{ext}"), bytes)?;
     let name = dest
         .file_name()
         .and_then(|s| s.to_str())
@@ -719,6 +734,22 @@ mod tests {
         assert_eq!(std::fs::read_to_string(dir.join("journal.md")).unwrap(), "a child called journal");
         assert_eq!(std::fs::read_to_string(dir.join("diary.md")).unwrap(), "diary body");
         assert!(!tmp.path().join("journal").exists(), "the folder is put back");
+    }
+
+    #[test]
+    fn creating_never_writes_over_a_file_that_is_there() {
+        let tmp = TempDir::new().unwrap();
+        let taken = tmp.path().join("taken.md");
+        std::fs::write(&taken, "someone else's").unwrap();
+
+        assert_eq!(write_new(&taken, b"").unwrap_err().kind(), io::ErrorKind::AlreadyExists);
+        assert_eq!(std::fs::read_to_string(&taken).unwrap(), "someone else's");
+        assert!(create_note(tmp.path(), tmp.path(), "taken").is_err());
+        assert_eq!(std::fs::read_to_string(&taken).unwrap(), "someone else's");
+
+        let made = write_unique(tmp.path(), "taken.md", b"mine").unwrap();
+        assert_eq!(made, tmp.path().join("taken (1).md"));
+        assert_eq!(std::fs::read_to_string(&taken).unwrap(), "someone else's");
     }
 
     #[test]
