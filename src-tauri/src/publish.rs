@@ -8,7 +8,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::ffi::OsString;
-use std::io::{Read, Write};
+use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::time::{Duration, Instant};
@@ -101,6 +101,83 @@ pub fn validate_publish_paths(vault: &Path, out: &Path) -> Result<(), String> {
         return Err("the output directory must not contain the vault".into());
     }
     Ok(())
+}
+
+/// What publishing the vault sends out, vault-relative and `/`-separated, each list sorted.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Outgoing {
+    /// Markdown notes (`.md`, any case) — each becomes a page.
+    pub notes: Vec<String>,
+    /// Every other file the renderer copies alongside the pages.
+    pub files: Vec<String>,
+    /// Files whose name starts with `.` — tooling state and secrets (`.env`, `.gitignore`), never
+    /// the author's content. Kept out of the site and listed so the person can see they were.
+    pub hidden: Vec<String>,
+}
+
+/// Lists what a publish renders, walking the vault the way the renderer does: folders whose name
+/// starts with `.` and `node_modules` are not entered, regular files are taken, and anything else
+/// (a symbolic link included — `file_type` does not follow it) is passed over.
+pub fn outgoing(vault: &Path) -> io::Result<Outgoing> {
+    fn walk(dir: &Path, rel: &str, found: &mut Outgoing) -> io::Result<()> {
+        for entry in std::fs::read_dir(dir)? {
+            let entry = entry?;
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let child = if rel.is_empty() { name.clone() } else { format!("{rel}/{name}") };
+            let kind = entry.file_type()?;
+            if kind.is_dir() {
+                if !name.starts_with('.') && name != "node_modules" {
+                    walk(&entry.path(), &child, found)?;
+                }
+            } else if kind.is_file() {
+                if name.starts_with('.') {
+                    found.hidden.push(child);
+                } else if is_note(&name) {
+                    found.notes.push(child);
+                } else {
+                    found.files.push(child);
+                }
+            }
+        }
+        Ok(())
+    }
+    let mut found = Outgoing::default();
+    walk(vault, "", &mut found)?;
+    found.notes.sort();
+    found.files.sort();
+    found.hidden.sort();
+    Ok(found)
+}
+
+/// Whether the renderer turns this file into a page.
+fn is_note(name: &str) -> bool {
+    let bytes = name.as_bytes();
+    bytes.len() >= 3 && bytes[bytes.len() - 3..].eq_ignore_ascii_case(b".md")
+}
+
+/// The arguments after the renderer's own prefix: build `vault` into `out`, leaving `hidden` out.
+fn canopy_args(
+    vault: &Path,
+    out: &Path,
+    options: &PublishOptions,
+    tokens_css: Option<&Path>,
+    hidden: &[String],
+) -> Vec<OsString> {
+    let mut args: Vec<OsString> = vec!["build".into(), vault.into(), out.into()];
+    if let Some(title) = &options.site_title {
+        args.push("--site-title".into());
+        args.push(title.into());
+    }
+    if let Some(path) = tokens_css {
+        args.push("--tokens-css".into());
+        args.push(path.into());
+    }
+    // TODO(upstream: canopy skips dot-directories but not dot-files; drop this once the pinned canopy does)
+    for rel in hidden {
+        args.push("--exclude".into());
+        args.push(rel.into());
+    }
+    args
 }
 
 /// Counts `.html` files in the output tree — the number of published pages reported back.
@@ -196,15 +273,11 @@ pub fn run_publish(
         None => None,
     };
 
+    let hidden = outgoing(vault).map_err(|e| e.to_string())?.hidden;
+
     let mut cmd = Command::new(&canopy.program);
     cmd.args(&canopy.prefix_args);
-    cmd.arg("build").arg(vault).arg(out);
-    if let Some(title) = &options.site_title {
-        cmd.arg("--site-title").arg(title);
-    }
-    if let Some(f) = &tokens_file {
-        cmd.arg("--tokens-css").arg(f.path());
-    }
+    cmd.args(canopy_args(vault, out, options, tokens_file.as_ref().map(|f| f.path()), &hidden));
     // Run the canopy CLI without flashing a console window (Windows).
     crate::process_ext::no_console_window(&mut cmd);
 
@@ -303,6 +376,92 @@ mod tests {
         assert_eq!(count_html_pages(tmp.path()), 2);
     }
 
+    fn put(root: &Path, rel: &str) {
+        let path = root.join(rel);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, "x").unwrap();
+    }
+
+    #[test]
+    fn outgoing_walks_the_vault_as_the_renderer_does() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        for rel in [
+            "a.md",
+            "Upper.MD",
+            "sub/deep/b.md",
+            "sub/image.png",
+            ".env",
+            "sub/.DS_Store",
+            ".hidden-note.md",
+            ".git/config",
+            ".obsidian/x.md",
+            "node_modules/pkg/readme.md",
+            "sub/node_modules/y.md",
+        ] {
+            put(root, rel);
+        }
+
+        let found = outgoing(root).unwrap();
+        assert_eq!(found.notes, vec!["Upper.MD", "a.md", "sub/deep/b.md"]);
+        assert_eq!(found.files, vec!["sub/image.png"]);
+        assert_eq!(found.hidden, vec![".env", ".hidden-note.md", "sub/.DS_Store"]);
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn outgoing_passes_over_a_symbolic_link() {
+        let tmp = TempDir::new().unwrap();
+        put(tmp.path(), "a.md");
+        let target = TempDir::new().unwrap();
+        put(target.path(), "outside.md");
+        let file_link = std::os::windows::fs::symlink_file(
+            target.path().join("outside.md"),
+            tmp.path().join("linked.md"),
+        );
+        let dir_link =
+            std::os::windows::fs::symlink_dir(target.path(), tmp.path().join("linked-dir"));
+        if file_link.is_err() || dir_link.is_err() {
+            eprintln!("skipped: this account may not create symbolic links");
+            return;
+        }
+        assert_eq!(outgoing(tmp.path()).unwrap().notes, vec!["a.md"]);
+    }
+
+    #[test]
+    fn a_hidden_file_is_left_out_of_the_render() {
+        let tmp = TempDir::new().unwrap();
+        put(tmp.path(), ".env");
+        put(tmp.path(), "a.md");
+        let found = outgoing(tmp.path()).unwrap();
+        assert_eq!(found.hidden, vec![".env"]);
+        assert_eq!(found.notes, vec!["a.md"]);
+
+        let options = PublishOptions { site_title: None, tokens_css: None };
+        let args = canopy_args(tmp.path(), Path::new("site"), &options, None, &found.hidden);
+        let excluded = args.windows(2).any(|w| w[0] == "--exclude" && w[1] == ".env");
+        assert!(excluded, "expected `--exclude .env` in {args:?}");
+        assert_eq!(args[0], "build");
+    }
+
+    #[test]
+    fn canopy_args_carry_the_title_and_tokens_and_nothing_else() {
+        let options = PublishOptions { site_title: Some("Site".into()), tokens_css: None };
+        let args = canopy_args(
+            Path::new("v"),
+            Path::new("o"),
+            &options,
+            Some(Path::new("t.css")),
+            &[],
+        );
+        let expected: Vec<OsString> =
+            ["build", "v", "o", "--site-title", "Site", "--tokens-css", "t.css"]
+                .iter()
+                .map(OsString::from)
+                .collect();
+        assert_eq!(args, expected);
+    }
+
     #[test]
     fn canopy_from_resource_dir_finds_bundled_node_and_cli() {
         let tmp = TempDir::new().unwrap();
@@ -346,6 +505,7 @@ mod tests {
         let note = vault.join("hello.md");
         let source = "# Hello\n\nworld\n";
         std::fs::write(&note, source).unwrap();
+        std::fs::write(vault.join(".env"), "SECRET=1\n").unwrap();
         let out = tmp.path().join("site");
 
         let result = run_publish(&vault, &out, &PublishOptions { site_title: None, tokens_css: None }, &canopy, RENDER_TIMEOUT)
@@ -353,6 +513,7 @@ mod tests {
 
         assert!(result.page_count >= 1, "expected at least one published page");
         assert!(out.join("hello.html").exists(), "expected hello.html in the output");
+        assert!(!out.join(".env").exists(), "a hidden file must not reach the site");
         // The source vault note is untouched.
         assert_eq!(std::fs::read_to_string(&note).unwrap(), source);
     }
