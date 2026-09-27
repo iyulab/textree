@@ -7,7 +7,8 @@
  * (`host:smoke --exe`, the E2E suite) would then verify that other build and pass. Assembling
  * records a stamp; the checks compare it with what they mean to test:
  *
- *   host    against the host source as it stands now (src-host/)
+ *   host    against the host source as it stands now (src-host/) and the app version it is
+ *           stamped with (src-tauri/tauri.conf.json — assembling passes it to the build)
  *   canopy  against the renderer commit a release ships (.github/canopy-ref) — the renderer is
  *           built from a separate checkout, which is often ahead of the pin on purpose
  *
@@ -32,6 +33,7 @@ export const SIDECARS = {
 };
 const CANOPY_STAGE = join(REPO, "src-tauri", "resources", "canopy");
 const CANOPY_REF = join(REPO, ".github", "canopy-ref");
+const APP_CONFIG = join(REPO, "src-tauri", "tauri.conf.json");
 
 const stampPath = (kind) => join(REPO, ".cache", "sidecar-provenance", `${kind}.json`);
 const readStamp = (kind) => (existsSync(stampPath(kind)) ? JSON.parse(readFileSync(stampPath(kind), "utf8")) : null);
@@ -64,12 +66,14 @@ function pendingDigest(cwd, pathspec) {
 /**
  * The source as it stands: the committed tree of the source folder plus a digest of anything
  * uncommitted in it (changes and untracked files), so a build of uncommitted work still matches
- * that same uncommitted work — and nothing else.
+ * that same uncommitted work — and nothing else. The app version is part of it: the build is
+ * stamped with it, so a version bump outside the source folder still makes an older build stale.
  */
 export function sourceState(source) {
   const tree = gitIn(REPO, "rev-parse", `HEAD:${source}`).trim();
   const commit = gitIn(REPO, "rev-parse", "--short", "HEAD").trim();
-  return { tree, commit, pending: pendingDigest(REPO, source) };
+  const version = JSON.parse(readFileSync(APP_CONFIG, "utf8")).version ?? null;
+  return { tree, commit, pending: pendingDigest(REPO, source), version };
 }
 
 export function stamp(kind) {
@@ -82,12 +86,16 @@ export function stamp(kind) {
 /**
  * Pure: stamp + exe hash + current source → verdict.
  * current  — built from exactly the source as it stands
- * stale    — built from other source (another commit, or other uncommitted changes)
+ * stale    — built from other source (another commit, or other uncommitted changes) or for
+ *            another app version
  * unknown  — no stamp, or the exe is not the one the stamp describes
  */
 export function judge(record, exeSha256, now) {
   if (!record || record.exeSha256 !== exeSha256) return { verdict: "unknown" };
-  if (record.tree === now.tree && record.pending === now.pending) return { verdict: "current", built: record };
+  // A stamp from before versions were recorded has no `version` — it cannot vouch for one.
+  if (record.tree === now.tree && record.pending === now.pending && record.version === now.version) {
+    return { verdict: "current", built: record };
+  }
   return { verdict: "stale", built: record };
 }
 
@@ -102,7 +110,7 @@ export function check(kind, exePath) {
 }
 
 export function describe(result) {
-  const at = (s) => `${s.commit}${s.pending ? " + uncommitted changes" : ""}`;
+  const at = (s) => `${s.commit}${s.pending ? " + uncommitted changes" : ""}, version ${s.version ?? "unrecorded"}`;
   switch (result.verdict) {
     case "current":
       return `built from the current source (${at(result.built)})`;
