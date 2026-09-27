@@ -211,6 +211,16 @@ fn names_path(commit: &git2::Commit<'_>, target: &Path) -> bool {
 
 fn touch(repo: &Repository, commit: &git2::Commit<'_>, target: &Path) -> Result<Touch, git2::Error> {
     let here = blob_in_tree(repo, &commit.tree()?, target);
+    // A revision that joins two lines of history carries each path from one of them. It is a
+    // state of the path only when it matches none — otherwise the path's history is the line it
+    // came from, and the join would repeat a state that line already holds.
+    if commit.parent_count() > 1 {
+        for parent in commit.parents() {
+            if blob_in_tree(repo, &parent.tree()?, target) == here {
+                return Ok(Touch::Untouched);
+            }
+        }
+    }
     let before = match commit.parent(0) {
         Ok(parent) => blob_in_tree(repo, &parent.tree()?, target),
         Err(_) => None,

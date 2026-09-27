@@ -20,6 +20,9 @@ pub(crate) mod git_engine;
 // Wired to the remote commands next; until then only its tests reach it.
 #[cfg_attr(not(test), allow(dead_code))]
 pub(crate) mod git_transport;
+// Wired to the remote commands next; until then only its tests reach it.
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) mod remote;
 pub(crate) mod pathsafe;
 pub(crate) mod process_ext;
 pub(crate) mod publish;
