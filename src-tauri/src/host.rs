@@ -569,8 +569,20 @@ fn resolve_test_key(api_key: Option<String>, lookup: impl FnOnce() -> Option<Str
 /// NOT touch the running host — a plain outbound GET, so the user gets fast feedback before
 /// committing to a host restart. `/v1/models` is the OpenAI-compatible listing convention
 /// (Ollama, LM Studio, vLLM); GPUStack proxies the same convention under its `/v1-openai/` path.
+///
+/// Off the main thread: an endpoint that does not answer holds the request for the whole timeout,
+/// and on the main thread that is the whole window.
 #[tauri::command]
-pub fn test_byo_connection(preset: String, base_url: String, api_key: Option<String>) -> Result<(), String> {
+pub async fn test_byo_connection(
+    preset: String,
+    base_url: String,
+    api_key: Option<String>,
+) -> Result<(), String> {
+    crate::commands::off_main(move || probe_byo_connection(preset, base_url, api_key)).await
+}
+
+/// The probe behind [`test_byo_connection`].
+pub fn probe_byo_connection(preset: String, base_url: String, api_key: Option<String>) -> Result<(), String> {
     // Frontier providers use versioned base URLs (or a fixed endpoint for anthropic) and their own
     // auth; the Bearer /v1/models probe below assumes a version-less base, so skip it for them and
     // let the first real request validate.
@@ -1367,7 +1379,7 @@ mod tests {
     fn test_byo_connection_anthropic_is_ok_without_base_url() {
         // Anthropic uses x-api-key + a fixed endpoint, not the Bearer /v1/models probe.
         // A blank base URL must not be treated as an unreachable server.
-        let r = test_byo_connection("anthropic".to_string(), "".to_string(), Some("sk-ant".to_string()));
+        let r = probe_byo_connection("anthropic".to_string(), "".to_string(), Some("sk-ant".to_string()));
         assert!(r.is_ok());
     }
 
@@ -1377,17 +1389,17 @@ mod tests {
         // would double-version the path and 404. These must short-circuit exactly like anthropic
         // and never reach the network — asserted here by using base URLs that would fail DNS/
         // connect if the probe actually ran (real hosts, but the short-circuit means it doesn't matter).
-        let r = test_byo_connection(
+        let r = probe_byo_connection(
             "openai".to_string(),
             "https://api.openai.com/v1".to_string(),
             Some("sk-test".to_string()),
         );
         assert!(r.is_ok());
 
-        let r = test_byo_connection("gemini".to_string(), "".to_string(), Some("sk-test".to_string()));
+        let r = probe_byo_connection("gemini".to_string(), "".to_string(), Some("sk-test".to_string()));
         assert!(r.is_ok());
 
-        let r = test_byo_connection(
+        let r = probe_byo_connection(
             "grok".to_string(),
             "https://api.x.ai/v1".to_string(),
             Some("sk-test".to_string()),

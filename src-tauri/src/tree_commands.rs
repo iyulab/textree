@@ -196,7 +196,8 @@ pub async fn create_folder(
     creating(&locks, PathBuf::from(&parent), move || commands::create_folder(root, parent, name)).await
 }
 
-/// An attachment goes into an `assets` folder beside its note.
+/// An attachment goes into an `assets` folder beside its note — the turn is that folder's, which
+/// deleting the note's folder or `assets` itself both wait for.
 #[tauri::command]
 pub async fn save_attachment(
     root: String,
@@ -205,7 +206,7 @@ pub async fn save_attachment(
     ext: String,
     locks: State<'_, Arc<NoteLocks>>,
 ) -> Result<String, String> {
-    let folder = folder_of(&note);
+    let folder = folder_of(&note).join("assets");
     creating(&locks, folder, move || commands::save_attachment(root, note, data, ext)).await
 }
 
