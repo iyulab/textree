@@ -969,6 +969,42 @@ mod tests {
     }
 
     #[test]
+    fn a_revision_that_loses_the_race_is_rebuilt_on_the_winner() {
+        // Another writer outside this process (another instance of the app) lands between reading
+        // the tip and moving the reference. The in-process turn cannot see it; the retry must.
+        let tmp = TempDir::new().unwrap();
+        let repo = Repository::init(tmp.path()).unwrap();
+        record_note(&repo, PathBuf::from("a.md"), b"1").unwrap();
+        let mine = [(PathBuf::from("mine.md"), b"mine".to_vec())];
+        let mut tries = 0;
+        let landed = advancing(|| {
+            tries += 1;
+            if tries > 1 {
+                let (a, c) = (author(), author());
+                return commit_paths_once(&repo, NOTES_REF, &mine, "mine", &a, &c, WhenUnchanged::Skip);
+            }
+            let tip = repo.refname_to_id(NOTES_REF)?;
+            let rival = Repository::open(tmp.path()).unwrap();
+            let entries = [(PathBuf::from("rival.md"), b"rival".to_vec())];
+            let (a, c) = (author(), author());
+            commit_paths_once(&rival, NOTES_REF, &entries, "rival", &a, &c, WhenUnchanged::Skip)?;
+            // Built on the tip read before the rival landed.
+            let base = repo.find_commit(tip)?;
+            let late = repo.commit(None, &author(), &author(), "mine", &base.tree()?, &[&base])?;
+            advance(&repo, NOTES_REF, late, Some(tip), "mine").map(|()| Some(late))
+        })
+        .unwrap();
+
+        assert_eq!(tries, 2, "refused once, then rebuilt");
+        let tip = repo.find_reference(NOTES_REF).unwrap().peel_to_commit().unwrap();
+        assert_eq!(Some(tip.id()), landed);
+        let tree = tip.tree().unwrap();
+        for name in ["a.md", "rival.md", "mine.md"] {
+            assert!(tree.get_name(name).is_some(), "{name} is in the latest state");
+        }
+    }
+
+    #[test]
     fn a_first_revision_does_not_replace_one_that_appeared_meanwhile() {
         let tmp = TempDir::new().unwrap();
         let repo = Repository::init(tmp.path()).unwrap();
