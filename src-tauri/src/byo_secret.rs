@@ -1,29 +1,24 @@
-use crate::secret_store::service_name;
-use keyring::Entry;
+use crate::secret_store::credentials;
+use tauri_kit_credentials::Credentials;
 
 const SERVICE: &str = "com.textree.byo";
 const ACCOUNT: &str = "api-key";
 
-/// The service name entries are opened under — namespaced away from the installed app's entry
-/// whenever this is a test run (see `secret_store`).
-fn service() -> String {
-    service_name(SERVICE)
+/// The entries this key is kept under — away from the installed app's entry whenever this is a
+/// test run or a development build (see `secret_store`).
+fn store() -> Credentials {
+    credentials(SERVICE)
 }
 
 /// Store the BYO API key in the OS credential store. Never touches disk in plaintext (
 /// secrets are not written to `.md`/sidecar JSON/localStorage).
 pub fn set_api_key(key: &str) -> Result<(), String> {
-    let entry = Entry::new(&service(), ACCOUNT).map_err(|e| e.to_string())?;
-    entry.set_password(key).map_err(|e| e.to_string())
+    store().set(ACCOUNT, key).map_err(|e| e.to_string())
 }
 
 /// Delete the stored key, if any. No-op-safe when nothing is stored.
 pub fn clear_api_key() -> Result<(), String> {
-    let entry = Entry::new(&service(), ACCOUNT).map_err(|e| e.to_string())?;
-    match entry.delete_credential() {
-        Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
-        Err(e) => Err(e.to_string()),
-    }
+    store().delete(ACCOUNT).map_err(|e| e.to_string())
 }
 
 /// Whether a key is currently stored. Never returns the plaintext value to callers that don't
@@ -34,9 +29,9 @@ pub fn has_api_key() -> bool {
 
 /// Retrieve the plaintext key for internal use only (spawning the host with it as an env var).
 /// Not exposed as a Tauri command — callers are Rust-side only (see host.rs restart/prepare).
+/// A store that cannot be read counts as holding no key.
 pub fn get_api_key() -> Option<String> {
-    let entry = Entry::new(&service(), ACCOUNT).ok()?;
-    entry.get_password().ok()
+    store().get(ACCOUNT).ok().flatten()
 }
 
 #[tauri::command]
@@ -58,8 +53,8 @@ pub fn has_byo_api_key() -> bool {
 pub(crate) mod tests {
     use super::*;
 
-    // These tests touch the real Windows Credential Manager (no fake injected — keyring's API
-    // has no seam for one). They share one fixed (SERVICE, ACCOUNT) entry, and `cargo test` runs
+    // These tests touch the real OS credential store (under the test entry, never the installed
+    // app's). They share one fixed (SERVICE, ACCOUNT) entry, and `cargo test` runs
     // tests on parallel threads by default — without serialization, one test's `clear_api_key()`
     // can delete the other's key mid-flight. TEST_LOCK forces the two to run one at a time.
     // pub(crate): host.rs's test_byo_connection fallback test also touches this same credential
@@ -72,7 +67,7 @@ pub(crate) mod tests {
     // test literal behind for the app to send to a provider as if it were the real key.
     #[test]
     fn tests_do_not_open_the_entry_the_installed_app_uses() {
-        assert_ne!(service(), SERVICE);
+        assert_ne!(store().service(), SERVICE);
     }
 
     #[test]

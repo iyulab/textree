@@ -1,53 +1,25 @@
-//! Shared plumbing for the OS credential store: the namespacing that keeps non-shipping builds off
-//! a real user's secrets.
+//! Where this application keeps its secrets: the OS credential store, through
+//! `tauri-kit-credentials`.
 //!
 //! Secrets live under one fixed entry per kind, so anything that writes or clears an entry writes
-//! or clears *the* entry — the one the installed app uses. That is a data-safety problem well
-//! beyond tests: a unit test that ends by clearing the entry destroys the user's stored token, and
-//! a development build shares credentials with the copy of the app the user actually relies on.
+//! or clears *the* entry — the one the installed app uses. A unit test that ends by clearing it
+//! destroys the user's stored token, and a development build would share credentials with the copy
+//! of the app the user actually relies on. Each kind of build therefore gets its own entry:
 //!
-//! Each kind of build therefore gets its own entry, decided **at compile time**:
-//!
-//! | build | entry |
+//! | build | service name |
 //! |---|---|
 //! | `cargo test` | `<service>.test` |
 //! | `cargo build` / `tauri dev` | `<service>.dev` |
 //! | shipped release | `<service>` |
 //!
-//! Compile time, not an environment variable, for two reasons: nothing can be forgotten at launch
-//! (a harness that failed to set a variable would silently fall back to the user's real entry), and
-//! a shipped binary offers no way to redirect where its credentials are read from or written to.
+//! The kind of build is decided at compile time, by `build_kind!()` written here — in this crate,
+//! where `cfg!(test)` describes this application rather than the library.
 
-/// Namespace the unit suite compiles against. Checked first — test builds are debug builds too, and
-/// a `cargo test` run must not clobber a signed-in development session either.
-const TEST_NAMESPACE: &str = "test";
+use tauri_kit_credentials::{build_kind, Credentials};
 
-/// Namespace every non-shipping build compiles against, `tauri dev` included.
-const DEV_NAMESPACE: &str = "dev";
-
-/// Appends a namespace to a service name. `None` and blank namespaces leave the name untouched,
-/// so the shipped app keeps using the entry it has always used.
-fn namespaced(base: &str, namespace: Option<&str>) -> String {
-    match namespace {
-        Some(ns) if !ns.trim().is_empty() => format!("{base}.{}", ns.trim()),
-        _ => base.to_string(),
-    }
-}
-
-/// The namespace this build compiles against, or `None` for a shipped release.
-fn build_namespace() -> Option<&'static str> {
-    if cfg!(test) {
-        Some(TEST_NAMESPACE)
-    } else if cfg!(debug_assertions) {
-        Some(DEV_NAMESPACE)
-    } else {
-        None
-    }
-}
-
-/// The service name to open entries under.
-pub(crate) fn service_name(base: &str) -> String {
-    namespaced(base, build_namespace())
+/// The secrets kept under `service`, as seen by this kind of build.
+pub(crate) fn credentials(service: &str) -> Credentials {
+    Credentials::new(service, build_kind!())
 }
 
 #[cfg(test)]
@@ -55,47 +27,24 @@ mod tests {
     use super::*;
 
     #[test]
-    fn an_absent_or_blank_namespace_leaves_the_production_name_alone() {
-        assert_eq!(namespaced("com.example.secret", None), "com.example.secret");
-        assert_eq!(namespaced("com.example.secret", Some("")), "com.example.secret");
-        assert_eq!(namespaced("com.example.secret", Some("   ")), "com.example.secret");
-    }
-
-    #[test]
-    fn a_namespace_yields_an_entry_distinct_from_the_production_one() {
+    fn the_unit_suite_never_opens_the_entry_the_installed_app_uses() {
         let base = "com.example.secret";
-        let ns = namespaced(base, Some("harness"));
-        assert_eq!(ns, "com.example.secret.harness");
-        assert_ne!(ns, base);
+        assert_eq!(credentials(base).service(), "com.example.secret.test");
     }
 
     #[test]
-    fn surrounding_whitespace_does_not_fork_the_namespace() {
-        assert_eq!(
-            namespaced("com.example.secret", Some(" harness ")),
-            namespaced("com.example.secret", Some("harness")),
-        );
-    }
-
-    #[test]
-    fn the_unit_suite_resolves_to_its_own_namespace() {
-        let base = "com.example.secret";
-        assert_eq!(service_name(base), "com.example.secret.test");
-        assert_ne!(
-            service_name(base),
-            base,
-            "unit tests must never open the entry the installed app uses",
-        );
+    fn a_release_build_keeps_the_name_installed_apps_already_store_under() {
+        // Changing how the shipped name is formed would orphan every secret users already have.
+        let release = Credentials::new("com.example.secret", tauri_kit_credentials::BuildKind::Release);
+        assert_eq!(release.service(), "com.example.secret");
     }
 
     #[test]
     fn a_test_run_is_kept_separate_from_a_development_session() {
-        // Test builds are debug builds, so the test namespace has to win — otherwise running the
-        // merge gate would clear the token a `tauri dev` session had signed in with.
-        assert_ne!(
-            namespaced("com.example.secret", Some(TEST_NAMESPACE)),
-            namespaced("com.example.secret", Some(DEV_NAMESPACE)),
-        );
-        assert_eq!(build_namespace(), Some(TEST_NAMESPACE));
+        // Test builds are debug builds, so the test entry has to win — otherwise running the merge
+        // gate would clear the token a `tauri dev` session had signed in with.
+        let dev = Credentials::new("com.example.secret", tauri_kit_credentials::BuildKind::Dev);
+        assert_eq!(dev.service(), "com.example.secret.dev");
+        assert_ne!(credentials("com.example.secret").service(), dev.service());
     }
 }

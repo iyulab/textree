@@ -181,7 +181,6 @@ distributed.
 | `json-patch` | 3.0.1 | MIT/Apache-2.0 | https://github.com/idubrov/json-patch |
 | `jsonptr` | 0.6.3 | MIT OR Apache-2.0 | https://github.com/chanced/jsonptr |
 | `keyboard-types` | 0.7.0 | MIT OR Apache-2.0 | https://github.com/pyfisch/keyboard-types |
-| `keyring` | 4.2.0 | MIT OR Apache-2.0 | https://github.com/open-source-cooperative/keyring-rs |
 | `keyring-core` | 1.0.0 | MIT OR Apache-2.0 | https://github.com/open-source-cooperative/keyring-core.git |
 | `levenshtein_automata` | 0.2.1 | MIT | https://github.com/tantivy-search/levenshtein-automata |
 | `libc` | 0.2.189 | MIT OR Apache-2.0 | https://github.com/rust-lang/libc |
@@ -302,6 +301,7 @@ distributed.
 | `tao` | 0.35.3 | Apache-2.0 | https://github.com/tauri-apps/tao |
 | `tauri` | 2.11.6 | Apache-2.0 OR MIT | https://github.com/tauri-apps/tauri |
 | `tauri-codegen` | 2.6.3 | Apache-2.0 OR MIT | https://github.com/tauri-apps/tauri |
+| `tauri-kit-credentials` | 0.1.1 | MIT | https://github.com/iyulab/tauri-kit |
 | `tauri-macros` | 2.6.3 | Apache-2.0 OR MIT | https://github.com/tauri-apps/tauri |
 | `tauri-plugin-dialog` | 2.7.3 | Apache-2.0 OR MIT | https://github.com/tauri-apps/plugins-workspace |
 | `tauri-plugin-fs` | 2.5.2 | Apache-2.0 OR MIT | https://github.com/tauri-apps/plugins-workspace |

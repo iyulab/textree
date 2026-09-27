@@ -2444,18 +2444,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "keyring"
-version = "4.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2270074a3d26bcac93c1dc5d2845eb4c089e8d761ccf6e0ea266a16004640627"
-dependencies = [
- "apple-native-keyring-store",
- "keyring-core",
- "windows-native-keyring-store",
- "zbus-secret-service-keyring-store",
-]
-
-[[package]]
 name = "keyring-core"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4736,6 +4724,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "tauri-kit-credentials"
+version = "0.1.1"
+source = "git+https://github.com/iyulab/tauri-kit?tag=v0.1.1#2ca81ca18ed25c260b9424ea29518efbb70aef62"
+dependencies = [
+ "apple-native-keyring-store",
+ "keyring-core",
+ "windows-native-keyring-store",
+ "zbus-secret-service-keyring-store",
+]
+
+[[package]]
 name = "tauri-macros"
 version = "2.6.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5022,7 +5021,6 @@ dependencies = [
  "base64 0.22.1",
  "getrandom 0.2.17",
  "git2",
- "keyring",
  "log",
  "notify-debouncer-full",
  "serde",
@@ -5031,6 +5029,7 @@ dependencies = [
  "tantivy",
  "tauri",
  "tauri-build",
+ "tauri-kit-credentials",
  "tauri-plugin-dialog",
  "tauri-plugin-log",
  "tauri-plugin-opener",

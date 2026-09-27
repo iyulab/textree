@@ -1,32 +1,27 @@
 //! OS credential storage for the cloud publish token (never written to disk in plaintext).
-//! Mirrors `byo_secret.rs`; both sit on `secret_store` for store init and namespacing. Distinct
+//! Mirrors `byo_secret.rs`; both sit on `secret_store` for namespacing. Distinct
 //! (SERVICE, ACCOUNT) entry so it never collides with the BYO key.
 
-use crate::secret_store::service_name;
-use keyring::Entry;
+use crate::secret_store::credentials;
+use tauri_kit_credentials::Credentials;
 
 const SERVICE: &str = "com.textree.publish";
 const ACCOUNT: &str = "token";
 
-/// The service name entries are opened under — namespaced away from the installed app's entry
-/// whenever this is a test run (see `secret_store`).
-fn service() -> String {
-    service_name(SERVICE)
+/// The entries this token is kept under — away from the installed app's entry whenever this is a
+/// test run or a development build (see `secret_store`).
+fn store() -> Credentials {
+    credentials(SERVICE)
 }
 
 /// Store the publish token in the OS credential store.
 pub fn set_token(token: &str) -> Result<(), String> {
-    let entry = Entry::new(&service(), ACCOUNT).map_err(|e| e.to_string())?;
-    entry.set_password(token).map_err(|e| e.to_string())
+    store().set(ACCOUNT, token).map_err(|e| e.to_string())
 }
 
 /// Delete the stored token, if any. No-op-safe when nothing is stored.
 pub fn clear_token() -> Result<(), String> {
-    let entry = Entry::new(&service(), ACCOUNT).map_err(|e| e.to_string())?;
-    match entry.delete_credential() {
-        Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
-        Err(e) => Err(e.to_string()),
-    }
+    store().delete(ACCOUNT).map_err(|e| e.to_string())
 }
 
 /// Whether a token is currently stored (the only thing the frontend ever learns).
@@ -35,10 +30,10 @@ pub fn has_token() -> bool {
 }
 
 /// Retrieve the plaintext token for internal use only (the uploader). Not a Tauri command —
-/// callers are Rust-side only (see cloud_publish / commands::publish_to_cloud).
+/// callers are Rust-side only (see cloud_publish / commands::publish_to_cloud). A store that
+/// cannot be read counts as holding no token.
 pub fn get_token() -> Option<String> {
-    let entry = Entry::new(&service(), ACCOUNT).ok()?;
-    entry.get_password().ok()
+    store().get(ACCOUNT).ok().flatten()
 }
 
 #[tauri::command]
@@ -55,7 +50,7 @@ pub fn has_publish_token() -> bool {
 mod tests {
     use super::*;
 
-    // Touches the real OS credential store (keyring has no fake seam), sharing one fixed
+    // Touches the real OS credential store (under the test entry), sharing one fixed
     // (SERVICE, ACCOUNT) entry. cargo test runs threads in parallel, so serialize the two tests.
     static TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
@@ -63,7 +58,7 @@ mod tests {
     // destroys the user's publish token, and only a browser sign-in can mint another.
     #[test]
     fn tests_do_not_open_the_entry_the_installed_app_uses() {
-        assert_ne!(service(), SERVICE);
+        assert_ne!(store().service(), SERVICE);
     }
 
     #[test]

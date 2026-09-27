@@ -321,29 +321,24 @@ pub const CONNECTION_FILE: &str = "remote.json";
 
 const SECRET_SERVICE: &str = "com.textree.remote";
 
-fn secret_entry(key: &str) -> Result<keyring::Entry, String> {
-    keyring::Entry::new(&crate::secret_store::service_name(SECRET_SERVICE), key)
-        .map_err(|e| e.to_string())
+fn secrets() -> tauri_kit_credentials::Credentials {
+    crate::secret_store::credentials(SECRET_SERVICE)
 }
 
 /// Keeps the secret for the folder named by `key` (its settings key).
 pub fn set_secret(key: &str, secret: &str) -> Result<(), String> {
-    secret_entry(key)?
-        .set_password(secret)
-        .map_err(|e| e.to_string())
+    secrets().set(key, secret).map_err(|e| e.to_string())
 }
 
-/// The secret kept for the folder named by `key`, if any.
+/// The secret kept for the folder named by `key`, if any. A store that cannot be read counts as
+/// keeping none.
 pub fn secret(key: &str) -> Option<String> {
-    secret_entry(key).ok()?.get_password().ok()
+    secrets().get(key).ok().flatten()
 }
 
 /// Forgets the secret for the folder named by `key`. Nothing kept is not an error.
 pub fn clear_secret(key: &str) -> Result<(), String> {
-    match secret_entry(key)?.delete_credential() {
-        Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
-        Err(e) => Err(e.to_string()),
-    }
+    secrets().delete(key).map_err(|e| e.to_string())
 }
 
 /// What one exchange with the remote did.
