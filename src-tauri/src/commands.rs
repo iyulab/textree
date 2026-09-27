@@ -311,7 +311,6 @@ pub struct DefaultVault {
 /// Ensures the default vault exists (creating it and seeding `welcome.md` on first run) and
 /// returns its absolute path. The single backend owner of OS-path resolution + seeding. Falls
 /// back through home → app-local-data when Documents is unusable so first run never blank-screens.
-#[tauri::command]
 pub fn ensure_default_vault(app: AppHandle) -> Result<DefaultVault, String> {
     let bases = candidate_vault_bases(&app);
     match first_creatable_vault(&bases) {
@@ -438,7 +437,6 @@ fn read_trash_manifest(root: &Path) -> Vec<TrashItem> {
 }
 
 /// Reads one of this folder's settings. `None` when it has never been written.
-#[tauri::command]
 pub fn read_sidecar(root: String, rel: String) -> Result<Option<String>, String> {
     let path = sidecar_path(Path::new(&root), &rel)?;
     match std::fs::read_to_string(&path) {
@@ -450,7 +448,6 @@ pub fn read_sidecar(root: String, rel: String) -> Result<Option<String>, String>
 
 /// Writes one of this folder's settings, leaving the folder itself untouched. Refused while they
 /// are in a format a newer release wrote (see [`prepare_sidecar`]).
-#[tauri::command]
 pub fn write_sidecar(root: String, rel: String, content: String) -> Result<(), String> {
     let root = Path::new(&root);
     let path = sidecar_path(root, &rel)?;
@@ -474,7 +471,6 @@ pub struct SidecarState {
 
 /// Brings this folder's settings to the format this release keeps them in, when the folder is
 /// opened — before anything reads them.
-#[tauri::command]
 pub fn prepare_sidecar(root: String) -> Result<SidecarState, String> {
     let dir = personal_dir(Path::new(&root))?;
     let current = crate::state_dir::bring_up_to_date(&dir, atomic_bytes_beside)
@@ -484,7 +480,6 @@ pub fn prepare_sidecar(root: String) -> Result<SidecarState, String> {
 
 /// Moves one of this folder's settings files that could not be read out of the way, keeping it.
 /// Returns the name it now has.
-#[tauri::command]
 pub fn set_aside_sidecar(root: String, rel: String) -> Result<String, String> {
     let root = Path::new(&root);
     sidecar_path(root, &rel)?; // the same confinement as reading and writing

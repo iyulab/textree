@@ -15,7 +15,9 @@
 //! the folder's own turn ([`creating`]) — it waits while that folder, or one above it, is being
 //! changed, and such a change waits for it.
 
-use crate::commands::{self, off_main, DeletedNote, MoveOut, NoteVersion, RestoredNote};
+use crate::commands::{
+    self, off_main, DefaultVault, DeletedNote, MoveOut, NoteVersion, RestoredNote, SidecarState,
+};
 use crate::search::IndexHandle;
 use crate::note_locks::NoteLocks;
 use std::path::{Path, PathBuf};
@@ -262,4 +264,34 @@ pub async fn publish_to_cloud(
     options: crate::publish::PublishOptions,
 ) -> Result<crate::cloud_publish::PublishToCloudResult, String> {
     off_main(move || commands::publish_to_cloud(app, vault_path, options)).await
+}
+
+// A folder's settings live outside it, but finding them names the folder: the key is worked out
+// from its resolved path, and resolving asks the folder's drive — which may be the one that stopped
+// answering.
+
+#[tauri::command]
+pub async fn read_sidecar(root: String, rel: String) -> Result<Option<String>, String> {
+    off_main(move || commands::read_sidecar(root, rel)).await
+}
+
+#[tauri::command]
+pub async fn write_sidecar(root: String, rel: String, content: String) -> Result<(), String> {
+    off_main(move || commands::write_sidecar(root, rel, content)).await
+}
+
+#[tauri::command]
+pub async fn prepare_sidecar(root: String) -> Result<SidecarState, String> {
+    off_main(move || commands::prepare_sidecar(root)).await
+}
+
+#[tauri::command]
+pub async fn set_aside_sidecar(root: String, rel: String) -> Result<String, String> {
+    off_main(move || commands::set_aside_sidecar(root, rel)).await
+}
+
+/// The first folder is made and seeded in Documents, which may be redirected to a synced drive.
+#[tauri::command]
+pub async fn ensure_default_vault(app: AppHandle) -> Result<DefaultVault, String> {
+    off_main(move || commands::ensure_default_vault(app)).await
 }
