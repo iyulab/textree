@@ -7,7 +7,7 @@ also contains third-party components, each under its own license.
 > actually shipped. Edit that script or `scripts/third-party-notices-prelude.md` — not this file.
 
 The git engine is listed first and by hand: the native libraries compiled into it are not visible
-to either package manager, and their terms constrain how the whole distribution may be combined
+to any package manager, and their terms constrain how the whole distribution may be combined
 and shipped.
 
 ## libgit2
@@ -482,5 +482,239 @@ are compiled into the application.
 | `katex` | 0.18.9 | MIT | https://github.com/KaTeX/KaTeX |
 | `style-mod` | 4.1.4 | MIT | https://code.haverbeke.berlin/marijn/style-mod |
 | `w3c-keyname` | 2.2.8 | MIT | https://github.com/marijnh/w3c-keyname |
+
+## Publishing renderer
+
+The renderer that turns notes into a website runs as a separate helper process on a bundled
+Node.js runtime.
+
+- **Node.js 22.12.0** — MIT — https://github.com/nodejs/node. The runtime itself contains
+  components under their own licenses (V8, libuv, OpenSSL, ICU and others), reproduced in its
+  license file: https://github.com/nodejs/node/blob/v22.12.0/LICENSE
+
+The 137 packages below are the renderer's production-dependency closure.
+
+| Component | Version | License | Upstream |
+| --- | --- | --- | --- |
+| `@iyulab/canopy` | 0.14.0 | MIT | https://www.npmjs.com/package/@iyulab/canopy |
+| `@shikijs/core` | 4.4.3 | MIT | https://www.npmjs.com/package/@shikijs/core |
+| `@shikijs/engine-javascript` | 4.4.3 | MIT | https://www.npmjs.com/package/@shikijs/engine-javascript |
+| `@shikijs/engine-oniguruma` | 4.4.3 | MIT | https://www.npmjs.com/package/@shikijs/engine-oniguruma |
+| `@shikijs/langs` | 4.4.3 | MIT | https://www.npmjs.com/package/@shikijs/langs |
+| `@shikijs/primitive` | 4.4.3 | MIT | https://www.npmjs.com/package/@shikijs/primitive |
+| `@shikijs/rehype` | 4.4.3 | MIT | https://www.npmjs.com/package/@shikijs/rehype |
+| `@shikijs/themes` | 4.4.3 | MIT | https://www.npmjs.com/package/@shikijs/themes |
+| `@shikijs/types` | 4.4.3 | MIT | https://www.npmjs.com/package/@shikijs/types |
+| `@shikijs/vscode-textmate` | 10.0.2 | MIT | https://www.npmjs.com/package/@shikijs/vscode-textmate |
+| `@types/debug` | 4.1.13 | MIT | https://www.npmjs.com/package/@types/debug |
+| `@types/hast` | 3.0.5 | MIT | https://www.npmjs.com/package/@types/hast |
+| `@types/katex` | 0.16.8 | MIT | https://www.npmjs.com/package/@types/katex |
+| `@types/mdast` | 4.0.4 | MIT | https://www.npmjs.com/package/@types/mdast |
+| `@types/ms` | 2.1.0 | MIT | https://www.npmjs.com/package/@types/ms |
+| `@types/unist` | 3.0.3 | MIT | https://www.npmjs.com/package/@types/unist |
+| `@ungap/structured-clone` | 1.4.0 | ISC | https://www.npmjs.com/package/@ungap/structured-clone |
+| `bail` | 2.0.2 | MIT | https://www.npmjs.com/package/bail |
+| `ccount` | 2.0.1 | MIT | https://www.npmjs.com/package/ccount |
+| `character-entities` | 2.0.2 | MIT | https://www.npmjs.com/package/character-entities |
+| `character-entities-html4` | 2.1.0 | MIT | https://www.npmjs.com/package/character-entities-html4 |
+| `character-entities-legacy` | 3.0.0 | MIT | https://www.npmjs.com/package/character-entities-legacy |
+| `comma-separated-tokens` | 2.0.3 | MIT | https://www.npmjs.com/package/comma-separated-tokens |
+| `commander` | 15.0.0 | MIT | https://www.npmjs.com/package/commander |
+| `debug` | 4.4.3 | MIT | https://www.npmjs.com/package/debug |
+| `decode-named-character-reference` | 1.3.0 | MIT | https://www.npmjs.com/package/decode-named-character-reference |
+| `dequal` | 2.0.3 | MIT | https://www.npmjs.com/package/dequal |
+| `devlop` | 1.1.0 | MIT | https://www.npmjs.com/package/devlop |
+| `entities` | 6.0.1 | BSD-2-Clause | https://www.npmjs.com/package/entities |
+| `escape-string-regexp` | 5.0.0 | MIT | https://www.npmjs.com/package/escape-string-regexp |
+| `extend` | 3.0.2 | MIT | https://www.npmjs.com/package/extend |
+| `get-east-asian-width` | 1.7.0 | MIT | https://www.npmjs.com/package/get-east-asian-width |
+| `github-slugger` | 2.0.0 | ISC | https://www.npmjs.com/package/github-slugger |
+| `hast-util-from-dom` | 5.0.1 | ISC | https://www.npmjs.com/package/hast-util-from-dom |
+| `hast-util-from-html` | 2.0.3 | MIT | https://www.npmjs.com/package/hast-util-from-html |
+| `hast-util-from-html-isomorphic` | 2.0.0 | MIT | https://www.npmjs.com/package/hast-util-from-html-isomorphic |
+| `hast-util-from-parse5` | 8.0.3 | MIT | https://www.npmjs.com/package/hast-util-from-parse5 |
+| `hast-util-heading-rank` | 3.0.0 | MIT | https://www.npmjs.com/package/hast-util-heading-rank |
+| `hast-util-is-element` | 3.0.0 | MIT | https://www.npmjs.com/package/hast-util-is-element |
+| `hast-util-parse-selector` | 4.0.0 | MIT | https://www.npmjs.com/package/hast-util-parse-selector |
+| `hast-util-raw` | 9.1.0 | MIT | https://www.npmjs.com/package/hast-util-raw |
+| `hast-util-sanitize` | 5.0.2 | MIT | https://www.npmjs.com/package/hast-util-sanitize |
+| `hast-util-to-html` | 9.0.5 | MIT | https://www.npmjs.com/package/hast-util-to-html |
+| `hast-util-to-parse5` | 8.0.1 | MIT | https://www.npmjs.com/package/hast-util-to-parse5 |
+| `hast-util-to-string` | 3.0.1 | MIT | https://www.npmjs.com/package/hast-util-to-string |
+| `hast-util-to-text` | 4.0.2 | MIT | https://www.npmjs.com/package/hast-util-to-text |
+| `hast-util-whitespace` | 3.0.0 | MIT | https://www.npmjs.com/package/hast-util-whitespace |
+| `hastscript` | 9.0.1 | MIT | https://www.npmjs.com/package/hastscript |
+| `html-void-elements` | 3.0.0 | MIT | https://www.npmjs.com/package/html-void-elements |
+| `is-plain-obj` | 4.1.0 | MIT | https://www.npmjs.com/package/is-plain-obj |
+| `katex` | 0.18.9 | MIT | https://www.npmjs.com/package/katex |
+| `longest-streak` | 3.1.0 | MIT | https://www.npmjs.com/package/longest-streak |
+| `markdown-table` | 3.0.4 | MIT | https://www.npmjs.com/package/markdown-table |
+| `mdast-util-find-and-replace` | 3.0.2 | MIT | https://www.npmjs.com/package/mdast-util-find-and-replace |
+| `mdast-util-from-markdown` | 2.0.3 | MIT | https://www.npmjs.com/package/mdast-util-from-markdown |
+| `mdast-util-gfm` | 3.1.0 | MIT | https://www.npmjs.com/package/mdast-util-gfm |
+| `mdast-util-gfm-autolink-literal` | 2.0.1 | MIT | https://www.npmjs.com/package/mdast-util-gfm-autolink-literal |
+| `mdast-util-gfm-footnote` | 2.1.0 | MIT | https://www.npmjs.com/package/mdast-util-gfm-footnote |
+| `mdast-util-gfm-strikethrough` | 2.0.1 | MIT | https://www.npmjs.com/package/mdast-util-gfm-strikethrough |
+| `mdast-util-gfm-table` | 2.0.0 | MIT | https://www.npmjs.com/package/mdast-util-gfm-table |
+| `mdast-util-gfm-task-list-item` | 2.0.0 | MIT | https://www.npmjs.com/package/mdast-util-gfm-task-list-item |
+| `mdast-util-math` | 3.0.0 | MIT | https://www.npmjs.com/package/mdast-util-math |
+| `mdast-util-phrasing` | 4.1.0 | MIT | https://www.npmjs.com/package/mdast-util-phrasing |
+| `mdast-util-to-hast` | 13.2.1 | MIT | https://www.npmjs.com/package/mdast-util-to-hast |
+| `mdast-util-to-markdown` | 2.1.3 | MIT | https://www.npmjs.com/package/mdast-util-to-markdown |
+| `mdast-util-to-markdown-cjk-friendly` | 1.0.0 | MIT | https://www.npmjs.com/package/mdast-util-to-markdown-cjk-friendly |
+| `mdast-util-to-string` | 4.0.0 | MIT | https://www.npmjs.com/package/mdast-util-to-string |
+| `micromark` | 4.0.3 | MIT | https://www.npmjs.com/package/micromark |
+| `micromark-core-commonmark` | 2.0.4 | MIT | https://www.npmjs.com/package/micromark-core-commonmark |
+| `micromark-extension-cjk-friendly` | 2.0.1 | MIT | https://www.npmjs.com/package/micromark-extension-cjk-friendly |
+| `micromark-extension-cjk-friendly-util` | 3.0.1 | MIT | https://www.npmjs.com/package/micromark-extension-cjk-friendly-util |
+| `micromark-extension-gfm` | 3.0.0 | MIT | https://www.npmjs.com/package/micromark-extension-gfm |
+| `micromark-extension-gfm-autolink-literal` | 2.1.0 | MIT | https://www.npmjs.com/package/micromark-extension-gfm-autolink-literal |
+| `micromark-extension-gfm-footnote` | 2.1.0 | MIT | https://www.npmjs.com/package/micromark-extension-gfm-footnote |
+| `micromark-extension-gfm-strikethrough` | 2.1.0 | MIT | https://www.npmjs.com/package/micromark-extension-gfm-strikethrough |
+| `micromark-extension-gfm-table` | 2.1.2 | MIT | https://www.npmjs.com/package/micromark-extension-gfm-table |
+| `micromark-extension-gfm-tagfilter` | 2.0.0 | MIT | https://www.npmjs.com/package/micromark-extension-gfm-tagfilter |
+| `micromark-extension-gfm-task-list-item` | 2.1.0 | MIT | https://www.npmjs.com/package/micromark-extension-gfm-task-list-item |
+| `micromark-extension-math` | 3.1.0 | MIT | https://www.npmjs.com/package/micromark-extension-math |
+| `micromark-factory-destination` | 2.0.1 | MIT | https://www.npmjs.com/package/micromark-factory-destination |
+| `micromark-factory-label` | 2.0.1 | MIT | https://www.npmjs.com/package/micromark-factory-label |
+| `micromark-factory-space` | 2.1.0 | MIT | https://www.npmjs.com/package/micromark-factory-space |
+| `micromark-factory-title` | 2.0.1 | MIT | https://www.npmjs.com/package/micromark-factory-title |
+| `micromark-factory-whitespace` | 2.0.1 | MIT | https://www.npmjs.com/package/micromark-factory-whitespace |
+| `micromark-util-character` | 2.1.1 | MIT | https://www.npmjs.com/package/micromark-util-character |
+| `micromark-util-chunked` | 2.0.1 | MIT | https://www.npmjs.com/package/micromark-util-chunked |
+| `micromark-util-classify-character` | 2.0.1 | MIT | https://www.npmjs.com/package/micromark-util-classify-character |
+| `micromark-util-combine-extensions` | 2.0.1 | MIT | https://www.npmjs.com/package/micromark-util-combine-extensions |
+| `micromark-util-decode-numeric-character-reference` | 2.0.2 | MIT | https://www.npmjs.com/package/micromark-util-decode-numeric-character-reference |
+| `micromark-util-decode-string` | 2.0.1 | MIT | https://www.npmjs.com/package/micromark-util-decode-string |
+| `micromark-util-edit-map` | 1.0.0 | MIT | https://www.npmjs.com/package/micromark-util-edit-map |
+| `micromark-util-encode` | 2.0.1 | MIT | https://www.npmjs.com/package/micromark-util-encode |
+| `micromark-util-html-tag-name` | 2.0.1 | MIT | https://www.npmjs.com/package/micromark-util-html-tag-name |
+| `micromark-util-normalize-identifier` | 2.0.1 | MIT | https://www.npmjs.com/package/micromark-util-normalize-identifier |
+| `micromark-util-resolve-all` | 2.0.1 | MIT | https://www.npmjs.com/package/micromark-util-resolve-all |
+| `micromark-util-sanitize-uri` | 2.0.1 | MIT | https://www.npmjs.com/package/micromark-util-sanitize-uri |
+| `micromark-util-subtokenize` | 2.1.0 | MIT | https://www.npmjs.com/package/micromark-util-subtokenize |
+| `micromark-util-symbol` | 2.0.1 | MIT | https://www.npmjs.com/package/micromark-util-symbol |
+| `micromark-util-types` | 2.0.3 | MIT | https://www.npmjs.com/package/micromark-util-types |
+| `ms` | 2.1.3 | MIT | https://www.npmjs.com/package/ms |
+| `oniguruma-parser` | 0.12.2 | MIT | https://www.npmjs.com/package/oniguruma-parser |
+| `oniguruma-to-es` | 4.3.6 | MIT | https://www.npmjs.com/package/oniguruma-to-es |
+| `parse5` | 7.3.0 | MIT | https://www.npmjs.com/package/parse5 |
+| `property-information` | 7.2.0 | MIT | https://www.npmjs.com/package/property-information |
+| `regex` | 6.1.0 | MIT | https://www.npmjs.com/package/regex |
+| `regex-recursion` | 6.0.2 | MIT | https://www.npmjs.com/package/regex-recursion |
+| `regex-utilities` | 2.3.0 | MIT | https://www.npmjs.com/package/regex-utilities |
+| `rehype-katex` | 7.0.1 | MIT | https://www.npmjs.com/package/rehype-katex |
+| `rehype-raw` | 7.0.0 | MIT | https://www.npmjs.com/package/rehype-raw |
+| `rehype-sanitize` | 6.0.0 | MIT | https://www.npmjs.com/package/rehype-sanitize |
+| `rehype-slug` | 6.0.0 | MIT | https://www.npmjs.com/package/rehype-slug |
+| `rehype-stringify` | 10.0.1 | MIT | https://www.npmjs.com/package/rehype-stringify |
+| `remark-cjk-friendly` | 2.3.1 | MIT | https://www.npmjs.com/package/remark-cjk-friendly |
+| `remark-gfm` | 4.0.1 | MIT | https://www.npmjs.com/package/remark-gfm |
+| `remark-math` | 6.0.0 | MIT | https://www.npmjs.com/package/remark-math |
+| `remark-parse` | 11.0.0 | MIT | https://www.npmjs.com/package/remark-parse |
+| `remark-rehype` | 11.1.2 | MIT | https://www.npmjs.com/package/remark-rehype |
+| `remark-stringify` | 11.0.0 | MIT | https://www.npmjs.com/package/remark-stringify |
+| `shiki` | 4.4.3 | MIT | https://www.npmjs.com/package/shiki |
+| `space-separated-tokens` | 2.0.2 | MIT | https://www.npmjs.com/package/space-separated-tokens |
+| `stringify-entities` | 4.0.4 | MIT | https://www.npmjs.com/package/stringify-entities |
+| `trim-lines` | 3.0.1 | MIT | https://www.npmjs.com/package/trim-lines |
+| `trough` | 2.2.0 | MIT | https://www.npmjs.com/package/trough |
+| `unified` | 11.0.5 | MIT | https://www.npmjs.com/package/unified |
+| `unist-util-find-after` | 5.0.0 | MIT | https://www.npmjs.com/package/unist-util-find-after |
+| `unist-util-is` | 6.0.1 | MIT | https://www.npmjs.com/package/unist-util-is |
+| `unist-util-position` | 5.0.0 | MIT | https://www.npmjs.com/package/unist-util-position |
+| `unist-util-remove-position` | 5.0.0 | MIT | https://www.npmjs.com/package/unist-util-remove-position |
+| `unist-util-stringify-position` | 4.0.0 | MIT | https://www.npmjs.com/package/unist-util-stringify-position |
+| `unist-util-visit` | 5.1.0 | MIT | https://www.npmjs.com/package/unist-util-visit |
+| `unist-util-visit-parents` | 6.0.2 | MIT | https://www.npmjs.com/package/unist-util-visit-parents |
+| `vfile` | 6.0.3 | MIT | https://www.npmjs.com/package/vfile |
+| `vfile-location` | 5.0.3 | MIT | https://www.npmjs.com/package/vfile-location |
+| `vfile-message` | 4.0.3 | MIT | https://www.npmjs.com/package/vfile-message |
+| `web-namespaces` | 2.0.1 | MIT | https://www.npmjs.com/package/web-namespaces |
+| `yaml` | 2.9.1 | ISC | https://www.npmjs.com/package/yaml |
+| `zwitch` | 2.0.4 | MIT | https://www.npmjs.com/package/zwitch |
+
+## Local AI helper
+
+The helper that indexes notes and runs local models is a self-contained .NET program.
+
+- **.NET 10 runtime** — MIT — https://github.com/dotnet/runtime. Its own third-party
+  notices: https://github.com/dotnet/runtime/blob/main/THIRD-PARTY-NOTICES.TXT
+
+The 71 NuGet packages below put code into the helper (runtime or native assets).
+
+| Component | Version | License | Upstream |
+| --- | --- | --- | --- |
+| `Anthropic` | 12.46.0 | MIT | https://www.github.com/anthropics/anthropic-sdk-csharp |
+| `ChildProcessGuard` | 1.1.1 | MIT | https://github.com/iyulab/ChildProcessGuard |
+| `CsvHelper` | 33.1.0 | MS-PL OR Apache-2.0 | https://github.com/JoshClose/CsvHelper |
+| `ExcelDataReader` | 3.7.0 | MIT | https://github.com/ExcelDataReader/ExcelDataReader |
+| `FileFlux` | 0.31.7 | MIT | https://github.com/iyulab/FileFlux |
+| `FileFlux.Core` | 0.31.7 | MIT | https://github.com/iyulab/FileFlux |
+| `Flux.Abstractions` | 0.26.0 | MIT | https://github.com/iyulab/flux-abstractions |
+| `FluxCurator` | 0.9.1 | MIT | https://github.com/iyulab/FluxCurator |
+| `FluxCurator.Core` | 0.9.1 | MIT | https://github.com/iyulab/FluxCurator |
+| `FluxFeed` | 0.35.9 | MIT | https://github.com/iyulab/FluxFeed |
+| `FluxGuard` | 0.17.0 | MIT | https://github.com/iyulab/FluxGuard |
+| `FluxGuard.Remote` | 0.17.0 | MIT | https://github.com/iyulab/FluxGuard |
+| `FluxImprover` | 0.14.9 | MIT | https://github.com/iyulab/FluxImprover |
+| `FluxIndex.Core` | 0.57.0 | MIT | https://github.com/iyulab/FluxIndex |
+| `FluxIndex.Providers.LMSupply` | 0.57.0 | MIT | https://github.com/iyulab/FluxIndex |
+| `FluxIndex.SDK` | 0.57.0 | MIT | https://github.com/iyulab/FluxIndex |
+| `FluxIndex.Storage.SQLite` | 0.57.0 | MIT | https://github.com/iyulab/FluxIndex |
+| `Google.Apis` | 1.69.0 | Apache-2.0 | https://github.com/googleapis/google-api-dotnet-client |
+| `Google.Apis.Auth` | 1.69.0 | Apache-2.0 | https://github.com/googleapis/google-api-dotnet-client |
+| `Google.Apis.Core` | 1.69.0 | Apache-2.0 | https://github.com/googleapis/google-api-dotnet-client |
+| `Google.GenAI` | 1.21.0 | Apache-2.0 | https://github.com/googleapis/dotnet-genai |
+| `Google.Protobuf` | 3.30.2 | BSD-3-Clause | https://github.com/protocolbuffers/protobuf |
+| `HtmlAgilityPack` | 1.12.4 | MIT | https://github.com/zzzprojects/html-agility-pack/ |
+| `IronHive.Abstractions` | 0.42.0 | MIT | https://github.com/iyulab/ironhive |
+| `IronHive.Extensions.AI` | 0.42.0 | MIT | https://github.com/iyulab/ironhive |
+| `IronHive.Providers.Anthropic` | 0.42.0 | MIT | https://github.com/iyulab/ironhive |
+| `IronHive.Providers.GoogleAI` | 0.42.0 | MIT | https://github.com/iyulab/ironhive |
+| `IronHive.Providers.OpenAI` | 0.42.0 | MIT | https://github.com/iyulab/ironhive |
+| `IronHive.Providers.OpenAI.Compatible` | 0.42.0 | MIT | https://github.com/iyulab/ironhive |
+| `IronProw.Core` | 0.8.3 | MIT | https://github.com/iyulab/iron-prow |
+| `IronProw.IronHive` | 0.8.3 | MIT | https://github.com/iyulab/iron-prow |
+| `IronProw.LMSupply` | 0.8.3 | MIT | https://github.com/iyulab/iron-prow |
+| `LMSupply.Core` | 0.85.0 | MIT | https://github.com/iyulab/lm-supply |
+| `LMSupply.Embedder` | 0.85.0 | MIT | https://github.com/iyulab/lm-supply |
+| `LMSupply.Generator` | 0.85.0 | MIT | https://github.com/iyulab/lm-supply |
+| `LMSupply.Generator.Onnx` | 0.85.0 | MIT | https://github.com/iyulab/lm-supply |
+| `LMSupply.Llama` | 0.85.0 | MIT | https://github.com/iyulab/lm-supply |
+| `LMSupply.Reranker` | 0.85.0 | MIT | https://github.com/iyulab/lm-supply |
+| `LMSupply.Text.Core` | 0.85.0 | MIT | https://github.com/iyulab/lm-supply |
+| `Markdig` | 1.3.2 | BSD-2-Clause | https://github.com/xoofx/markdig |
+| `Microsoft.Data.Sqlite.Core` | 10.0.12 | MIT | https://github.com/dotnet/dotnet |
+| `Microsoft.EntityFrameworkCore` | 10.0.12 | MIT | https://github.com/dotnet/dotnet |
+| `Microsoft.EntityFrameworkCore.Abstractions` | 10.0.12 | MIT | https://github.com/dotnet/dotnet |
+| `Microsoft.EntityFrameworkCore.Relational` | 10.0.12 | MIT | https://github.com/dotnet/dotnet |
+| `Microsoft.EntityFrameworkCore.Sqlite.Core` | 10.0.12 | MIT | https://github.com/dotnet/dotnet |
+| `Microsoft.Extensions.AI.Abstractions` | 10.9.0 | MIT | https://github.com/dotnet/extensions |
+| `Microsoft.Extensions.DependencyModel` | 10.0.12 | MIT | https://github.com/dotnet/dotnet |
+| `Microsoft.ML.OnnxRuntime` | 1.30.0 | MIT | https://github.com/Microsoft/onnxruntime |
+| `Microsoft.ML.OnnxRuntime.Managed` | 1.30.0 | MIT | https://github.com/microsoft/onnxruntime |
+| `Microsoft.ML.OnnxRuntimeGenAI.Managed` | 0.13.2 | MIT | https://github.com/microsoft/onnxruntime-genai/ |
+| `Microsoft.ML.Tokenizers` | 2.0.0 | MIT | https://github.com/dotnet/machinelearning |
+| `Newtonsoft.Json` | 13.0.3 | MIT | https://github.com/JamesNK/Newtonsoft.Json |
+| `NTextCat` | 0.3.65 | MIT | https://github.com/ivanakcheurov/ntextcat |
+| `OpenAI` | 2.12.0 | MIT | https://github.com/openai/openai-dotnet |
+| `Polly.Core` | 8.6.6 | BSD-3-Clause | https://github.com/App-vNext/Polly |
+| `SQLite` | 3.53.4 | LicenseRef-Public-Domain | https://sqlite.org/ |
+| `sqlite-vec` | 0.1.7-alpha.2.1 | MIT | https://github.com/asg017/sqlite-vec |
+| `SQLitePCLRaw.config.e_sqlite3` | 3.0.5 | Apache-2.0 | https://github.com/ericsink/SQLitePCL.raw |
+| `SQLitePCLRaw.core` | 3.0.5 | Apache-2.0 | https://github.com/ericsink/SQLitePCL.raw |
+| `SQLitePCLRaw.provider.e_sqlite3` | 3.0.5 | Apache-2.0 | https://github.com/ericsink/SQLitePCL.raw |
+| `System.ClientModel` | 1.14.0 | MIT | https://github.com/Azure/azure-sdk-for-net |
+| `System.CodeDom` | 7.0.0 | MIT | https://github.com/dotnet/runtime |
+| `System.Management` | 7.0.2 | MIT | https://github.com/dotnet/runtime |
+| `System.Memory.Data` | 10.0.3 | MIT | https://github.com/dotnet/dotnet |
+| `System.Numerics.Tensors` | 10.0.8 | MIT | https://github.com/dotnet/dotnet |
+| `Tiktoken.Core` | 3.1.5 | MIT | https://github.com/tryAGI/Tiktoken |
+| `Tiktoken.Encodings.Abstractions` | 3.1.5 | MIT | https://github.com/tryAGI/Tiktoken |
+| `Tiktoken.Encodings.cl100k` | 3.1.5 | MIT | https://github.com/tryAGI/Tiktoken |
+| `Undoc` | 0.12.0 | MIT | https://github.com/iyulab/undoc |
+| `Unhwp` | 0.12.0 | MIT | https://github.com/iyulab/unhwp |
+| `Unpdf` | 0.21.0 | MIT | https://github.com/iyulab/unpdf |
 
 The full license text for each component is available at the upstream location listed above.

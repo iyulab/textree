@@ -59,15 +59,9 @@ jobs:
       - name: No high-severity advisories in runtime dependencies
         run: npm audit --omit=dev --audit-level=high
 
-      # Third-party notices are generated from the shipped dependency graphs, so they
-      # go stale the moment a dependency is added or bumped. This reads metadata only
-      # (no build), which is why it can run first and fail fast.
-      - name: Third-party notices match the dependency graph
-        run: npm run notices:check
-
       # Nothing that only means something in the workspace this was written from should reach a
-      # public repository. Reads tracked files only, so it is as fast as the notices check and
-      # fails for the same reason: a sweep nobody runs is a sweep that has already rotted.
+      # public repository. Reads tracked files only, so it runs first and fails fast: a sweep
+      # nobody runs is a sweep that has already rotted.
       - name: No workspace-only text in tracked files
         run: npm run tokens:check
 
@@ -104,6 +98,13 @@ jobs:
 
       - name: Host package pins within drift threshold
         run: npm run pins:check
+
+      # Third-party notices are generated from the shipped dependency graphs, so they
+      # go stale the moment a dependency is added or bumped. This reads metadata only
+      # (no build); it runs after the host restore because the AI helper's packages are
+      # read from the host's restored graph.
+      - name: Third-party notices match the dependency graph
+        run: npm run notices:check
 
       - name: Assemble host sidecar
         shell: pwsh

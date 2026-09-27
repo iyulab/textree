@@ -7,7 +7,7 @@ also contains third-party components, each under its own license.
 > actually shipped. Edit that script or `scripts/third-party-notices-prelude.md` — not this file.
 
 The git engine is listed first and by hand: the native libraries compiled into it are not visible
-to either package manager, and their terms constrain how the whole distribution may be combined
+to any package manager, and their terms constrain how the whole distribution may be combined
 and shipped.
 
 ## libgit2

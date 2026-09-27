@@ -32,13 +32,13 @@ const CARGO_MANIFEST = "src-tauri/Cargo.toml";
 /** Same order as .github/workflows/ci.yml; `local` marks steps CI does not run. */
 const STEPS = [
   { name: "audit", cmd: "npm audit --omit=dev --audit-level=high" },
-  { name: "notices", cmd: "npm run notices:check" },
   { name: "tokens", cmd: "npm run tokens:check" },
   { name: "check", cmd: "npm run check" },
   { name: "unit", cmd: "npm run test:unit" },
   { name: "build", cmd: "npm run build" },
   { name: "restore", cmd: `dotnet restore ${HOST_SOLUTION}` },
   { name: "pins", cmd: "npm run pins:check" },
+  { name: "notices", cmd: "npm run notices:check" }, // reads the host's restored graph
   { name: "host-test", cmd: `dotnet test ${HOST_SOLUTION} --no-restore`, local: true },
   { name: "cargo-test", cmd: `cargo test --manifest-path ${CARGO_MANIFEST}` },
   { name: "clippy", cmd: `cargo clippy --manifest-path ${CARGO_MANIFEST} --all-targets -- -D warnings`, local: true },
