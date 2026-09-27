@@ -40,7 +40,7 @@ libssh2 code is present in this distribution.
 
 ## Rust crates
 
-The 368 crates below are the normal-dependency closure of the binary, resolved for
+The 369 crates below are the normal-dependency closure of the binary, resolved for
 `x86_64-pc-windows-msvc`. Build-time and test-only dependencies are excluded because their code is not
 distributed.
 
@@ -302,6 +302,7 @@ distributed.
 | `tauri` | 2.11.6 | Apache-2.0 OR MIT | https://github.com/tauri-apps/tauri |
 | `tauri-codegen` | 2.6.3 | Apache-2.0 OR MIT | https://github.com/tauri-apps/tauri |
 | `tauri-kit-credentials` | 0.1.1 | MIT | https://github.com/iyulab/tauri-kit |
+| `tauri-kit-fs` | 0.1.1 | MIT | https://github.com/iyulab/tauri-kit |
 | `tauri-kit-sidecar` | 0.1.1 | MIT | https://github.com/iyulab/tauri-kit |
 | `tauri-macros` | 2.6.3 | Apache-2.0 OR MIT | https://github.com/tauri-apps/tauri |
 | `tauri-plugin-dialog` | 2.7.3 | Apache-2.0 OR MIT | https://github.com/tauri-apps/plugins-workspace |

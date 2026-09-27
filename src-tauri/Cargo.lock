@@ -4735,6 +4735,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "tauri-kit-fs"
+version = "0.1.1"
+source = "git+https://github.com/iyulab/tauri-kit?tag=v0.1.1#2ca81ca18ed25c260b9424ea29518efbb70aef62"
+dependencies = [
+ "tempfile",
+]
+
+[[package]]
 name = "tauri-kit-sidecar"
 version = "0.1.1"
 source = "git+https://github.com/iyulab/tauri-kit?tag=v0.1.1#2ca81ca18ed25c260b9424ea29518efbb70aef62"
@@ -5039,6 +5047,7 @@ dependencies = [
  "tauri",
  "tauri-build",
  "tauri-kit-credentials",
+ "tauri-kit-fs",
  "tauri-kit-sidecar",
  "tauri-plugin-dialog",
  "tauri-plugin-log",

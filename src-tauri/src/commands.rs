@@ -72,15 +72,11 @@ fn atomic_write_beside(path: &Path, content: &str) -> io::Result<()> {
 
 /// The same guarantee for content that is not necessarily text, so that carrying a file across
 /// does not require being able to read it.
+///
+/// A refusal that passes on its own ([`patiently`](crate::fs_ops::patiently)) is waited out: the
+/// whole write is tried again, and each attempt leaves the old content or the new.
 fn atomic_bytes_beside(path: &Path, content: &[u8]) -> io::Result<()> {
-    let dir = path
-        .parent()
-        .ok_or_else(|| io::Error::other("no parent directory"))?;
-    std::fs::create_dir_all(dir)?;
-    let mut tmp = NamedTempFile::new_in(dir)?;
-    tmp.write_all(content)?;
-    tmp.as_file().sync_all()?;
-    persist(tmp, path, Landing::Replace)
+    crate::fs_ops::patiently(|| tauri_kit_fs::write_atomic(path, content))
 }
 
 /// [`atomic_bytes_beside`] for a file that must not exist yet: refuses with
@@ -189,7 +185,8 @@ pub(crate) mod write_step {
     }
 
     /// Development builds only: while the file named by `TEXTREE_E2E_STALL_FLAG` exists, every
-    /// write waits just before its rename — how the end-to-end tests make a folder stop answering.
+    /// write made through these steps waits just before its rename — how the end-to-end tests
+    /// make a folder stop answering.
     #[cfg(all(not(test), debug_assertions))]
     pub(crate) fn before(step: Step) -> io::Result<()> {
         if step == Step::Rename {
