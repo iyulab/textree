@@ -208,6 +208,10 @@ test.describe("in-app sign-in", () => {
       await expect(page.getByTestId("palette-item").first()).toBeVisible();
       await page.keyboard.press("Enter");
 
+      // What goes out is confirmed before anything else happens, the sign-in included.
+      await expect(page.getByTestId("publish-confirm-go")).toBeEnabled({ timeout: 10000 });
+      await page.getByTestId("publish-confirm-go").click();
+
       // No token is stored, so the publish path must run the sign-in first rather than telling the
       // user to go and paste one.
       const auth = await mock.waitForAuthorize();

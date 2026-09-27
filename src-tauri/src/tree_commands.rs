@@ -258,6 +258,12 @@ pub async fn publish_site(
     off_main(move || commands::publish_site(app, vault_path, out_dir, options)).await
 }
 
+/// Walks the whole folder and reads every note — as slow as the folder is.
+#[tauri::command]
+pub async fn publish_preview(vault_path: String) -> Result<commands::PublishPreview, String> {
+    off_main(move || commands::publish_preview(vault_path)).await
+}
+
 #[tauri::command]
 pub async fn publish_to_cloud(
     app: AppHandle,

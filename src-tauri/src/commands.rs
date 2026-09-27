@@ -1259,6 +1259,58 @@ pub fn publish_to_cloud(
     Ok(result)
 }
 
+/// What a publish of the folder would send out, shown before anything is sent.
+#[derive(Serialize, Debug, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PublishPreview {
+    /// Notes that become pages.
+    pub notes: usize,
+    /// Other files copied alongside them.
+    pub files: usize,
+    /// Notes (vault-relative, `/`-separated) that hold something other than their newest recorded
+    /// version, or were never recorded — they go out as they are on disk.
+    pub unrecorded: Vec<String>,
+    /// Files left out because their name starts with `.`.
+    pub hidden: Vec<String>,
+}
+
+/// Lists what publishing `vault_path` would send out. Reads only: nothing is recorded, and a
+/// folder with no history is not turned into a repository.
+pub fn publish_preview(vault_path: String) -> Result<PublishPreview, String> {
+    let root = PathBuf::from(&vault_path);
+    if !root.is_dir() {
+        return Err("the vault path is not a directory".into());
+    }
+    let found = crate::publish::outgoing(&root).map_err(|e| e.to_string())?;
+    let unrecorded = match history_repo(&root)? {
+        None => found.notes.clone(),
+        Some(prepared) => {
+            let mut differing = Vec::new();
+            for rel in &found.notes {
+                let mut path = root.clone();
+                path.extend(rel.split('/'));
+                let now = std::fs::read(&path).map_err(|e| e.to_string())?;
+                let recorded = crate::git_engine::content_at_tip(
+                    prepared.repo(),
+                    crate::git_engine::NOTES_REF,
+                    &prepared.path_in_repo(Path::new(rel)),
+                )
+                .map_err(|e| e.message().to_string())?;
+                if recorded.as_deref() != Some(now.as_slice()) {
+                    differing.push(rel.clone());
+                }
+            }
+            differing
+        }
+    };
+    Ok(PublishPreview {
+        notes: found.notes.len(),
+        files: found.files.len(),
+        unrecorded,
+        hidden: found.hidden,
+    })
+}
+
 /// Opens the OS app log directory in the system file explorer. Useful for diagnostic sharing.
 /// Creates the directory if it does not yet exist (e.g. before the first app run that writes a log).
 #[tauri::command]
@@ -2466,6 +2518,58 @@ mod tests {
             "second",
             "reading an earlier state must leave the file as it is"
         );
+    }
+
+    #[test]
+    fn publish_preview_counts_everything_as_unrecorded_in_a_folder_without_history() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        seed_note(root, "a.md", "never recorded");
+        seed_note(root, "img.png", "bytes");
+        seed_note(root, ".env", "SECRET=1");
+
+        let preview = publish_preview(root.to_string_lossy().to_string()).unwrap();
+        assert_eq!(preview.notes, 1);
+        assert_eq!(preview.files, 1);
+        assert_eq!(preview.unrecorded, vec!["a.md"]);
+        assert_eq!(preview.hidden, vec![".env"]);
+        assert!(!root.join(".git").exists(), "looking must not create a repository");
+    }
+
+    #[test]
+    fn publish_preview_names_only_notes_that_differ_from_their_newest_version() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        git2::Repository::init(root).unwrap();
+
+        record_note(root, "same.md", "as recorded");
+        let edited = record_note(root, "sub/edited.md", "first");
+        std::fs::write(&edited, "changed since").unwrap();
+        seed_note(root, "new.md", "never recorded");
+
+        let preview = publish_preview(root.to_string_lossy().to_string()).unwrap();
+        assert_eq!(preview.notes, 3);
+        assert_eq!(preview.unrecorded, vec!["new.md", "sub/edited.md"]);
+    }
+
+    #[test]
+    fn publish_preview_reads_history_from_an_enclosing_repository() {
+        let tmp = TempDir::new().unwrap();
+        git2::Repository::init(tmp.path()).unwrap();
+        let root = tmp.path().join("notes");
+        std::fs::create_dir(&root).unwrap();
+        record_note(&root, "kept.md", "as recorded");
+        seed_note(&root, "fresh.md", "never recorded");
+
+        let preview = publish_preview(root.to_string_lossy().to_string()).unwrap();
+        assert_eq!(preview.unrecorded, vec!["fresh.md"]);
+    }
+
+    #[test]
+    fn publish_preview_refuses_a_path_that_is_not_a_folder() {
+        let tmp = TempDir::new().unwrap();
+        let file = seed_note(tmp.path(), "a.md", "x");
+        assert!(publish_preview(file).is_err());
     }
 
     #[test]

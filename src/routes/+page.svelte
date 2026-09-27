@@ -62,6 +62,8 @@
   import DeletedNotes from "$lib/DeletedNotes.svelte";
   import MigrationNotice from "$lib/MigrationNotice.svelte";
   import Settings from "$lib/Settings.svelte";
+  import PublishConfirm from "$lib/PublishConfirm.svelte";
+  import type { PublishDestination } from "$lib/publishConfirm.helpers";
   import PageHeader from "$lib/PageHeader.svelte";
   import { parseFrontmatter, getField } from "$lib/frontmatter.helpers";
   import { palette } from "$lib/paletteStore.svelte";
@@ -364,19 +366,46 @@
   // and keeps a second publish from starting alongside it.
   let publishing = $state(false);
 
+  // The question asked before anything is published: what goes out, and where. Non-null while it is
+  // on screen — no other publish starts meanwhile. `answer` settles the waiting publish.
+  let publishConfirm = $state<{
+    root: string;
+    destination: PublishDestination;
+    answer: (go: boolean) => void;
+  } | null>(null);
+
+  /** Asks whether to publish `vault` to `destination`; resolves true only on "Publish". */
+  function confirmPublish(vault: string, destination: PublishDestination): Promise<boolean> {
+    // The executor runs synchronously, so the dialog is claimed before the caller's first await.
+    return new Promise((resolve) => {
+      publishConfirm = {
+        root: vault,
+        destination,
+        answer: (go) => {
+          publishConfirm = null;
+          resolve(go);
+        },
+      };
+    });
+  }
+
   /**
-   * Publish the open vault to a static site at `out` (outside the vault). Read-only over the
-   * source. The app's tokens are rewritten for prefers-color-scheme so the site auto-themes.
-   * Split from the folder picker so the E2E bridge can drive it without the native dialog.
+   * Publish the open vault to a static site at `out` (outside the vault), once the person has seen
+   * what goes out and said so. Read-only over the source. The app's tokens are rewritten for
+   * prefers-color-scheme so the site auto-themes. Split from the folder picker so the E2E bridge
+   * can drive it without the native dialog; it settles when the publish ends or is declined.
    */
   async function publishToDir(out: string) {
     // Same busy flag as publishing to the web: the render can take a while (the first one after
     // install reads the renderer's files cold), and without it nothing on screen says it started.
-    if (!root || publishing) return;
+    if (!root || publishing || publishConfirm) return;
+    // What goes out is the folder the person was asked about, even if another opens meanwhile.
+    const vault = root;
+    if (!(await confirmPublish(vault, { kind: "folder", path: out }))) return;
     publishing = true;
     publishNotice = null;
     try {
-      const result = await publishSite(root, out, {
+      const result = await publishSite(vault, out, {
         tokensCss: toPublishTokens(tokensCssRaw),
       });
       publishNotice = {
@@ -396,7 +425,7 @@
   }
 
   async function choosePublishTarget() {
-    if (!root || publishing) return;
+    if (!root || publishing || publishConfirm) return;
     const out = await open({
       directory: true,
       multiple: false,
@@ -410,15 +439,17 @@
   let cloudConnecting = $state(false);
 
   /**
-   * Publish the open vault to the web (pub.textree.me) in one action: if no token is stored, guide
-   * the user to Settings; otherwise render + upload and show the resulting URL. Read-only over the
-   * source (same canopy render as the local publish).
+   * Publish the open vault to the web (pub.textree.me): once the person has seen what goes out and
+   * said so, sign in if no token is stored, then render + upload and show the resulting URL.
+   * Read-only over the source (same canopy render as the local publish).
    */
   async function publishToWeb() {
-    if (!root || publishing) return;
-    // Claim the busy flag synchronously, before the first await, so two rapid invocations can't both
-    // pass the guard and start concurrent uploads. `finally` resets it on every path (including the
-    // no-token early return below).
+    if (!root || publishing || publishConfirm) return;
+    // Asked before signing in: someone who decides not to publish should not be sent to a browser.
+    // The question claims the dialog synchronously, so two rapid invocations cannot both pass the
+    // guard; after "Publish" nothing awaits before the busy flag is set.
+    const vault = root;
+    if (!(await confirmPublish(vault, { kind: "web" }))) return;
     publishing = true;
     publishNotice = null;
     try {
@@ -432,7 +463,7 @@
           cloudConnecting = false;
         }
       }
-      const result = await publishToCloud(root, { tokensCss: toPublishTokens(tokensCssRaw) });
+      const result = await publishToCloud(vault, { tokensCss: toPublishTokens(tokensCssRaw) });
       publishNotice = cloudPublishNotice(result);
     } catch (e) {
       publishNotice = { ...cloudPublishErrorNotice(e), onRetry: () => void publishToWeb() };
@@ -1856,6 +1887,14 @@
           onrestored={refreshTree}
         />
       {/key}
+    {/if}
+    {#if publishConfirm}
+      <PublishConfirm
+        root={publishConfirm.root}
+        destination={publishConfirm.destination}
+        onpublish={() => publishConfirm?.answer(true)}
+        oncancel={() => publishConfirm?.answer(false)}
+      />
     {/if}
     <!-- No `&& root` guard (unlike the other panels): Settings is usable with no vault open — the Vault section's "Open vault" path needs it. -->
     {#if showSettings}

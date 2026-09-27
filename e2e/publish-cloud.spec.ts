@@ -1,5 +1,5 @@
 import { test, expect, type Browser, type Page } from "@playwright/test";
-import { connectToApp, loadVault, sampleVaultPath } from "./helpers";
+import { connectToApp, createTempVault, loadVault, removeTempVault, sampleVaultPath } from "./helpers";
 
 /**
  * "Publish to web" (slice 2c — in-app auth) — host-absent-safe E2E (CDP attach to WebView2).
@@ -56,6 +56,30 @@ test("the command palette surfaces 'Publish to web'", async () => {
   // Do NOT press Enter — with a token it uploads; without one it opens a browser sign-in.
   await page.keyboard.press("Escape");
   await expect(page.getByTestId("palette-overlay")).toHaveCount(0);
+});
+
+test("'Publish to web' asks first, and Cancel neither signs in nor uploads", async () => {
+  // Declining happens before the sign-in and the upload, so this is safe with or without a token.
+  // A throwaway folder all the same: were the question ever skipped, this is what would go out.
+  const vault = createTempVault({ "note.md": "# Note\n", "extra.txt": "x" });
+  try {
+    await loadVault(page, vault);
+    await page.keyboard.press("Control+p");
+    await page.getByTestId("palette-input").fill(">Publish to web");
+    await expect(page.getByTestId("palette-item").first()).toContainText("Publish to web");
+    await page.keyboard.press("Enter");
+
+    const dialog = page.getByRole("dialog", { name: "Publish this folder?" });
+    await expect(dialog).toBeVisible();
+    await expect(page.getByTestId("publish-confirm-summary")).toHaveText(
+      "1 note and 1 other file in this folder will be published to the web.",
+    );
+    await page.getByTestId("publish-confirm-cancel").click();
+    await expect(dialog).toHaveCount(0);
+    await expect(page.locator(".publish-banner.publishing")).toHaveCount(0);
+  } finally {
+    removeTempVault(vault);
+  }
 });
 
 test("Settings ▸ Advanced exposes the web-publishing connect controls", async () => {

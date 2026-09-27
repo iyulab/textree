@@ -127,6 +127,7 @@ pub fn run() {
             commands::list_stranded,
             commands::search_content,
             tree_commands::rebuild_index,
+            tree_commands::publish_preview,
             tree_commands::publish_site,
             tree_commands::publish_to_cloud,
             cloud_auth::connect_publish,

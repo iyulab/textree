@@ -106,7 +106,10 @@ npm run test:e2e
 **Publishing:**
 
 - `publish.spec.ts` — publish the vault to a static site via canopy (auto-theming tokens, source
-  `.md` byte-unchanged, self-host banner). Requires the app to be launched with
+  `.md` byte-unchanged, self-host banner), the confirmation shown first (what goes out, notes
+  without a version, hidden files; Cancel and Escape publish nothing), and dot-files kept out of the
+  site. The bridge's `publishTo` settles only once the confirmation is answered — click
+  `publish-confirm-go` or `publish-confirm-cancel`. Requires the app to be launched with
   `TEXTREE_CANOPY_CLI` set to canopy's CLI (e.g. `../canopy/dist/cli.js`) so the backend can spawn it.
 
   > The dev E2E drives publish via `TEXTREE_CANOPY_CLI` (the dev resolution branch). The **production**

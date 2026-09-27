@@ -364,6 +364,23 @@ export async function publishSite(
   return invoke<PublishResult>("publish_site", { vaultPath, outDir, options });
 }
 
+/** What publishing the vault would send out — shown for confirmation before anything is sent. */
+export interface PublishPreview {
+  /** Notes that become pages. */
+  notes: number;
+  /** Other files copied alongside them. */
+  files: number;
+  /** Vault-relative notes whose contents differ from their newest version (or that have none). */
+  unrecorded: string[];
+  /** Vault-relative files left out because their name starts with ".". */
+  hidden: string[];
+}
+
+/** List what publishing the vault would send out. Reads only. */
+export async function publishPreview(vaultPath: string): Promise<PublishPreview> {
+  return invoke<PublishPreview>("publish_preview", { vaultPath });
+}
+
 export interface CloudPublishResult {
   url: string;
   pageCount: number;
