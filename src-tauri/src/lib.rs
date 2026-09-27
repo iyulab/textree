@@ -1,3 +1,4 @@
+pub(crate) mod alternatives;
 pub(crate) mod byo_secret;
 pub(crate) mod cloud_auth;
 pub(crate) mod cloud_publish;
@@ -107,6 +108,12 @@ pub fn run() {
             tree_commands::deleted_notes,
             tree_commands::restore_deleted,
             tree_commands::restore_version,
+            tree_commands::list_alternatives,
+            tree_commands::start_alternative,
+            tree_commands::alternative_text,
+            tree_commands::add_alternative_version,
+            tree_commands::use_alternative,
+            tree_commands::set_aside_alternative,
             tree_commands::move_state_out_of_vault,
             tree_commands::create_note,
             tree_commands::create_untitled_note,

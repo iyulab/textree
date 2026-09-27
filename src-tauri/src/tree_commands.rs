@@ -16,7 +16,8 @@
 //! changed, and such a change waits for it.
 
 use crate::commands::{
-    self, off_main, DefaultVault, DeletedNote, MoveOut, NoteVersion, RestoredNote, SidecarState,
+    self, off_main, DefaultVault, DeletedNote, MoveOut, NoteAlternative, NoteVersion,
+    RestoredNote, SidecarState,
 };
 use crate::search::IndexHandle;
 use crate::note_locks::NoteLocks;
@@ -127,6 +128,51 @@ pub async fn adopt_node(
 ) -> Result<String, String> {
     let places = vec![path.clone(), leaf.clone()];
     changing(&locks, places, move || commands::adopt_node(root, path, leaf)).await
+}
+
+/// The open alternatives of the notes in a folder. Reads history only.
+#[tauri::command]
+pub async fn list_alternatives(root: String) -> Result<Vec<NoteAlternative>, String> {
+    off_main(move || commands::list_alternatives(root)).await
+}
+
+/// Starting an alternative writes a reference only — the note's file is not touched.
+#[tauri::command]
+pub async fn start_alternative(root: String, path: String) -> Result<NoteAlternative, String> {
+    off_main(move || commands::start_alternative(root, path)).await
+}
+
+#[tauri::command]
+pub async fn alternative_text(root: String, id: String) -> Result<String, String> {
+    off_main(move || commands::alternative_text(root, id)).await
+}
+
+/// Adding a version to an alternative writes a reference only.
+#[tauri::command]
+pub async fn add_alternative_version(
+    root: String,
+    id: String,
+    text: String,
+    message: String,
+) -> Result<Option<String>, String> {
+    off_main(move || commands::add_alternative_version(root, id, text, message)).await
+}
+
+/// Using an alternative writes over the note, so it takes the note's turn like a save.
+#[tauri::command]
+pub async fn use_alternative(
+    root: String,
+    path: String,
+    id: String,
+    locks: State<'_, Arc<NoteLocks>>,
+) -> Result<(), String> {
+    changing(&locks, vec![path.clone()], move || commands::use_alternative(root, path, id)).await
+}
+
+/// Setting an alternative aside moves a reference only; the note stays as it is.
+#[tauri::command]
+pub async fn set_aside_alternative(root: String, id: String) -> Result<(), String> {
+    off_main(move || commands::set_aside_alternative(root, id)).await
 }
 
 /// Bringing back an earlier version writes over the note, so it takes the note's turn like a save.

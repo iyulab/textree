@@ -2118,6 +2118,156 @@ pub fn restore_version(root: String, path: String, id: String) -> Result<(), Str
     Ok(())
 }
 
+/// One open alternative of a note, as the interface presents it.
+#[derive(Serialize, Debug, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct NoteAlternative {
+    /// Opaque handle; hand it back to the other alternative commands.
+    pub id: String,
+    /// Vault-root-relative, `/`-separated path of the note it is an alternative of.
+    pub rel: String,
+    /// True when it arrived from elsewhere: the note was changed both here and there.
+    pub arrived: bool,
+    /// Unix epoch seconds of its newest version.
+    pub seconds: i64,
+    pub author: String,
+    /// False while it holds the same as the note's last recorded version — nothing to choose yet.
+    pub differs: bool,
+}
+
+fn note_alternative(
+    prepared: &crate::git_engine::VaultRepo,
+    alternative: &crate::alternatives::Alternative,
+) -> Result<Option<NoteAlternative>, String> {
+    // An enclosing repository may hold alternatives of notes in other folders.
+    let Some(rel) = prepared.path_in_vault(Path::new(&alternative.path)) else {
+        return Ok(None);
+    };
+    let differs = crate::alternatives::differs(prepared.repo(), alternative)
+        .map_err(|e| e.message().to_string())?;
+    Ok(Some(NoteAlternative {
+        id: alternative.id.clone(),
+        rel: crate::git_engine::slashed(&rel),
+        arrived: alternative.arrived_from.is_some(),
+        seconds: alternative.seconds,
+        author: alternative.author.clone(),
+        differs,
+    }))
+}
+
+/// The repository of a folder something has been recorded in, refusing while it is busy.
+fn writable_history(root: &Path) -> Result<crate::git_engine::VaultRepo, String> {
+    let prepared = history_repo(root)?
+        .ok_or_else(|| "add a version of this note first".to_string())?;
+    if let Some(state) = crate::git_engine::operation_in_progress(prepared.repo()) {
+        return Err(format!(
+            "the repository is in the middle of another operation ({state:?})"
+        ));
+    }
+    Ok(prepared)
+}
+
+/// Every open alternative of the notes in this folder.
+pub fn list_alternatives(root: String) -> Result<Vec<NoteAlternative>, String> {
+    let Some(prepared) = history_repo(Path::new(&root))? else {
+        return Ok(Vec::new());
+    };
+    let mut out = Vec::new();
+    for alternative in
+        crate::alternatives::list(prepared.repo()).map_err(|e| e.message().to_string())?
+    {
+        if let Some(view) = note_alternative(&prepared, &alternative)? {
+            out.push(view);
+        }
+    }
+    Ok(out)
+}
+
+/// Starts an alternative of a note from its last recorded version.
+pub fn start_alternative(root: String, path: String) -> Result<NoteAlternative, String> {
+    let root_p = Path::new(&root);
+    let target = Path::new(&path);
+    if !is_within(root_p, target) {
+        return Err("path is outside the vault".into());
+    }
+    let rel = rel_to_root(root_p, target)?;
+    let prepared = writable_history(root_p)?;
+    let repo = prepared.repo();
+    let (author, committer) =
+        crate::git_engine::commit_identities(repo).map_err(|e| e.message().to_string())?;
+    let id = crate::alternatives::start(repo, &prepared.path_in_repo(Path::new(&rel)), &author, &committer)
+        .map_err(|e| e.message().to_string())?;
+    let alternative = crate::alternatives::get(repo, &id).map_err(|e| e.message().to_string())?;
+    log::info!("start_alternative: {rel} as {id}");
+    note_alternative(&prepared, &alternative)?.ok_or_else(|| "the note is not in this folder".into())
+}
+
+/// What an alternative holds for its note.
+pub fn alternative_text(root: String, id: String) -> Result<String, String> {
+    let prepared = history_repo(Path::new(&root))?.ok_or_else(|| "no such alternative".to_string())?;
+    let repo = prepared.repo();
+    let alternative = crate::alternatives::get(repo, &id).map_err(|e| e.message().to_string())?;
+    let bytes = crate::alternatives::content(repo, &alternative)
+        .map_err(|e| e.message().to_string())?
+        .unwrap_or_default();
+    String::from_utf8(bytes).map_err(|_| "the alternative is not text".into())
+}
+
+/// Adds a version to an alternative. `None` when it already holds exactly this.
+pub fn add_alternative_version(
+    root: String,
+    id: String,
+    text: String,
+    message: String,
+) -> Result<Option<String>, String> {
+    let prepared = writable_history(Path::new(&root))?;
+    let repo = prepared.repo();
+    let (author, committer) =
+        crate::git_engine::commit_identities(repo).map_err(|e| e.message().to_string())?;
+    let oid = crate::alternatives::record(repo, &id, text.as_bytes(), &message, &author, &committer)
+        .map_err(|e| e.message().to_string())?;
+    Ok(oid.map(|o| o.to_string()))
+}
+
+/// Makes an alternative's version the note: written to the file and recorded as one new version,
+/// and the alternative ends.
+///
+/// What is on disk is kept first, as when going back to an earlier version: picking overwrites
+/// the note, and edits never recorded have nowhere else to be.
+pub fn use_alternative(root: String, path: String, id: String) -> Result<(), String> {
+    let root_p = Path::new(&root);
+    let target = Path::new(&path);
+    if !is_within(root_p, target) {
+        return Err("path is outside the vault".into());
+    }
+    let rel = rel_to_root(root_p, target)?;
+    let prepared = writable_history(root_p)?;
+    let repo = prepared.repo();
+    let alternative = crate::alternatives::get(repo, &id).map_err(|e| e.message().to_string())?;
+    if alternative.path != crate::git_engine::slashed(&prepared.path_in_repo(Path::new(&rel))) {
+        return Err("that alternative belongs to another note".into());
+    }
+    let chosen = crate::alternatives::content(repo, &alternative)
+        .map_err(|e| e.message().to_string())?
+        .ok_or_else(|| "that alternative holds no version of its note".to_string())?;
+
+    keep_state_of(root_p, target)?;
+    atomic_write_bytes(root_p, target, &chosen).map_err(|e| e.to_string())?;
+    let (author, committer) =
+        crate::git_engine::commit_identities(repo).map_err(|e| e.message().to_string())?;
+    crate::alternatives::pick(repo, &id, &author, &committer).map_err(|e| e.message().to_string())?;
+    log::info!("use_alternative: {rel} from {id}");
+    Ok(())
+}
+
+/// Ends an alternative without using it. The note stays as it is; the alternative is kept.
+pub fn set_aside_alternative(root: String, id: String) -> Result<(), String> {
+    let prepared = writable_history(Path::new(&root))?;
+    crate::alternatives::end(prepared.repo(), &id).map_err(|e| e.message().to_string())?;
+    log::info!("set_aside_alternative: {id}");
+    Ok(())
+}
+
 /// Brings a deleted note back into the folder.
 ///
 /// Two places may hold it — what was kept when it left, and the last state recorded before
@@ -3354,6 +3504,74 @@ mod tests {
             "mine",
             "a refused request leaves the note alone"
         );
+    }
+
+    #[test]
+    fn using_an_alternative_writes_the_note_records_it_and_keeps_what_it_replaced() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        git2::Repository::init(root).unwrap();
+        let root_s = root.to_string_lossy().to_string();
+
+        let note = record_note(root, "a.md", "first");
+        let started = start_alternative(root_s.clone(), note.clone()).unwrap();
+        assert_eq!(started.rel, "a.md");
+        assert!(!started.differs);
+        add_alternative_version(root_s.clone(), started.id.clone(), "other take".into(), "try".into())
+            .unwrap();
+        let listed = list_alternatives(root_s.clone()).unwrap();
+        assert_eq!(listed.len(), 1);
+        assert!(listed[0].differs);
+        assert_eq!(alternative_text(root_s.clone(), started.id.clone()).unwrap(), "other take");
+
+        // Edits never recorded are on disk when the alternative is picked.
+        std::fs::write(&note, "worked on since, never recorded").unwrap();
+        use_alternative(root_s.clone(), note.clone(), started.id.clone()).unwrap();
+
+        assert_eq!(std::fs::read_to_string(&note).unwrap(), "other take");
+        assert!(list_alternatives(root_s.clone()).unwrap().is_empty());
+        let versions = note_versions(root_s.clone(), note.clone()).unwrap();
+        assert_eq!(versions[0].message.lines().next(), Some("Used an alternative"));
+        // What it replaced is reachable, as when going back to an earlier version.
+        delete_node(root_s.clone(), note).unwrap();
+        assert!(restore_deleted(root_s, "a.md".into()).unwrap().as_deleted);
+        assert_eq!(
+            std::fs::read_to_string(root.join("a.md")).unwrap(),
+            "other take",
+            "the last state on disk came back"
+        );
+    }
+
+    #[test]
+    fn an_alternative_is_used_only_for_its_own_note_and_setting_it_aside_changes_nothing() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        git2::Repository::init(root).unwrap();
+        let root_s = root.to_string_lossy().to_string();
+
+        let a = record_note(root, "a.md", "mine");
+        let b = record_note(root, "b.md", "bee");
+        let alt = start_alternative(root_s.clone(), a.clone()).unwrap();
+        add_alternative_version(root_s.clone(), alt.id.clone(), "take".into(), "try".into()).unwrap();
+
+        assert!(use_alternative(root_s.clone(), b.clone(), alt.id.clone()).is_err());
+        assert_eq!(std::fs::read_to_string(&b).unwrap(), "bee");
+
+        set_aside_alternative(root_s.clone(), alt.id.clone()).unwrap();
+        assert_eq!(std::fs::read_to_string(&a).unwrap(), "mine");
+        assert!(list_alternatives(root_s.clone()).unwrap().is_empty());
+        assert!(use_alternative(root_s, a, alt.id).is_err(), "one that ended cannot be used");
+    }
+
+    #[test]
+    fn a_folder_with_no_history_has_no_alternatives_and_cannot_start_one() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        seed_note(root, "a.md", "body");
+        let root_s = root.to_string_lossy().to_string();
+        assert!(list_alternatives(root_s.clone()).unwrap().is_empty());
+        assert!(start_alternative(root_s, root.join("a.md").to_string_lossy().to_string()).is_err());
+        assert!(!root.join(".git").exists(), "looking made no repository");
     }
 
     #[test]

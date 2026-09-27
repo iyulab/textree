@@ -134,6 +134,59 @@ export async function restoreVersion(
   return invoke<void>("restore_version", { root, path, id });
 }
 
+/** One open alternative of a note: a second version kept beside it until a person picks one. */
+export type NoteAlternative = {
+  /** Opaque handle; hand it back to the other alternative calls. */
+  id: string;
+  /** Vault-root-relative, `/`-separated path of the note it is an alternative of. */
+  rel: string;
+  /** True when it arrived from elsewhere: the note was changed both here and there. */
+  arrived: boolean;
+  /** Unix epoch seconds of its newest version. */
+  seconds: number;
+  author: string;
+  /** False while it holds the same as the note's last recorded version. */
+  differs: boolean;
+};
+
+/** The open alternatives of the notes in a folder. */
+export async function listAlternatives(root: string): Promise<NoteAlternative[]> {
+  return invoke<NoteAlternative[]>("list_alternatives", { root });
+}
+
+/** Starts an alternative of a note from its last recorded version. The file is not touched. */
+export async function startAlternative(root: string, path: string): Promise<NoteAlternative> {
+  return invoke<NoteAlternative>("start_alternative", { root, path });
+}
+
+/** What an alternative holds for its note. */
+export async function alternativeText(root: string, id: string): Promise<string> {
+  return invoke<string>("alternative_text", { root, id });
+}
+
+/** Adds a version to an alternative. Null when it already holds exactly this. */
+export async function addAlternativeVersion(
+  root: string,
+  id: string,
+  text: string,
+  message: string,
+): Promise<string | null> {
+  return invoke<string | null>("add_alternative_version", { root, id, text, message });
+}
+
+/**
+ * Makes an alternative's version the note — written to the file and recorded as one new
+ * version — and ends the alternative. What was on disk is kept first.
+ */
+export async function useAlternative(root: string, path: string, id: string): Promise<void> {
+  return invoke<void>("use_alternative", { root, path, id });
+}
+
+/** Ends an alternative without using it. The note stays as it is; the alternative is kept. */
+export async function setAsideAlternative(root: string, id: string): Promise<void> {
+  return invoke<void>("set_aside_alternative", { root, id });
+}
+
 /** What a folder gave up when the app stopped keeping things inside it. */
 export type MoveOut = {
   /** Whether settings were carried over to where they live now. */

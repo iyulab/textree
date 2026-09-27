@@ -33,7 +33,7 @@ pub const SNAPSHOT_REF: &str = "refs/textree/snapshots";
 /// Paths arriving from the rest of the application carry whatever separator the platform uses,
 /// while everything stored in a tree is separated by `/`. Comparing the two forms directly
 /// matches at the top level and silently fails one level down.
-fn slashed(rel: &Path) -> String {
+pub(crate) fn slashed(rel: &Path) -> String {
     rel.components()
         .filter_map(|c| match c {
             Component::Normal(s) => s.to_str(),
@@ -48,7 +48,7 @@ fn slashed(rel: &Path) -> String {
 /// Resolving the whole path in one call would hand the platform's separator to a lookup that
 /// only understands `/`; descending name by name sidesteps the question entirely, the same way
 /// the tree builder does.
-fn blob_in_tree(repo: &Repository, tree: &Tree<'_>, rel: &Path) -> Option<Oid> {
+pub(crate) fn blob_in_tree(repo: &Repository, tree: &Tree<'_>, rel: &Path) -> Option<Oid> {
     let names: Vec<&str> = rel
         .components()
         .filter_map(|c| match c {
@@ -67,7 +67,7 @@ fn blob_in_tree(repo: &Repository, tree: &Tree<'_>, rel: &Path) -> Option<Oid> {
 }
 
 /// The tree of the newest revision on `reference`, or `None` when the reference does not exist.
-fn tip_tree<'r>(repo: &'r Repository, reference: &str) -> Option<Tree<'r>> {
+pub(crate) fn tip_tree<'r>(repo: &'r Repository, reference: &str) -> Option<Tree<'r>> {
     repo.find_reference(reference)
         .and_then(|r| r.peel_to_commit())
         .and_then(|c| c.tree())
@@ -702,7 +702,7 @@ static REFERENCE_WRITERS: std::sync::Mutex<()> = std::sync::Mutex::new(());
 /// Writers in this process take turns ([`REFERENCE_WRITERS`]); the check in [`advance`] is what
 /// covers everything else that can move the reference — another instance of the app, or git
 /// itself — and the retry is for those.
-fn advancing<T>(mut attempt: impl FnMut() -> Result<T, git2::Error>) -> Result<T, git2::Error> {
+pub(crate) fn advancing<T>(mut attempt: impl FnMut() -> Result<T, git2::Error>) -> Result<T, git2::Error> {
     let mut tries = 1;
     loop {
         let result = {
