@@ -96,11 +96,10 @@
     {#if session.outcome && !session.running}
       <p class="outcome" data-testid="backup-outcome">{session.outcome}</p>
     {/if}
-    {#if session.failure}
-      <p class="failure" data-testid="backup-error" title={session.failure.raw}>{session.failure.summary}</p>
-    {/if}
-    {#if failure}
-      <p class="failure" data-testid="backup-error" title={failure.raw}>{failure.summary}</p>
+    <!-- One line: what the person just did failing says more than an earlier exchange failing. -->
+    {#if failure ?? session.failure}
+      {@const shown = failure ?? session.failure}
+      <p class="failure" data-testid="backup-error" title={shown?.raw}>{shown?.summary}</p>
     {/if}
 
     {#if confirmingDisconnect}
