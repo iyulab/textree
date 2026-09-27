@@ -30,35 +30,13 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
-      # Acquire canopy at a pinned commit so the sidecar payload is reproducible.
-      # Bump the ref deliberately when picking up new canopy features.
-      # The pinned canopy commit lives in .github/canopy-ref, read by both CI and release, so the
-      # canopy that CI tests is the canopy that ships. Bump it deliberately, in that one file.
-      - name: Read pinned canopy commit
-        id: canopy
-        shell: bash
-        # Refuse anything but a full commit hash: an empty ref would check out canopy's default
-        # branch and build, green, against an unpinned canopy.
-        run: |
-          ref=$(tr -d '[:space:]' < .github/canopy-ref) || exit 1
-          if [[ ! "$ref" =~ ^[0-9a-f]{40}$ ]]; then
-            echo "::error file=.github/canopy-ref::must hold a full 40-character commit hash, got '$ref'"
-            exit 1
-          fi
-          echo "ref=$ref" >> "$GITHUB_OUTPUT"
-
-      - name: Checkout canopy (pinned)
-        uses: actions/checkout@v7
-        with:
-          repository: iyulab/canopy
-          ref: ${{ steps.canopy.outputs.ref }}
-          path: canopy-src
-
-      # Builds canopy and copies the output into src-tauri/resources/canopy/
+      # The canopy release lives in canopy-sidecar/ (package.json + package-lock.json), read by
+      # both CI and release through the same script, so the canopy CI tests is the canopy that ships.
+      # Installs the pinned canopy release into src-tauri/resources/canopy/
       # so tauri-action bundles it in the installer (Task 3 resources map).
       - name: Assemble canopy sidecar
         shell: pwsh
-        run: pwsh -NoProfile -File scripts/assemble-canopy-sidecar.ps1 -CanopyPath ${{ github.workspace }}/canopy-src
+        run: pwsh -NoProfile -File scripts/assemble-canopy-sidecar.ps1
 
       # Publish the .NET host self-contained and stage it under src-tauri/resources/host/
       # so tauri-action bundles it (Task 4 resources map). Must run BEFORE any cargo build:

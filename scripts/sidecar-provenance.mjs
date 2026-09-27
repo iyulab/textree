@@ -9,15 +9,15 @@
  *
  *   host    against the host source as it stands now (src-host/) and the app version it is
  *           stamped with (src-tauri/tauri.conf.json — assembling passes it to the build)
- *   canopy  against the renderer commit a release ships (.github/canopy-ref) — the renderer is
- *           built from a separate checkout, which is often ahead of the pin on purpose
+ *   canopy  against the renderer release the app ships (canopy-sidecar/) — it can also be built
+ *           from a source checkout, to try a renderer change before it is released
  *
  * Stamps live under .cache/, not beside the payloads: everything under src-tauri/resources/ is
  * bundled into the installer. Each is tied to its payload by hash, so a payload replaced by hand
  * reads as unknown rather than inheriting a stamp that is not its own.
  *
  *   node scripts/sidecar-provenance.mjs stamp host               # assemble-host-sidecar.ps1 calls it
- *   node scripts/sidecar-provenance.mjs stamp canopy <checkout>  # assemble-canopy-sidecar.ps1 calls it
+ *   node scripts/sidecar-provenance.mjs stamp canopy [checkout]  # assemble-canopy-sidecar.ps1 calls it
  *   node scripts/sidecar-provenance.mjs check <host|canopy>      # prints the verdict; exit 1 unless current/pinned
  */
 import { createHash } from "node:crypto";
@@ -25,14 +25,13 @@ import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { CANOPY_CLI, CANOPY_MANIFEST_DIR, CANOPY_STAGE, canopyPin } from "./canopy-stage.mjs";
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 export const SIDECARS = {
   host: { exe: "src-tauri/resources/host/textree-host.exe", source: "src-host" },
 };
-const CANOPY_STAGE = join(REPO, "src-tauri", "resources", "canopy");
-const CANOPY_REF = join(REPO, ".github", "canopy-ref");
 const APP_CONFIG = join(REPO, "src-tauri", "tauri.conf.json");
 
 const stampPath = (kind) => join(REPO, ".cache", "sidecar-provenance", `${kind}.json`);
@@ -123,31 +122,50 @@ export function describe(result) {
 
 // ── canopy ──────────────────────────────────────────────────────────────────────────────────
 
+const CANOPY_IN_STAGE = join(CANOPY_STAGE, "node_modules", "@iyulab", "canopy");
+
 /**
- * Digest of the assembled renderer's own files — its built code and package manifests. The
- * installed node_modules follow from package-lock.json and the Node runtime from the assembly
- * script's pinned version, so both are left out; hashing them would only make stamping slow.
+ * Digest of what decides the assembled renderer: the lock file it was installed from and the
+ * renderer package's own files. The rest of node_modules follows from the lock file and the Node
+ * runtime from the assembly script's pinned version; hashing them would only make stamping slow.
  */
 function canopyStageDigest() {
-  const files = [];
+  const files = [join(CANOPY_STAGE, "package-lock.json")];
   const walk = (dir) => {
     for (const e of readdirSync(dir, { withFileTypes: true })) {
       const full = join(dir, e.name);
       if (e.isDirectory()) {
         if (e.name !== "node_modules") walk(full);
-      } else if (e.name !== "node.exe") {
-        files.push(relative(CANOPY_STAGE, full).split("\\").join("/"));
+      } else {
+        files.push(full);
       }
     }
   };
-  walk(CANOPY_STAGE);
-  return sha256(files.sort().map((f) => `${f}\0${sha256(readFileSync(join(CANOPY_STAGE, f)))}`).join("\n"));
+  walk(CANOPY_IN_STAGE);
+  const named = files.map((f) => [relative(CANOPY_STAGE, f).split("\\").join("/"), f]);
+  named.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+  return sha256(named.map(([n, f]) => `${n}\0${sha256(readFileSync(f))}`).join("\n"));
 }
 
+/** The installed renderer's version, or null when the stage holds none. */
+function installedCanopyVersion() {
+  const manifest = join(CANOPY_IN_STAGE, "package.json");
+  return existsSync(manifest) ? JSON.parse(readFileSync(manifest, "utf8")).version : null;
+}
+
+/**
+ * `checkout`: the source checkout it was built from, or undefined for the pinned release. A stage
+ * installed from the registry counts as the release only when its lock file is the committed one.
+ */
 export function stampCanopy(checkout) {
+  const fromCheckout = checkout !== undefined;
+  const committedLock = readFileSync(join(CANOPY_MANIFEST_DIR, "package-lock.json"));
   const record = {
-    commit: gitIn(checkout, "rev-parse", "HEAD").trim(),
-    pending: pendingDigest(checkout, "."),
+    source: fromCheckout ? "checkout" : "registry",
+    version: installedCanopyVersion(),
+    commit: fromCheckout ? gitIn(checkout, "rev-parse", "HEAD").trim() : null,
+    pending: fromCheckout ? pendingDigest(checkout, ".") : null,
+    lockSha256: fromCheckout ? null : sha256(committedLock),
     stageSha256: canopyStageDigest(),
     assembledAt: new Date().toISOString(),
   };
@@ -156,39 +174,41 @@ export function stampCanopy(checkout) {
 }
 
 /**
- * Pure: stamp + stage digest + pinned commit → verdict.
- * pinned    — built from exactly the commit a release ships, with nothing uncommitted
- * unpinned  — built from another commit, or with uncommitted changes
+ * Pure: stamp + stage digest + pin + committed lock digest → verdict.
+ * pinned    — the pinned release, installed from the committed lock file
+ * unpinned  — built from a source checkout, or installed from another lock file
  * unknown   — no stamp, or the stage is not the one the stamp describes
  */
-export function judgeCanopy(record, stageSha256, pin) {
+export function judgeCanopy(record, stageSha256, pin, lockSha256) {
   if (!record || record.stageSha256 !== stageSha256) return { verdict: "unknown", pin };
-  if (record.commit === pin && record.pending === null) return { verdict: "pinned", built: record, pin };
+  if (record.source === "registry" && record.version === pin && record.lockSha256 === lockSha256) {
+    return { verdict: "pinned", built: record, pin };
+  }
   return { verdict: "unpinned", built: record, pin };
 }
 
 export function checkCanopy() {
-  const pin = readFileSync(CANOPY_REF, "utf8").trim();
-  if (!existsSync(join(CANOPY_STAGE, "cli.js"))) return { verdict: "unknown", pin };
-  return judgeCanopy(readStamp("canopy"), canopyStageDigest(), pin);
+  const pin = canopyPin();
+  if (!existsSync(CANOPY_CLI)) return { verdict: "unknown", pin };
+  const lock = sha256(readFileSync(join(CANOPY_MANIFEST_DIR, "package-lock.json")));
+  return judgeCanopy(readStamp("canopy"), canopyStageDigest(), pin, lock);
 }
 
 export function describeCanopy(result) {
-  const short = (sha) => sha.slice(0, 7);
+  const reassemble = "reassemble with scripts/assemble-canopy-sidecar.ps1";
   switch (result.verdict) {
     case "pinned":
-      return `canopy ${short(result.pin)}, the commit a release ships`;
-    case "unpinned":
-      return (
-        `canopy ${short(result.built.commit)}${result.built.pending ? " + uncommitted changes" : ""}, ` +
-        `not the commit a release ships (${short(result.pin)}) — for the shipped renderer, ` +
-        `reassemble with scripts/assemble-canopy-sidecar.ps1 -Pinned`
-      );
+      return `canopy ${result.pin}, the release the app ships`;
+    case "unpinned": {
+      const b = result.built;
+      const what =
+        b.source === "checkout"
+          ? `canopy ${b.version ?? "?"} built from ${b.commit?.slice(0, 7) ?? "a checkout"}${b.pending ? " + uncommitted changes" : ""}`
+          : `canopy ${b.version ?? "?"} from another lock file`;
+      return `${what}, not the release the app ships (${result.pin}) — for the shipped renderer, ${reassemble}`;
+    }
     default:
-      return (
-        `a renderer of unknown origin (no assembly record, or replaced since); a release ships ` +
-        `canopy ${short(result.pin)} — reassemble with scripts/assemble-canopy-sidecar.ps1 -Pinned`
-      );
+      return `a renderer of unknown origin (no assembly record, or replaced since); the app ships canopy ${result.pin} — ${reassemble}`;
   }
 }
 
@@ -198,18 +218,19 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   const [action, kind, checkout] = process.argv.slice(2);
   const valid =
     (kind === "host" && ["stamp", "check"].includes(action)) ||
-    (kind === "canopy" && ((action === "stamp" && checkout) || action === "check"));
+    (kind === "canopy" && ["stamp", "check"].includes(action));
   if (!valid) {
     console.error(
       "usage: node scripts/sidecar-provenance.mjs <stamp|check> host\n" +
-        "       node scripts/sidecar-provenance.mjs stamp canopy <checkout>\n" +
+        "       node scripts/sidecar-provenance.mjs stamp canopy [checkout]\n" +
         "       node scripts/sidecar-provenance.mjs check canopy",
     );
     process.exit(2);
   }
   if (kind === "canopy" && action === "stamp") {
-    const r = stampCanopy(resolve(checkout));
-    console.log(`[provenance] canopy sidecar stamped: ${r.commit.slice(0, 7)}${r.pending ? " + uncommitted changes" : ""}`);
+    const r = stampCanopy(checkout ? resolve(checkout) : undefined);
+    const from = r.source === "checkout" ? `built from ${r.commit.slice(0, 7)}${r.pending ? " + uncommitted changes" : ""}` : "from the registry";
+    console.log(`[provenance] canopy sidecar stamped: ${r.version} ${from}`);
   } else if (kind === "canopy") {
     const r = checkCanopy();
     console.log(`[provenance] canopy sidecar: ${describeCanopy(r)}`);

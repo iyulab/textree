@@ -1,62 +1,64 @@
 #Requires -Version 7
-# Assembles the canopy renderer as a self-contained "mechanism B" sidecar payload:
-# a pinned Node runtime + canopy's built dist + production node_modules. The payload is
-# bundled by Tauri as a resource (see tauri.conf.json) and invoked as `node cli.js` at
-# runtime (see resolve_canopy). Idempotent: safe to re-run. Windows-first (win-x64).
+# Assembles the canopy renderer as a self-contained "mechanism B" sidecar payload: a pinned Node
+# runtime + the @iyulab/canopy release pinned in canopy-sidecar/, installed with its production
+# dependencies. The payload is bundled by Tauri as a resource (see tauri.conf.json) and invoked as
+# `node node_modules/@iyulab/canopy/dist/cli.js` at runtime (see canopy_from_resource_dir).
+# Idempotent: safe to re-run. Windows-first (win-x64). CI and the release build run exactly this.
 [CmdletBinding()]
 param(
-  # Path to the canopy source repo. Default = umbrella sibling. CI passes the checked-out copy.
-  [string]$CanopyPath = (Join-Path $PSScriptRoot '..' '..' 'canopy'),
-  [string]$NodeVersion = '22.12.0',
-  # Build the commit a release ships (.github/canopy-ref) from a temporary worktree of
-  # $CanopyPath, instead of whatever that checkout has. Without it the E2E suite renders with the
-  # checkout's canopy, which is often ahead of the pin (sidecar-provenance.mjs says which).
-  [switch]$Pinned
+  # A canopy source checkout to build and install instead of the pinned release — for trying a
+  # renderer change before it is released. The result is reported as not the shipped renderer.
+  [string]$CanopyPath = '',
+  [string]$NodeVersion = '22.12.0'
 )
 $ErrorActionPreference = 'Stop'
 
 $repoRoot  = Join-Path $PSScriptRoot '..'                       # textree/
+$manifest  = Join-Path $repoRoot 'canopy-sidecar'
 $stage     = Join-Path $repoRoot 'src-tauri' 'resources' 'canopy'
 $cacheDir  = Join-Path $repoRoot '.cache'
-$canopy    = (Resolve-Path $CanopyPath).Path
-$worktree  = $null
-if ($Pinned) {
-  $ref = (Get-Content (Join-Path $repoRoot '.github' 'canopy-ref') -Raw).Trim()
-  $worktree = Join-Path $cacheDir 'canopy-pinned'
-  if (Test-Path $worktree) {
-    git -C $canopy worktree remove --force $worktree 2>$null
-    if (Test-Path $worktree) { Remove-Item -Recurse -Force $worktree }
-    git -C $canopy worktree prune
-  }
-  git -C $canopy worktree add --detach $worktree $ref
-  if ($LASTEXITCODE -ne 0) { throw "could not check out canopy $ref from $canopy (fetch it there first)" }
-  $canopy = (Resolve-Path $worktree).Path
-}
 
-Write-Host "Assembling canopy sidecar: node v$NodeVersion + $canopy -> $stage"
+# 1. The pins must be exact, and the editor and the renderer must draw math with the same KaTeX.
+& node (Join-Path $PSScriptRoot 'canopy-stage.mjs')
+if ($LASTEXITCODE -ne 0) { throw "canopy pins are not usable ($LASTEXITCODE)" }
 
-# 1. Build canopy from source (produces dist/). Needs dev deps for tsc.
-Push-Location $canopy
-try {
-  npm ci
-  npm run build
-} finally { Pop-Location }
-
-# 2. Reset the stage dir.
+# 2. Reset the stage dir and put the manifest in it.
 if (Test-Path $stage) { Remove-Item -Recurse -Force $stage }
 New-Item -ItemType Directory -Force -Path $stage | Out-Null
+Copy-Item (Join-Path $manifest 'package.json') $stage -Force
+Copy-Item (Join-Path $manifest 'package-lock.json') $stage -Force
 
-# 3. Copy built dist/* + the package manifests (package.json carries "type":"module",
-#    which makes node treat the .js files as ESM; package-lock pins the prod install).
-Copy-Item (Join-Path $canopy 'dist' '*') $stage -Recurse -Force
-Copy-Item (Join-Path $canopy 'package.json') $stage -Force
-Copy-Item (Join-Path $canopy 'package-lock.json') $stage -Force
+# 3. Production-only install into the stage: the pinned release as the lock file records it, or a
+#    package built from the given checkout in its place.
+$checkout = $null
+if ($CanopyPath) {
+  $checkout = (Resolve-Path $CanopyPath).Path
+  Write-Host "Assembling canopy sidecar from the checkout $checkout (not the shipped release)"
+  New-Item -ItemType Directory -Force -Path $cacheDir | Out-Null
+  Push-Location $checkout
+  try {
+    npm ci
+    if ($LASTEXITCODE -ne 0) { throw "npm ci failed in $checkout" }
+    npm run build   # `npm pack` does not run prepublishOnly
+    if ($LASTEXITCODE -ne 0) { throw "npm run build failed in $checkout" }
+    $packed = (npm pack --pack-destination $cacheDir --silent) | Select-Object -Last 1
+    if ($LASTEXITCODE -ne 0) { throw "npm pack failed in $checkout" }
+  } finally { Pop-Location }
+  Push-Location $stage
+  try {
+    npm install --omit=dev --no-audit --no-fund (Join-Path $cacheDir $packed)
+    if ($LASTEXITCODE -ne 0) { throw "installing the packed canopy failed" }
+  } finally { Pop-Location }
+} else {
+  Write-Host "Assembling canopy sidecar: node v$NodeVersion + the pinned canopy release -> $stage"
+  Push-Location $stage
+  try {
+    npm ci --omit=dev --no-audit --no-fund
+    if ($LASTEXITCODE -ne 0) { throw "npm ci failed in the stage" }
+  } finally { Pop-Location }
+}
 
-# 4. Production-only install INTO the stage (does not mutate the source canopy node_modules).
-Push-Location $stage
-try { npm ci --omit=dev } finally { Pop-Location }
-
-# 5. Fetch + cache the pinned Node runtime, extract node.exe into the stage.
+# 4. Fetch + cache the pinned Node runtime, extract node.exe into the stage.
 $nodeExe = Join-Path $stage 'node.exe'
 if (-not (Test-Path $nodeExe)) {
   New-Item -ItemType Directory -Force -Path $cacheDir | Out-Null
@@ -70,9 +72,10 @@ if (-not (Test-Path $nodeExe)) {
   Copy-Item (Join-Path $extract 'node.exe') $nodeExe -Force
 }
 
-# 6. Record which canopy commit this payload is (sidecar-provenance.mjs; the E2E run reports it).
-& node (Join-Path $PSScriptRoot 'sidecar-provenance.mjs') stamp canopy $canopy
+# 5. Record which renderer this payload is (sidecar-provenance.mjs; the E2E run reports it).
+$stampArgs = @('stamp', 'canopy')
+if ($checkout) { $stampArgs += $checkout }
+& node (Join-Path $PSScriptRoot 'sidecar-provenance.mjs') @stampArgs
 if ($LASTEXITCODE -ne 0) { throw "recording the renderer's source failed ($LASTEXITCODE)" }
-if ($worktree) { git -C $CanopyPath worktree remove --force $worktree }
 
 Write-Host "Done. Payload at $stage"

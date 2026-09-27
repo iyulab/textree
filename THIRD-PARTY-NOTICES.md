@@ -479,7 +479,7 @@ are compiled into the application.
 | `codemirror` | 6.0.2 | MIT | https://github.com/codemirror/basic-setup |
 | `commander` | 15.0.0 | MIT | https://github.com/tj/commander.js |
 | `crelt` | 1.0.7 | MIT | https://code.haverbeke.berlin/marijn/crelt |
-| `katex` | 0.18.7 | MIT | https://github.com/KaTeX/KaTeX |
+| `katex` | 0.18.9 | MIT | https://github.com/KaTeX/KaTeX |
 | `style-mod` | 4.1.4 | MIT | https://code.haverbeke.berlin/marijn/style-mod |
 | `w3c-keyname` | 2.2.8 | MIT | https://github.com/marijnh/w3c-keyname |
 

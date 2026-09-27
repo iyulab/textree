@@ -36,20 +36,25 @@ pub const RENDER_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// How to invoke canopy: a program plus any fixed leading args. In production
 /// (`canopy_from_resource_dir`) the program is the bundled pinned `node` runtime and `prefix_args`
-/// holds the `cli.js` path; in dev/E2E (`TEXTREE_CANOPY_CLI`) it is `node` with the CLI script
+/// holds canopy's CLI script path; in dev/E2E (`TEXTREE_CANOPY_CLI`) it is `node` with the CLI script
 /// path, or a standalone exe.
 pub struct CanopyInvocation {
     pub program: OsString,
     pub prefix_args: Vec<OsString>,
 }
 
+/// Where canopy's command-line entry sits in the bundled payload: the pinned npm release installed
+/// as it is published (its `bin`). `scripts/canopy-stage.mjs` names the same path.
+const CANOPY_CLI_IN_PAYLOAD: [&str; 5] = ["node_modules", "@iyulab", "canopy", "dist", "cli.js"];
+
 /// Resolves the bundled canopy sidecar (mechanism B) from a Tauri resource directory. The payload
-/// lives under `<resource>/canopy/`: a pinned `node` runtime plus canopy's `cli.js`. Returns the
-/// invocation `node cli.js`, or `None` if either piece is missing (e.g. an unbundled dev build).
+/// lives under `<resource>/canopy/`: a pinned `node` runtime plus the installed canopy release.
+/// Returns the invocation `node <cli>`, or `None` if either piece is missing (e.g. an unbundled dev
+/// build).
 pub fn canopy_from_resource_dir(resource: &Path) -> Option<CanopyInvocation> {
     let dir = resource.join("canopy");
     let node = dir.join(if cfg!(windows) { "node.exe" } else { "node" });
-    let cli = dir.join("cli.js");
+    let cli = CANOPY_CLI_IN_PAYLOAD.iter().fold(dir.clone(), |p, part| p.join(part));
     if node.exists() && cli.exists() {
         Some(CanopyInvocation {
             program: node.into_os_string(),
@@ -461,11 +466,13 @@ mod tests {
         std::fs::create_dir(&dir).unwrap();
         let node_name = if cfg!(windows) { "node.exe" } else { "node" };
         std::fs::write(dir.join(node_name), "").unwrap();
-        std::fs::write(dir.join("cli.js"), "").unwrap();
+        let cli = dir.join("node_modules").join("@iyulab").join("canopy").join("dist").join("cli.js");
+        std::fs::create_dir_all(cli.parent().unwrap()).unwrap();
+        std::fs::write(&cli, "").unwrap();
 
         let inv = canopy_from_resource_dir(tmp.path()).expect("should resolve");
         assert_eq!(inv.program, dir.join(node_name).into_os_string());
-        assert_eq!(inv.prefix_args, vec![dir.join("cli.js").into_os_string()]);
+        assert_eq!(inv.prefix_args, vec![cli.into_os_string()]);
     }
 
     #[test]
@@ -473,13 +480,15 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let dir = tmp.path().join("canopy");
         std::fs::create_dir(&dir).unwrap();
-        // cli.js present but node missing -> not resolvable.
-        std::fs::write(dir.join("cli.js"), "").unwrap();
+        // The CLI present but node missing -> not resolvable.
+        let cli = dir.join("node_modules").join("@iyulab").join("canopy").join("dist").join("cli.js");
+        std::fs::create_dir_all(cli.parent().unwrap()).unwrap();
+        std::fs::write(&cli, "").unwrap();
         assert!(canopy_from_resource_dir(tmp.path()).is_none());
     }
 
-    /// Production-path guard: resolve canopy from the *assembled* sidecar payload (node + cli.js +
-    /// node_modules under `src-tauri/resources/canopy/`) and actually publish a vault through it,
+    /// Production-path guard: resolve canopy from the *assembled* sidecar payload (node + the
+    /// installed canopy release under `src-tauri/resources/canopy/`) and actually publish a vault through it,
     /// proving the bundled payload renders AND leaves the source `.md` byte-unchanged. Ignored
     /// by default because it requires the payload — run `scripts/assemble-canopy-sidecar.ps1` first,
     /// then `cargo test -- --ignored run_publish_via_assembled_sidecar`. CI does both (release.yml).

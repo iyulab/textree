@@ -20,6 +20,7 @@ import { closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync } from
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { CANOPY_CLI as ASSEMBLED_CANOPY } from "./canopy-stage.mjs";
 import { checkCanopy, describeCanopy } from "./sidecar-provenance.mjs";
 import { devServerListeners, killTree, runningDevApps } from "./dev-processes.mjs";
 
@@ -30,7 +31,6 @@ const APP_URL_FRAGMENT = "localhost:1420";
 /** The first launch compiles the Rust side, which takes minutes. */
 const STARTUP_TIMEOUT_MS = 10 * 60_000;
 const APP_LOG = join(REPO, "e2e-results", "app.log");
-const ASSEMBLED_CANOPY = join(REPO, "src-tauri", "resources", "canopy", "cli.js");
 
 if (process.platform !== "win32") {
   console.error("[e2e:run] the E2E suite drives WebView2 over CDP and runs on Windows only");
@@ -98,7 +98,7 @@ const { soak, playwrightArgs } = parseArgs(process.argv.slice(2));
 const env = { ...process.env };
 if (!env.TEXTREE_CANOPY_CLI && existsSync(ASSEMBLED_CANOPY)) {
   // The assembled renderer, packaged the way a release packages it; publish specs need it by
-  // absolute path. Whether it is also the canopy commit a release ships depends on what it was
+  // absolute path. Whether it is also the canopy release the app ships depends on what it was
   // assembled from — said up front, so a green run is not read as a check of the shipped renderer
   // when it was not one.
   env.TEXTREE_CANOPY_CLI = ASSEMBLED_CANOPY;

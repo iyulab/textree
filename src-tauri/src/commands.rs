@@ -1201,8 +1201,8 @@ pub fn rebuild_index(root: String, index: &IndexHandle) -> Result<(), String> {
 }
 
 /// Resolves how to invoke canopy. Dev/E2E: the `TEXTREE_CANOPY_CLI` env var (path to the CLI script
-/// or exe) — a `.js` path is run via `node`. Production: the bundled canopy sidecar (`node` +
-/// `cli.js`) under `<resource>/canopy/`.
+/// or exe) — a `.js` path is run via `node`. Production: the bundled canopy sidecar (`node` + the
+/// installed canopy release) under `<resource>/canopy/`.
 fn resolve_canopy(app: &AppHandle) -> Result<crate::publish::CanopyInvocation, String> {
     use crate::publish::CanopyInvocation;
     if let Ok(p) = std::env::var("TEXTREE_CANOPY_CLI") {

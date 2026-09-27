@@ -24,7 +24,7 @@
     "notices": "node scripts/generate-third-party-notices.mjs",
     "notices:check": "node scripts/generate-third-party-notices.mjs --check",
     "tokens:check": "node scripts/check-forbidden-tokens.mjs",
-    "pins:check": "node scripts/check-pin-drift.mjs",
+    "pins:check": "node scripts/canopy-stage.mjs && node scripts/check-pin-drift.mjs",
     "host:smoke": "node scripts/host-smoke.mjs",
     "gate": "node scripts/gate.mjs",
     "tauri": "tauri"
@@ -45,7 +45,7 @@
     "@tauri-apps/plugin-process": "^2.3.1",
     "@tauri-apps/plugin-updater": "^2.10.1",
     "codemirror": "^6.0.2",
-    "katex": "0.18.7"
+    "katex": "0.18.9"
   },
   "devDependencies": {
     "@playwright/test": "^1.60.0",

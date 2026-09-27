@@ -121,12 +121,11 @@ SDK (for the AI helper).
 
 ```bash
 git clone https://github.com/iyulab/textree.git
-git clone https://github.com/iyulab/canopy.git   # the publishing renderer, next to textree
 cd textree
 npm install
 
 # The app bundles two helpers; build them once before the first run.
-pwsh scripts/assemble-canopy-sidecar.ps1    # expects ../canopy; add -Pinned for the version releases ship
+pwsh scripts/assemble-canopy-sidecar.ps1    # the canopy release pinned in canopy-sidecar/; -CanopyPath <checkout> to try unreleased changes
 pwsh scripts/assemble-host-sidecar.ps1      # again after changing src-host/ (host:smoke refuses a stale build)
 
 npm run tauri dev      # run in development

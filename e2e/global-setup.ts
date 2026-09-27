@@ -16,7 +16,7 @@ import { join, resolve } from "node:path";
  * The time is printed, so a first start that grows stays visible instead of hidden.
  */
 export default function globalSetup(): void {
-  const cli = process.env.TEXTREE_CANOPY_CLI ?? resolve("src-tauri/resources/canopy/cli.js");
+  const cli = process.env.TEXTREE_CANOPY_CLI ?? resolve("src-tauri/resources/canopy/node_modules/@iyulab/canopy/dist/cli.js");
   if (!existsSync(cli)) return; // the publish specs report the missing renderer themselves
 
   const root = mkdtempSync(join(tmpdir(), "textree-e2e-warmup-"));

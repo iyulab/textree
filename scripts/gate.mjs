@@ -46,7 +46,7 @@ const STEPS = [
 
 /** Added by --ship around the merge steps (`at`: before or after them). All local. */
 const RELEASE_STEPS = [
-  { name: "assemble-canopy", cmd: "pwsh -NoProfile -File scripts/assemble-canopy-sidecar.ps1 -Pinned", at: "before" },
+  { name: "assemble-canopy", cmd: "pwsh -NoProfile -File scripts/assemble-canopy-sidecar.ps1", at: "before" },
   { name: "assemble-host", cmd: "pwsh -NoProfile -File scripts/assemble-host-sidecar.ps1", at: "before" },
   { name: "e2e", cmd: "npm run e2e:run", at: "after" },
   { name: "smoke", cmd: "npm run host:smoke -- --exe src-tauri/resources/host/textree-host.exe", at: "after" },
@@ -102,7 +102,7 @@ if (selected.some((s) => s.name.startsWith("cargo") || s.name === "clippy")) {
 }
 
 for (const [sidecar, assembledBy] of [
-  ["src-tauri/resources/canopy/cli.js", "assemble-canopy"],
+  ["src-tauri/resources/canopy/node_modules/@iyulab/canopy/dist/cli.js", "assemble-canopy"],
   ["src-tauri/resources/host/textree-host.exe", "assemble-host"],
 ]) {
   if (!existsSync(join(REPO, sidecar)) && !selected.some((s) => s.name === assembledBy)) {

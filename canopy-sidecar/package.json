@@ -1,0 +1,11 @@
+{
+  "name": "textree-canopy-sidecar",
+  "private": true,
+  "description": "The publishing renderer bundled with the app: one exact canopy release, installed as-is.",
+  "dependencies": {
+    "@iyulab/canopy": "0.14.0"
+  },
+  "overrides": {
+    "katex": "0.18.9"
+  }
+}

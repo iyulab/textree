@@ -11,7 +11,7 @@ earlier session left running (only processes whose executable is inside this rep
 the app through the launcher, waits until the app page answers over CDP, runs the suite, and stops
 the app again. Arguments are passed to `playwright test`; `--soak N` repeats the suite N times
 against one app instance. It points `TEXTREE_CANOPY_CLI` at the assembled renderer
-(`src-tauri/resources/canopy/cli.js`) when that exists and the variable is unset. The app's output
+(`src-tauri/resources/canopy/node_modules/@iyulab/canopy/dist/cli.js`) when that exists and the variable is unset. The app's output
 goes to `e2e-results/app.log`.
 
 A leftover app is worth the trouble: the specs cannot tell an app built from older code from the
