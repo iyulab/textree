@@ -43,8 +43,41 @@ pub(crate) fn passes_on_its_own(e: &io::Error) -> bool {
 /// Renames a file or folder, waiting out a refusal that passes on its own ([`patiently`]).
 /// Every move in this module goes through here — the ones that undo a half-done change most of
 /// all: an undo that gives up on a scanner's glance leaves the change half-done.
-fn rename(from: &Path, to: &Path) -> io::Result<()> {
-    patiently(|| std::fs::rename(from, to))
+///
+/// Never replaces: a file already at `to` is refused with [`io::ErrorKind::AlreadyExists`].
+/// Every move here goes to a place meant to be free, and checking that first is not enough —
+/// something can arrive in between (another move, a sync client), and `std::fs::rename` would
+/// then destroy it without a trace.
+pub(crate) fn rename(from: &Path, to: &Path) -> io::Result<()> {
+    patiently(|| rename_no_replace(from, to))
+}
+
+#[cfg(windows)]
+fn rename_no_replace(from: &Path, to: &Path) -> io::Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::MoveFileExW;
+    let wide = |p: &Path| -> Vec<u16> { p.as_os_str().encode_wide().chain(Some(0)).collect() };
+    let (from_w, to_w) = (wide(from), wide(to));
+    // SAFETY: both are NUL-terminated wide strings that outlive the call. No REPLACE_EXISTING.
+    if unsafe { MoveFileExW(from_w.as_ptr(), to_w.as_ptr(), 0) } != 0 {
+        return Ok(());
+    }
+    let e = io::Error::last_os_error();
+    // ERROR_ALREADY_EXISTS (183) and ERROR_FILE_EXISTS (80) both mean "something is there".
+    Err(match e.raw_os_error() {
+        Some(80) | Some(183) => io::Error::new(io::ErrorKind::AlreadyExists, e),
+        _ => e,
+    })
+}
+
+/// Outside Windows there is no portable no-replace rename in std; the check narrows the window
+/// without closing it. v1 ships on Windows only.
+#[cfg(not(windows))]
+fn rename_no_replace(from: &Path, to: &Path) -> io::Result<()> {
+    if to.symlink_metadata().is_ok() {
+        return Err(io::Error::new(io::ErrorKind::AlreadyExists, "the destination exists"));
+    }
+    std::fs::rename(from, to)
 }
 
 /// Supported image extensions (lowercase). Other formats are rejected.
@@ -671,6 +704,33 @@ mod tests {
         );
         assert!(new_dir.join("2026.md").is_file(), "children are unchanged");
         assert!(!dir.exists());
+    }
+
+    #[test]
+    fn renaming_a_folder_after_one_of_its_notes_leaves_that_note_alone() {
+        // The folder note would take the name the child already has inside the folder.
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().join("diary");
+        std::fs::create_dir(&dir).unwrap();
+        std::fs::write(dir.join("diary.md"), "diary body").unwrap();
+        std::fs::write(dir.join("journal.md"), "a child called journal").unwrap();
+
+        assert!(rename_node(tmp.path(), &dir, "journal").is_err());
+        assert_eq!(std::fs::read_to_string(dir.join("journal.md")).unwrap(), "a child called journal");
+        assert_eq!(std::fs::read_to_string(dir.join("diary.md")).unwrap(), "diary body");
+        assert!(!tmp.path().join("journal").exists(), "the folder is put back");
+    }
+
+    #[test]
+    fn a_move_never_replaces_what_is_already_there() {
+        let tmp = TempDir::new().unwrap();
+        let (from, to) = (tmp.path().join("a.md"), tmp.path().join("b.md"));
+        std::fs::write(&from, "a").unwrap();
+        std::fs::write(&to, "b").unwrap();
+
+        assert_eq!(rename(&from, &to).unwrap_err().kind(), io::ErrorKind::AlreadyExists);
+        assert_eq!(std::fs::read_to_string(&to).unwrap(), "b");
+        assert_eq!(std::fs::read_to_string(&from).unwrap(), "a");
     }
 
     #[test]

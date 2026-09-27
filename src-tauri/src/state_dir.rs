@@ -76,12 +76,16 @@ pub fn set_aside(dir: &Path, rel: &str, now_secs: u64) -> io::Result<PathBuf> {
     let from = dir.join(rel);
     let mut to = dir.join(format!("{rel}.unreadable-{now_secs}"));
     let mut n = 1;
-    while to.exists() {
-        n += 1;
-        to = dir.join(format!("{rel}.unreadable-{now_secs}-{n}"));
+    loop {
+        // Never over an earlier set-aside copy: it is the only one of what it holds.
+        match crate::fs_ops::rename(&from, &to) {
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
+                n += 1;
+                to = dir.join(format!("{rel}.unreadable-{now_secs}-{n}"));
+            }
+            moved => return moved.map(|()| to),
+        }
     }
-    crate::fs_ops::patiently(|| std::fs::rename(&from, &to))?;
-    Ok(to)
 }
 
 #[cfg(test)]

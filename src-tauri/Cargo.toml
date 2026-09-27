@@ -57,4 +57,7 @@ git2 = { version = "0.21", features = ["vendored-libgit2"] }
 
 [target."cfg(windows)".dependencies]
 tauri-plugin-updater = "2.10.1"
+# Renaming without replacing (MoveFileExW with no REPLACE flag) — std::fs::rename always replaces.
+# Already in the graph through tauri; no new code ships.
+windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem"] }
 
