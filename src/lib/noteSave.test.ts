@@ -536,6 +536,36 @@ describe("NoteSave — switching notes", () => {
     expect(save.stranded).toBe(0);
   });
 
+  it("edits to a note left behind are written into its vault when another vault opens before their turn", async () => {
+    let root = "/one";
+    let active: string | null = "A.md";
+    const calls: { root: string; text: string; settle: (o: WriteOutcome) => void }[] = [];
+    const save = new NoteSave(initialNoteSaveState(), {
+      root: () => root,
+      activePath: () => active,
+      write: (r, _path, text) => new Promise<WriteOutcome>((resolve) => calls.push({ root: r, text, settle: resolve })),
+    });
+    save.opened("a0");
+    save.schedule("A.md", "a1");
+    void save.flush();
+    await settle();
+    expect(calls).toHaveLength(1); // a1 in flight
+    save.schedule("A.md", "a2");
+    active = "B.md";
+    save.opened("b0"); // A left with a2 queued behind a1
+    expect(await save.beforeLeaving()).toBe("saved"); // nothing open is unsaved: the switch goes ahead
+    root = "/two";
+    active = null;
+    save.closed();
+
+    calls[0].settle(written);
+    await settle();
+    expect(calls.map((c) => [c.root, c.text])).toEqual([
+      ["/one", "a1"],
+      ["/one", "a2"],
+    ]);
+  });
+
 });
 
 describe("NoteSave — answers", () => {

@@ -142,6 +142,9 @@ export class NoteSave {
   #moves: { from: string[] | null; done: Promise<void> }[] = [];
   // Edits to a note already left, waiting their turn to be written. Moves carry them along.
   #queued = new Set<PendingEdit>();
+  // The vault each queued edit was typed in. Another vault can open before its turn comes, and
+  // then the vault open at the time it is written is not the one it belongs to.
+  #vaultOf = new WeakMap<PendingEdit, string>();
   // What an edit was typed on top of: the edit to the same note before it, not on disk yet when this
   // one began, so both start from the same base. Once that one lands, this one starts from it —
   // otherwise it would take its own earlier edit for a change made elsewhere.
@@ -614,6 +617,8 @@ export class NoteSave {
 
   /** Queues the edits to a note being left, in that note's turn. */
   #writeLeft(edit: PendingEdit): void {
+    const root = this.deps.root();
+    if (root) this.#vaultOf.set(edit, root);
     this.#queued.add(edit);
     void this.#onPath(edit.path, () => this.#write(edit))
       .catch(() => {})
@@ -665,7 +670,7 @@ export class NoteSave {
   }
 
   async #writeOnce(job: PendingEdit, rootOf?: string): Promise<void> {
-    const root = rootOf ?? this.deps.root();
+    const root = rootOf ?? this.#vaultOf.get(job) ?? this.deps.root();
     if (!root) return;
     const retry = rootOf !== undefined;
     const s = this.state;
@@ -721,6 +726,8 @@ export class NoteSave {
         }
         return;
       }
+      // Written into a vault no longer open: nothing on screen is about it.
+      if (root !== this.deps.root()) return;
       this.deps.saved?.(job.path, job.text);
       if (job.path === active) this.#synced = job.text;
       if (this.#pending === job) {
