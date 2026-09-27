@@ -17,11 +17,7 @@ mod gate_vault_untouched;
 #[cfg(test)]
 mod gate_write_interrupted;
 pub(crate) mod git_engine;
-// Wired to the remote commands next; until then only its tests reach it.
-#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) mod git_transport;
-// Wired to the remote commands next; until then only its tests reach it.
-#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) mod remote;
 pub(crate) mod pathsafe;
 pub(crate) mod process_ext;
@@ -134,6 +130,10 @@ pub fn run() {
             commands::search_content,
             tree_commands::rebuild_index,
             tree_commands::publish_preview,
+            tree_commands::remote_connection,
+            tree_commands::connect_remote,
+            tree_commands::disconnect_remote,
+            tree_commands::sync_remote,
             tree_commands::publish_site,
             tree_commands::publish_to_cloud,
             cloud_auth::connect_publish,

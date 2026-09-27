@@ -70,7 +70,7 @@ fn factory(remote: &Remote<'_>) -> Result<Transport, Error> {
 }
 
 /// Plain HTTP carries the credentials in the clear, so it is only allowed to this machine.
-fn check_url(url: &str) -> Result<(), Error> {
+pub fn check_url(url: &str) -> Result<(), Error> {
     if url.starts_with("https://") {
         return Ok(());
     }
@@ -252,21 +252,22 @@ impl Write for HttpStream {
     }
 }
 
+/// A smart HTTP server over `git http-backend`, for tests anywhere in the crate that need a real
+/// remote reached through this transport.
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use std::io::{BufRead, BufReader};
+pub(crate) mod test_server {
+    use base64::Engine;
+    use std::io::{self, BufRead, BufReader, Read, Write};
     use std::net::{TcpListener, TcpStream};
     use std::path::{Path, PathBuf};
     use std::process::{Command, Stdio};
 
-    const USER: &str = "someone";
-    const SECRET: &str = "right-token";
-    const NOTES: &str = "refs/textree/notes:refs/textree/notes";
+    pub const USER: &str = "someone";
+    pub const SECRET: &str = "right-token";
 
     /// A smart HTTP server for the bare repositories under `root`: `git http-backend` behind a
     /// minimal HTTP/1.1 front that insists on the credentials above. `None` when git is absent.
-    fn serve(root: PathBuf) -> Option<String> {
+    pub fn serve(root: PathBuf) -> Option<String> {
         let probe = Command::new("git").arg("--version").output().ok()?;
         if !probe.status.success() {
             return None;
@@ -367,6 +368,14 @@ mod tests {
         out.write_all(content)?;
         Ok(())
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::test_server::{serve, SECRET, USER};
+    use super::*;
+    use std::path::Path;
+    const NOTES: &str = "refs/textree/notes:refs/textree/notes";
 
     fn right() -> Option<Credentials> {
         Some(Credentials {

@@ -265,6 +265,29 @@ pub async fn publish_preview(vault_path: String) -> Result<commands::PublishPrev
 }
 
 #[tauri::command]
+pub async fn remote_connection(root: String) -> Result<Option<crate::remote::Connection>, String> {
+    off_main(move || commands::remote_connection(root)).await
+}
+
+/// Reaching the remote is network: it must not hold the window.
+#[tauri::command]
+pub async fn connect_remote(root: String, url: String, username: String, secret: String) -> Result<(), String> {
+    off_main(move || commands::connect_remote(root, url, username, secret)).await
+}
+
+#[tauri::command]
+pub async fn disconnect_remote(root: String) -> Result<(), String> {
+    off_main(move || commands::disconnect_remote(root)).await
+}
+
+/// Takes the turns of the notes it writes itself (see [`crate::remote::apply`]).
+#[tauri::command]
+pub async fn sync_remote(root: String, locks: State<'_, Arc<NoteLocks>>) -> Result<crate::remote::Exchange, String> {
+    let locks = locks.inner().clone();
+    off_main(move || commands::sync_remote(root, &locks)).await
+}
+
+#[tauri::command]
 pub async fn publish_to_cloud(
     app: AppHandle,
     vault_path: String,

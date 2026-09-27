@@ -309,6 +309,99 @@ fn unrecorded_among(
     Ok(out)
 }
 
+/// Where a folder's remote is, as this machine remembers it. The secret sent with it is kept in
+/// the operating system's credential store, never here.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Connection {
+    pub url: String,
+    pub username: String,
+}
+
+/// The file in a folder's settings directory that holds its [`Connection`].
+pub const CONNECTION_FILE: &str = "remote.json";
+
+const SECRET_SERVICE: &str = "com.textree.remote";
+
+fn secret_entry(key: &str) -> Result<keyring::Entry, String> {
+    keyring::Entry::new(&crate::secret_store::service_name(SECRET_SERVICE), key)
+        .map_err(|e| e.to_string())
+}
+
+/// Keeps the secret for the folder named by `key` (its settings key).
+pub fn set_secret(key: &str, secret: &str) -> Result<(), String> {
+    secret_entry(key)?
+        .set_password(secret)
+        .map_err(|e| e.to_string())
+}
+
+/// The secret kept for the folder named by `key`, if any.
+pub fn secret(key: &str) -> Option<String> {
+    secret_entry(key).ok()?.get_password().ok()
+}
+
+/// Forgets the secret for the folder named by `key`. Nothing kept is not an error.
+pub fn clear_secret(key: &str) -> Result<(), String> {
+    match secret_entry(key)?.delete_credential() {
+        Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+/// What one exchange with the remote did.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Exchange {
+    /// Notes written here because they arrived.
+    pub received: Vec<String>,
+    /// Notes removed here because the other side removed them (kept among deleted notes).
+    pub removed: Vec<String>,
+    /// Notes both sides changed. Nothing moved; a person decides.
+    pub held: Vec<String>,
+    /// Notes the other side changed that hold unrecorded edits here. Nothing moved.
+    pub kept_back: Vec<String>,
+    /// The remote now holds everything recorded here.
+    pub sent: bool,
+}
+
+/// One exchange: fetch, take in what can be taken in, send. A remote that moved on while this
+/// ran is fetched from once more before giving up on sending this time.
+pub fn exchange(
+    vault: &VaultRepo,
+    root: &Path,
+    url: &str,
+    credentials: Option<Credentials>,
+    locks: &NoteLocks,
+) -> Result<Exchange, String> {
+    let repo = vault.repo();
+    let err = |e: git2::Error| e.message().to_string();
+    let mut out = Exchange::default();
+    for _ in 0..2 {
+        fetch(repo, url, credentials.clone()).map_err(err)?;
+        let plan = plan(vault, root).map_err(err)?;
+        match apply(vault, root, &plan, locks)? {
+            Taken::Done { written, removed } => {
+                out.received.extend(written);
+                out.removed.extend(removed);
+            }
+            Taken::Held { overlap } => out.held = overlap,
+            Taken::KeptBack { notes } => out.kept_back = notes,
+            Taken::Nothing | Taken::Overtaken => {}
+        }
+        match push(repo, url, credentials.clone()).map_err(err)? {
+            Sent::Done => {
+                out.sent = true;
+                break;
+            }
+            Sent::NothingToSend => break,
+            // Held or kept back: sending waits until a person has decided.
+            Sent::Behind if !out.held.is_empty() || !out.kept_back.is_empty() => break,
+            Sent::Behind => continue,
+        }
+    }
+    Ok(out)
+}
+
 /// What taking in the notes reference did.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Taken {

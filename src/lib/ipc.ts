@@ -381,6 +381,52 @@ export async function publishPreview(vaultPath: string): Promise<PublishPreview>
   return invoke<PublishPreview>("publish_preview", { vaultPath });
 }
 
+// ── Remote (exchange recorded notes with a remote the person connected) ─────────────────────
+
+/** Where this folder's remote is. The secret sent with it is never returned. */
+export interface RemoteConnection {
+  url: string;
+  username: string;
+}
+
+/** What one exchange with the remote did. */
+export interface RemoteExchange {
+  /** Notes written here because they arrived. */
+  received: string[];
+  /** Notes removed here because the other side removed them (kept among deleted notes). */
+  removed: string[];
+  /** Notes both sides changed. Nothing moved for them; a person decides. */
+  held: string[];
+  /** Notes the other side changed that hold unrecorded edits here. Nothing moved. */
+  keptBack: string[];
+  /** The remote now holds everything recorded here. */
+  sent: boolean;
+}
+
+export async function remoteConnection(root: string): Promise<RemoteConnection | null> {
+  return invoke<RemoteConnection | null>("remote_connection", { root });
+}
+
+/** Reaches the remote with `secret` first and remembers it only when that worked. */
+export async function connectRemote(
+  root: string,
+  url: string,
+  username: string,
+  secret: string,
+): Promise<void> {
+  return invoke<void>("connect_remote", { root, url, username, secret });
+}
+
+/** Forgets this folder's remote on this machine. Nothing on the remote changes. */
+export async function disconnectRemote(root: string): Promise<void> {
+  return invoke<void>("disconnect_remote", { root });
+}
+
+/** One exchange: take in what arrived where it can, send what was recorded here. */
+export async function syncRemote(root: string): Promise<RemoteExchange> {
+  return invoke<RemoteExchange>("sync_remote", { root });
+}
+
 export interface CloudPublishResult {
   url: string;
   pageCount: number;

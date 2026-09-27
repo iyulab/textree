@@ -1311,6 +1311,70 @@ pub fn publish_preview(vault_path: String) -> Result<PublishPreview, String> {
     })
 }
 
+// ── Remote (exchange recorded notes with a remote the person connected) ─────────────────────
+
+/// The remote this folder exchanges notes with, as this machine remembers it.
+pub fn remote_connection(root: String) -> Result<Option<crate::remote::Connection>, String> {
+    let path = personal_dir(Path::new(&root))?.join(crate::remote::CONNECTION_FILE);
+    match std::fs::read_to_string(&path) {
+        Ok(text) => serde_json::from_str(&text)
+            .map(Some)
+            .map_err(|e| format!("the remote settings could not be read: {e}")),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+/// Connects this folder to a remote. The remote is reached with the secret first, and remembered
+/// only when that worked — a connection that was saved but cannot be used would fail later, far
+/// from where it was set up.
+pub fn connect_remote(root: String, url: String, username: String, secret: String) -> Result<(), String> {
+    let root_p = Path::new(&root);
+    let url = url.trim().to_string();
+    crate::git_transport::check_url(&url).map_err(|e| e.message().to_string())?;
+    let username = match username.trim() {
+        "" => "textree".to_string(),
+        name => name.to_string(),
+    };
+    let dir = personal_dir(root_p)?;
+    if !crate::state_dir::writable(&dir).map_err(|e| e.to_string())? {
+        return Err(NEWER_SETTINGS.into());
+    }
+    let prepared = crate::git_engine::prepare(root_p).map_err(|e| e.message().to_string())?;
+    let credentials = crate::git_transport::Credentials { username: username.clone(), secret: secret.clone() };
+    crate::remote::fetch(prepared.repo(), &url, Some(credentials)).map_err(|e| e.message().to_string())?;
+
+    let connection = crate::remote::Connection { url, username };
+    let text = serde_json::to_string_pretty(&connection).map_err(|e| e.to_string())?;
+    crate::remote::set_secret(&folder_key(root_p), &secret)?;
+    atomic_write_beside(&dir.join(crate::remote::CONNECTION_FILE), &text).map_err(|e| e.to_string())
+}
+
+/// Forgets this folder's remote on this machine. Nothing on the remote changes.
+pub fn disconnect_remote(root: String) -> Result<(), String> {
+    let root_p = Path::new(&root);
+    let path = personal_dir(root_p)?.join(crate::remote::CONNECTION_FILE);
+    match std::fs::remove_file(&path) {
+        Ok(()) => {}
+        Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+        Err(e) => return Err(e.to_string()),
+    }
+    crate::remote::clear_secret(&folder_key(root_p))
+}
+
+/// One exchange with this folder's remote: takes in what arrived where it can, and sends what
+/// was recorded here.
+pub fn sync_remote(root: String, locks: &NoteLocks) -> Result<crate::remote::Exchange, String> {
+    let root_p = Path::new(&root);
+    let connection = remote_connection(root.clone())?
+        .ok_or_else(|| "this folder is not connected to a remote".to_string())?;
+    let credentials = crate::remote::secret(&folder_key(root_p)).map(|secret| {
+        crate::git_transport::Credentials { username: connection.username.clone(), secret }
+    });
+    let prepared = crate::git_engine::prepare(root_p).map_err(|e| e.message().to_string())?;
+    crate::remote::exchange(&prepared, root_p, &connection.url, credentials, locks)
+}
+
 /// Opens the OS app log directory in the system file explorer. Useful for diagnostic sharing.
 /// Creates the directory if it does not yet exist (e.g. before the first app run that writes a log).
 #[tauri::command]
@@ -2518,6 +2582,84 @@ mod tests {
             "second",
             "reading an earlier state must leave the file as it is"
         );
+    }
+
+    /// A bare repository behind `git http-backend`, reachable only with the test server's
+    /// secret. `None` when git is not installed.
+    fn remote_for_test(tmp: &Path) -> Option<String> {
+        git2::Repository::init_bare(tmp.join("repo.git"))
+            .unwrap()
+            .config()
+            .unwrap()
+            .set_bool("http.receivepack", true)
+            .unwrap();
+        crate::git_transport::test_server::serve(tmp.to_path_buf())
+    }
+
+    #[test]
+    fn a_remote_that_refuses_the_secret_is_not_remembered() {
+        let tmp = TempDir::new().unwrap();
+        let Some(url) = remote_for_test(tmp.path()) else {
+            eprintln!("skipped: git is not installed");
+            return;
+        };
+        let root = tmp.path().join("notes");
+        std::fs::create_dir_all(&root).unwrap();
+        let root_s = root.to_string_lossy().to_string();
+
+        let err = connect_remote(root_s.clone(), url, "someone".into(), "wrong".into()).unwrap_err();
+        assert!(err.contains("refused these credentials"), "{err}");
+        assert_eq!(remote_connection(root_s.clone()).unwrap(), None);
+        assert!(crate::remote::secret(&folder_key(&root)).is_none());
+    }
+
+    #[test]
+    fn plain_http_to_another_machine_is_refused_before_anything_is_sent() {
+        let tmp = TempDir::new().unwrap();
+        let root_s = tmp.path().to_string_lossy().to_string();
+        let err = connect_remote(root_s.clone(), "http://example.com/notes.git".into(), "".into(), "t".into())
+            .unwrap_err();
+        assert!(err.contains("https"), "{err}");
+        assert!(!tmp.path().join(".git").exists());
+    }
+
+    #[test]
+    fn two_folders_connected_to_one_remote_exchange_what_they_recorded() {
+        use crate::git_transport::test_server::{SECRET, USER};
+        let tmp = TempDir::new().unwrap();
+        let Some(url) = remote_for_test(tmp.path()) else {
+            eprintln!("skipped: git is not installed");
+            return;
+        };
+        let locks = NoteLocks::default();
+        let here = tmp.path().join("here");
+        let there = tmp.path().join("there");
+        std::fs::create_dir_all(&here).unwrap();
+        std::fs::create_dir_all(&there).unwrap();
+        let (here_s, there_s) = (here.to_string_lossy().to_string(), there.to_string_lossy().to_string());
+
+        seed_note(&here, "manual.md", "# Manual
+");
+        commit_notes(here_s.clone(), vec![here.join("manual.md").to_string_lossy().to_string()], "first".into())
+            .unwrap();
+        connect_remote(here_s.clone(), url.clone(), USER.into(), SECRET.into()).unwrap();
+        assert_eq!(
+            remote_connection(here_s.clone()).unwrap(),
+            Some(crate::remote::Connection { url: url.clone(), username: USER.into() })
+        );
+        let sent = sync_remote(here_s.clone(), &locks).unwrap();
+        assert!(sent.sent, "{sent:?}");
+
+        connect_remote(there_s.clone(), url, USER.into(), SECRET.into()).unwrap();
+        let got = sync_remote(there_s.clone(), &locks).unwrap();
+        assert_eq!(got.received, vec!["manual.md".to_string()]);
+        assert_eq!(std::fs::read_to_string(there.join("manual.md")).unwrap(), "# Manual
+");
+
+        disconnect_remote(here_s.clone()).unwrap();
+        disconnect_remote(there_s.clone()).unwrap();
+        assert_eq!(remote_connection(here_s).unwrap(), None);
+        assert!(crate::remote::secret(&folder_key(&there)).is_none());
     }
 
     #[test]
