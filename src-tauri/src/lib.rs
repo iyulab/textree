@@ -17,6 +17,9 @@ mod gate_vault_untouched;
 #[cfg(test)]
 mod gate_write_interrupted;
 pub(crate) mod git_engine;
+// Wired to the remote commands next; until then only its tests reach it.
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) mod git_transport;
 pub(crate) mod pathsafe;
 pub(crate) mod process_ext;
 pub(crate) mod publish;

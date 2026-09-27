@@ -1,0 +1,542 @@
+//! Git's smart HTTP protocol, carried by the app's own HTTP client.
+//!
+//! libgit2 is built without its `https` and `ssh` transports (see `tests/dependency_policy.rs`),
+//! so a remote needs a transport from somewhere. This module registers one: libgit2's smart
+//! protocol layer still does the negotiation, pkt-lines and packs; what lives here is only the
+//! channel underneath it — one HTTP request per service, and the credentials to send with it.
+//!
+//! Credentials never come from the user's git configuration or credential helpers. A caller
+//! states them for the duration of one operation with [`with_credentials`], which keeps what the
+//! app sends to a remote entirely in the app's hands.
+
+use std::cell::RefCell;
+use std::io::{self, Read, Write};
+use std::sync::Once;
+use std::time::Duration;
+
+use base64::Engine;
+use git2::transport::{Service, SmartSubtransport, SmartSubtransportStream, Transport};
+use git2::{Error, Remote};
+
+/// How long connecting, or waiting for the server to start answering, may take. A pack can take
+/// much longer than this to arrive, so the body itself is not bounded by it.
+const WAIT: Duration = Duration::from_secs(30);
+
+/// What to send a remote to prove who is asking.
+#[derive(Clone)]
+pub struct Credentials {
+    pub username: String,
+    pub secret: String,
+}
+
+thread_local! {
+    // libgit2 calls back into the transport on the thread that started the operation, so the
+    // credentials an operation was given are exactly the ones in effect on that thread.
+    static CURRENT: RefCell<Option<Credentials>> = const { RefCell::new(None) };
+}
+
+/// Runs `op` with `credentials` sent on every request it makes to a remote.
+pub fn with_credentials<T>(credentials: Option<Credentials>, op: impl FnOnce() -> T) -> T {
+    struct Restore(Option<Credentials>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            let previous = self.0.take();
+            CURRENT.with(|c| *c.borrow_mut() = previous);
+        }
+    }
+    let previous = CURRENT.with(|c| c.replace(credentials));
+    let _restore = Restore(previous);
+    op()
+}
+
+/// Makes `http://` and `https://` remotes reachable. Idempotent; call before any remote operation.
+pub fn install() {
+    static ONCE: Once = Once::new();
+    ONCE.call_once(|| {
+        // A scheme, not a prefix: libgit2 appends "://" itself, so "http" does not claim https.
+        for scheme in ["https", "http"] {
+            // SAFETY: registration is serialised by `Once`, and no transport is being created
+            // while it runs — nothing reaches a remote before `install` has returned.
+            let registered = unsafe { git2::transport::register(scheme, factory) };
+            if let Err(e) = registered {
+                log::error!("git transport for {scheme} could not be registered: {e}");
+            }
+        }
+    });
+}
+
+fn factory(remote: &Remote<'_>) -> Result<Transport, Error> {
+    Transport::smart(remote, true, HttpSubtransport)
+}
+
+/// Plain HTTP carries the credentials in the clear, so it is only allowed to this machine.
+fn check_url(url: &str) -> Result<(), Error> {
+    if url.starts_with("https://") {
+        return Ok(());
+    }
+    let Some(rest) = url.strip_prefix("http://") else {
+        return Err(Error::from_str("only http and https remotes are supported"));
+    };
+    let authority = rest.split('/').next().unwrap_or("");
+    let host = authority.rsplit_once('@').map_or(authority, |(_, h)| h);
+    let host = match host.strip_prefix('[') {
+        Some(v6) => v6.split(']').next().unwrap_or(""),
+        None => host.rsplit_once(':').map_or(host, |(h, _)| h),
+    };
+    if matches!(host, "localhost" | "127.0.0.1" | "::1") {
+        Ok(())
+    } else {
+        Err(Error::from_str(
+            "this remote uses http, which would send your credentials unencrypted — use https",
+        ))
+    }
+}
+
+struct HttpSubtransport;
+
+impl SmartSubtransport for HttpSubtransport {
+    fn action(
+        &self,
+        url: &str,
+        action: Service,
+    ) -> Result<Box<dyn SmartSubtransportStream>, Error> {
+        check_url(url)?;
+        let base = url.trim_end_matches('/');
+        let (service, request) = match action {
+            Service::UploadPackLs => ("git-upload-pack", None),
+            Service::ReceivePackLs => ("git-receive-pack", None),
+            Service::UploadPack => ("git-upload-pack", Some(Vec::new())),
+            Service::ReceivePack => ("git-receive-pack", Some(Vec::new())),
+        };
+        Ok(Box::new(HttpStream {
+            base: base.to_string(),
+            service,
+            request,
+            credentials: CURRENT.with(|c| c.borrow().clone()),
+            response: None,
+        }))
+    }
+
+    fn close(&self) -> Result<(), Error> {
+        Ok(())
+    }
+}
+
+/// One exchange with the remote. An advertisement (`request` is `None`) is a GET; a service call
+/// collects what libgit2 writes and sends it as one POST when libgit2 first asks for the answer.
+struct HttpStream {
+    base: String,
+    service: &'static str,
+    request: Option<Vec<u8>>,
+    credentials: Option<Credentials>,
+    response: Option<Box<dyn Read + Send>>,
+}
+
+impl HttpStream {
+    fn send(&mut self) -> io::Result<Box<dyn Read + Send>> {
+        let service = self.service;
+        let authorization = self.credentials.as_ref().map(|c| {
+            let pair = format!("{}:{}", c.username, c.secret);
+            format!(
+                "Basic {}",
+                base64::engine::general_purpose::STANDARD.encode(pair)
+            )
+        });
+        let request = self.request.take();
+        let advertisement = request.is_none();
+        let result = match request {
+            None => {
+                let url = format!("{}/info/refs?service={service}", self.base);
+                let mut req = ureq::get(&url).header("Git-Protocol", "version=1");
+                if let Some(auth) = &authorization {
+                    req = req.header("Authorization", auth);
+                }
+                req.config()
+                    .http_status_as_error(false)
+                    .timeout_connect(Some(WAIT))
+                    .timeout_recv_response(Some(WAIT))
+                    .build()
+                    .call()
+            }
+            Some(body) => {
+                let url = format!("{}/{service}", self.base);
+                let mut req = ureq::post(&url)
+                    .header("Content-Type", format!("application/x-{service}-request"))
+                    .header("Accept", format!("application/x-{service}-result"));
+                if let Some(auth) = &authorization {
+                    req = req.header("Authorization", auth);
+                }
+                req.config()
+                    .http_status_as_error(false)
+                    .timeout_connect(Some(WAIT))
+                    .timeout_recv_response(Some(WAIT))
+                    .build()
+                    .send(&body[..])
+            }
+        };
+        let response =
+            result.map_err(|e| io::Error::other(format!("could not reach the remote: {e}")))?;
+        let status = response.status().as_u16();
+        match status {
+            200 => {}
+            401 | 403 => {
+                return Err(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    "the remote refused these credentials",
+                ))
+            }
+            404 => {
+                return Err(io::Error::new(
+                    io::ErrorKind::NotFound,
+                    "no repository at this address",
+                ))
+            }
+            _ => {
+                return Err(io::Error::other(format!(
+                    "the remote answered with status {status}"
+                )))
+            }
+        }
+        // A server that answers without the smart content type is speaking the old "dumb"
+        // protocol (or is not a git server at all); libgit2 cannot use what it would send.
+        let expected = format!(
+            "application/x-{service}-{}",
+            if advertisement {
+                "advertisement"
+            } else {
+                "result"
+            }
+        );
+        let content_type = response
+            .headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
+        if !content_type.starts_with(&expected) {
+            return Err(io::Error::other(
+                "this address does not serve a git repository over smart HTTP",
+            ));
+        }
+        Ok(Box::new(response.into_body().into_reader()))
+    }
+}
+
+impl Read for HttpStream {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        if self.response.is_none() {
+            let reader = self.send()?;
+            self.response = Some(reader);
+        }
+        self.response
+            .as_mut()
+            .expect("response set above")
+            .read(buf)
+    }
+}
+
+impl Write for HttpStream {
+    fn write(&mut self, data: &[u8]) -> io::Result<usize> {
+        match (&mut self.request, &self.response) {
+            (Some(body), None) => {
+                body.extend_from_slice(data);
+                Ok(data.len())
+            }
+            _ => Err(io::Error::other(
+                "nothing more can be sent on this exchange",
+            )),
+        }
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::{BufRead, BufReader};
+    use std::net::{TcpListener, TcpStream};
+    use std::path::{Path, PathBuf};
+    use std::process::{Command, Stdio};
+
+    const USER: &str = "someone";
+    const SECRET: &str = "right-token";
+    const NOTES: &str = "refs/textree/notes:refs/textree/notes";
+
+    /// A smart HTTP server for the bare repositories under `root`: `git http-backend` behind a
+    /// minimal HTTP/1.1 front that insists on the credentials above. `None` when git is absent.
+    fn serve(root: PathBuf) -> Option<String> {
+        let probe = Command::new("git").arg("--version").output().ok()?;
+        if !probe.status.success() {
+            return None;
+        }
+        let listener = TcpListener::bind("127.0.0.1:0").ok()?;
+        let port = listener.local_addr().ok()?.port();
+        std::thread::spawn(move || {
+            for stream in listener.incoming().flatten() {
+                let root = root.clone();
+                std::thread::spawn(move || {
+                    let _ = answer(stream, &root);
+                });
+            }
+        });
+        Some(format!("http://127.0.0.1:{port}/repo.git"))
+    }
+
+    fn answer(stream: TcpStream, root: &Path) -> io::Result<()> {
+        let mut reader = BufReader::new(stream.try_clone()?);
+        let mut line = String::new();
+        reader.read_line(&mut line)?;
+        let mut parts = line.split_whitespace();
+        let method = parts.next().unwrap_or("").to_string();
+        let target = parts.next().unwrap_or("").to_string();
+        let (path, query) = target.split_once('?').unwrap_or((&target, ""));
+        let mut length = 0usize;
+        let mut content_type = String::new();
+        let mut authorization = String::new();
+        loop {
+            line.clear();
+            reader.read_line(&mut line)?;
+            let header = line.trim_end();
+            if header.is_empty() {
+                break;
+            }
+            if let Some((k, v)) = header.split_once(':') {
+                match k.to_ascii_lowercase().as_str() {
+                    "content-length" => length = v.trim().parse().unwrap_or(0),
+                    "content-type" => content_type = v.trim().to_string(),
+                    "authorization" => authorization = v.trim().to_string(),
+                    _ => {}
+                }
+            }
+        }
+        let mut body = vec![0; length];
+        reader.read_exact(&mut body)?;
+        let mut out = stream;
+
+        let expected = format!(
+            "Basic {}",
+            base64::engine::general_purpose::STANDARD.encode(format!("{USER}:{SECRET}"))
+        );
+        if authorization != expected {
+            out.write_all(
+                b"HTTP/1.1 401 Unauthorized\r\nWWW-Authenticate: Basic\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+            )?;
+            return Ok(());
+        }
+
+        let mut child = Command::new("git")
+            .arg("http-backend")
+            .env("GIT_PROJECT_ROOT", root)
+            .env("GIT_HTTP_EXPORT_ALL", "1")
+            .env("REQUEST_METHOD", &method)
+            .env("PATH_INFO", path)
+            .env("QUERY_STRING", query)
+            .env("CONTENT_TYPE", &content_type)
+            .env("CONTENT_LENGTH", length.to_string())
+            .env("REMOTE_USER", USER)
+            .env("REMOTE_ADDR", "127.0.0.1")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()?;
+        child.stdin.take().expect("piped").write_all(&body)?;
+        let raw = child.wait_with_output()?.stdout;
+        let (end, gap) = raw
+            .windows(4)
+            .position(|w| w == b"\r\n\r\n")
+            .map(|i| (i, 4))
+            .or_else(|| raw.windows(2).position(|w| w == b"\n\n").map(|i| (i, 2)))
+            .unwrap_or((raw.len(), 0));
+        let head = String::from_utf8_lossy(&raw[..end]).to_string();
+        let content = &raw[(end + gap).min(raw.len())..];
+        let mut status = "200 OK".to_string();
+        let mut headers = String::new();
+        for h in head.lines() {
+            match h.split_once(':') {
+                Some((k, v)) if k.eq_ignore_ascii_case("status") => status = v.trim().to_string(),
+                Some((k, v)) => headers.push_str(&format!("{k}: {}\r\n", v.trim())),
+                None => {}
+            }
+        }
+        let start = format!(
+            "HTTP/1.1 {status}\r\n{headers}Content-Length: {}\r\nConnection: close\r\n\r\n",
+            content.len()
+        );
+        out.write_all(start.as_bytes())?;
+        out.write_all(content)?;
+        Ok(())
+    }
+
+    fn right() -> Option<Credentials> {
+        Some(Credentials {
+            username: USER.into(),
+            secret: SECRET.into(),
+        })
+    }
+
+    /// A repository with one note recorded on the app's own reference.
+    fn recorded(dir: &Path, text: &[u8]) -> (git2::Repository, git2::Oid) {
+        let repo = git2::Repository::init(dir).unwrap();
+        let id = {
+            let blob = repo.blob(text).unwrap();
+            let mut builder = repo.treebuilder(None).unwrap();
+            builder.insert("manual.md", blob, 0o100644).unwrap();
+            let tree = repo.find_tree(builder.write().unwrap()).unwrap();
+            let sig = git2::Signature::now("a", "a@example.com").unwrap();
+            repo.commit(
+                Some(crate::git_engine::NOTES_REF),
+                &sig,
+                &sig,
+                "first",
+                &tree,
+                &[],
+            )
+            .unwrap()
+        };
+        (repo, id)
+    }
+
+    fn bare(root: &Path) {
+        let repo = git2::Repository::init_bare(root.join("repo.git")).unwrap();
+        repo.config()
+            .unwrap()
+            .set_bool("http.receivepack", true)
+            .unwrap();
+    }
+
+    #[test]
+    fn a_recorded_note_goes_to_the_remote_and_comes_back_on_another_machine() {
+        install();
+        let tmp = tempfile::tempdir().unwrap();
+        bare(tmp.path());
+        let Some(url) = serve(tmp.path().to_path_buf()) else {
+            eprintln!("skipped: git is not installed");
+            return;
+        };
+
+        let (here, id) = recorded(&tmp.path().join("here"), b"# Manual\n");
+        with_credentials(right(), || {
+            here.remote_anonymous(&url).unwrap().push(&[NOTES], None)
+        })
+        .expect("push");
+
+        let there = git2::Repository::init(tmp.path().join("there")).unwrap();
+        with_credentials(right(), || {
+            there
+                .remote_anonymous(&url)
+                .unwrap()
+                .fetch(&[NOTES], None, None)
+        })
+        .expect("fetch");
+        let arrived = there.refname_to_id(crate::git_engine::NOTES_REF).unwrap();
+        assert_eq!(arrived, id);
+        let tree = there.find_commit(arrived).unwrap().tree().unwrap();
+        let object = tree
+            .get_name("manual.md")
+            .unwrap()
+            .to_object(&there)
+            .unwrap();
+        assert_eq!(object.as_blob().unwrap().content(), b"# Manual\n");
+    }
+
+    #[test]
+    fn a_push_that_would_drop_the_remotes_history_does_not_land() {
+        install();
+        let tmp = tempfile::tempdir().unwrap();
+        bare(tmp.path());
+        let Some(url) = serve(tmp.path().to_path_buf()) else {
+            eprintln!("skipped: git is not installed");
+            return;
+        };
+        let (first, first_id) = recorded(&tmp.path().join("first"), b"# One\n");
+        with_credentials(right(), || {
+            first.remote_anonymous(&url).unwrap().push(&[NOTES], None)
+        })
+        .expect("first push");
+
+        // A second machine recorded its own, unrelated history and sends it without taking the
+        // first one in: the remote must keep what it has.
+        let (second, _) = recorded(&tmp.path().join("second"), b"# Two\n");
+        let mut rejected: Option<String> = None;
+        let outcome = {
+            let mut callbacks = git2::RemoteCallbacks::new();
+            callbacks.push_update_reference(|name, status| {
+                if let Some(s) = status {
+                    rejected = Some(format!("{name}: {s}"));
+                }
+                Ok(())
+            });
+            let mut options = git2::PushOptions::new();
+            options.remote_callbacks(callbacks);
+            with_credentials(right(), || {
+                second
+                    .remote_anonymous(&url)
+                    .unwrap()
+                    .push(&[NOTES], Some(&mut options))
+            })
+        };
+        let reason = match &outcome {
+            Err(e) => e.message().to_string(),
+            Ok(()) => rejected.clone().unwrap_or_default(),
+        };
+        // libgit2 refuses before sending ("… commits that are not present locally"); a server
+        // that got the update anyway would answer with a non-fast-forward rejection.
+        assert!(
+            reason.contains("not present locally") || reason.contains("fast-forward"),
+            "{reason}"
+        );
+        let remote = git2::Repository::open_bare(tmp.path().join("repo.git")).unwrap();
+        assert_eq!(
+            remote.refname_to_id(crate::git_engine::NOTES_REF).unwrap(),
+            first_id
+        );
+    }
+
+    #[test]
+    fn wrong_credentials_are_refused_and_said_so() {
+        install();
+        let tmp = tempfile::tempdir().unwrap();
+        bare(tmp.path());
+        let Some(url) = serve(tmp.path().to_path_buf()) else {
+            eprintln!("skipped: git is not installed");
+            return;
+        };
+        let (here, _) = recorded(&tmp.path().join("here"), b"# Manual\n");
+        let wrong = Some(Credentials {
+            username: USER.into(),
+            secret: "wrong".into(),
+        });
+        let err = with_credentials(wrong, || {
+            here.remote_anonymous(&url).unwrap().push(&[NOTES], None)
+        })
+        .expect_err("a wrong token must fail");
+        assert!(
+            err.message().contains("refused these credentials"),
+            "{}",
+            err.message()
+        );
+    }
+
+    #[test]
+    fn plain_http_is_only_for_this_machine() {
+        assert!(check_url("https://example.com/team/notes.git").is_ok());
+        assert!(check_url("http://127.0.0.1:8080/repo.git").is_ok());
+        assert!(check_url("http://localhost/repo.git").is_ok());
+        assert!(check_url("http://[::1]:9000/repo.git").is_ok());
+        assert!(check_url("http://example.com/repo.git").is_err());
+        assert!(check_url("http://127.0.0.1.example.com/repo.git").is_err());
+        assert!(check_url("http://user@example.com/repo.git").is_err());
+        assert!(check_url("ssh://example.com/repo.git").is_err());
+    }
+
+    #[test]
+    fn credentials_last_only_for_the_operation() {
+        with_credentials(right(), || {
+            assert!(CURRENT.with(|c| c.borrow().is_some()));
+            with_credentials(None, || assert!(CURRENT.with(|c| c.borrow().is_none())));
+            assert!(CURRENT.with(|c| c.borrow().is_some()));
+        });
+        assert!(CURRENT.with(|c| c.borrow().is_none()));
+    }
+}
