@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { differ, MAX_EDITS, sides, tokens, wordDiff, type Segment } from "./alternatives.helpers";
+import { differ, MAX_EDITS, noticeFor, sides, tokens, wordDiff, type Segment } from "./alternatives.helpers";
 
 const text = (segments: Segment[]) => segments.map((s) => s.text).join("");
 const kinds = (segments: Segment[]) => segments.map((s) => `${s.kind}:${s.text}`);
@@ -86,5 +86,34 @@ describe("differ", () => {
   it("ignores whitespace at the ends only", () => {
     expect(differ("text\n", "text")).toBe(false);
     expect(differ("text", "text!")).toBe(true);
+  });
+});
+
+describe("noticeFor", () => {
+  const alt = (over: Partial<{ id: string; rel: string; arrived: boolean; differs: boolean }>) => ({
+    id: "1",
+    rel: "a.md",
+    arrived: false,
+    differs: false,
+    ...over,
+  });
+
+  it("says nothing without an open note or an alternative of it", () => {
+    expect(noticeFor([alt({})], null)).toBeNull();
+    expect(noticeFor([alt({ rel: "b.md" })], "a.md")).toBeNull();
+  });
+
+  it("shows one started here even before it differs", () => {
+    expect(noticeFor([alt({})], "a.md")?.text).toBe("You have an alternative of this note.");
+  });
+
+  it("hides one that arrived holding what the note holds", () => {
+    expect(noticeFor([alt({ arrived: true, differs: false })], "a.md")).toBeNull();
+  });
+
+  it("puts one from elsewhere first", () => {
+    const notice = noticeFor([alt({ id: "mine" }), alt({ id: "theirs", arrived: true, differs: true })], "a.md");
+    expect(notice?.alternative.id).toBe("theirs");
+    expect(notice?.text).toBe("This note also changed elsewhere.");
   });
 });

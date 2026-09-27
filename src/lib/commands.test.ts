@@ -7,7 +7,7 @@ function stubActions(over: Partial<PaletteActions> = {}): PaletteActions {
     "openVault", "toggleTheme", "toggleSidebar", "toggleReading", "toggleMode",
     "newNoteAtRoot", "newFolderAtRoot", "hasSelection", "renameSelected",
     "deleteSelected", "promoteSelected", "toggleFavoriteSelected", "moveSelectedUp",
-    "moveSelectedDown", "rebuildIndex", "hasVault", "hasOpenNote", "addVersion", "openVersionHistory",
+    "moveSelectedDown", "rebuildIndex", "hasVault", "hasOpenNote", "addVersion", "openVersionHistory", "startAlternative",
     "publishSite", "publishToWeb", "openDeletedNotes",
     "openLogDir", "openSettings",
   ];

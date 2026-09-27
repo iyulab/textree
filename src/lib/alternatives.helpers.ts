@@ -134,3 +134,29 @@ export function sides(segments: Segment[]): { before: Segment[]; after: Segment[
 export function differ(before: string, after: string): boolean {
   return before.trim() !== after.trim();
 }
+
+/** The part of an alternative the note screen needs. */
+export type AlternativeSummary = { id: string; rel: string; arrived: boolean; differs: boolean };
+
+/**
+ * The alternative the open note shows a line about, and what the line says — or null when there
+ * is nothing to say. One that arrived and holds what the note holds (this machine's own version,
+ * seen from elsewhere) is nothing to choose between; one started here is shown even before it
+ * differs, so it can be opened and worked on.
+ */
+export function noticeFor<A extends AlternativeSummary>(
+  alternatives: A[],
+  rel: string | null,
+): { alternative: A; text: string } | null {
+  if (rel === null) return null;
+  const mine = alternatives.filter((a) => a.rel === rel && (!a.arrived || a.differs));
+  // One from elsewhere asks for a decision; show it first.
+  const alternative = mine.find((a) => a.arrived) ?? mine[0];
+  if (!alternative) return null;
+  return {
+    alternative,
+    text: alternative.arrived
+      ? "This note also changed elsewhere."
+      : "You have an alternative of this note.",
+  };
+}

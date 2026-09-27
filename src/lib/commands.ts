@@ -38,6 +38,7 @@ export interface PaletteActions {
   hasOpenNote: () => boolean;
   addVersion: () => void;
   openVersionHistory: () => void;
+  startAlternative: () => void;
   publishSite: () => void;
   publishToWeb: () => void;
   openDeletedNotes: () => void;
@@ -74,6 +75,7 @@ export function buildCommands(a: PaletteActions): Command[] {
     { id: "node.moveDown", title: "Move selected node down", category: "Selected node", run: a.moveSelectedDown, when: sel },
     { id: "note.addVersion", title: "Add version…", category: "Selected node", run: a.addVersion, keybinding: "mod+shift+s", when: a.hasOpenNote },
     { id: "note.versionHistory", title: "Version history…", category: "Selected node", run: a.openVersionHistory, when: a.hasOpenNote },
+    { id: "note.startAlternative", title: "Start an alternative", category: "Selected node", run: a.startAlternative, when: a.hasOpenNote },
     { id: "search.rebuild", title: "Rebuild content index", category: "Search", run: a.rebuildIndex },
     { id: "vault.publish", title: "Publish site…", category: "Vault", run: a.publishSite, when: a.hasVault },
     { id: "vault.publishWeb", title: "Publish to web", category: "Vault", run: a.publishToWeb, when: a.hasVault },

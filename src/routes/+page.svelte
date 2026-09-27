@@ -32,6 +32,9 @@
     keepStranded,
     forgetStranded,
     listStranded,
+    listAlternatives,
+    startAlternative,
+    type NoteAlternative,
     type TreeNode,
     type SearchHit,
     type MoveOut,
@@ -60,6 +63,8 @@
   import { formatModelDownload } from "$lib/modelDownload.helpers";
   import AddVersion from "$lib/AddVersion.svelte";
   import VersionHistory from "$lib/VersionHistory.svelte";
+  import Alternatives from "$lib/Alternatives.svelte";
+  import { noticeFor } from "$lib/alternatives.helpers";
   import DeletedNotes from "$lib/DeletedNotes.svelte";
   import MigrationNotice from "$lib/MigrationNotice.svelte";
   import Settings from "$lib/Settings.svelte";
@@ -169,6 +174,33 @@
   let publishNotice = $state<{ kind: "ok" | "error"; text: string; detail?: string; onRetry?: () => void } | null>(null);
   let showAddVersion = $state(false);
   let showVersionHistory = $state(false);
+  // Open alternatives of the notes in this folder, read from its history. Read again when the
+  // folder opens, after an exchange, and after anything done to one.
+  let alternatives = $state<NoteAlternative[]>([]);
+  let comparing = $state<string | null>(null);
+  let altNotice = $derived(noticeFor(alternatives, activePath ? toRelative(activePath) : null));
+  let comparingAlternative = $derived(
+    comparing === null ? null : (alternatives.find((a) => a.id === comparing) ?? null),
+  );
+  let alternativeReads = 0;
+  async function refreshAlternatives() {
+    const asking = root;
+    const mine = ++alternativeReads;
+    if (!asking) return;
+    try {
+      const found = await listAlternatives(asking);
+      if (mine === alternativeReads && asking === root) alternatives = found;
+    } catch (e) {
+      console.warn("Could not read alternatives:", e);
+    }
+  }
+  $effect(() => {
+    if (root) {
+      alternatives = [];
+      comparing = null;
+      void refreshAlternatives();
+    }
+  });
   let showDeletedNotes = $state(false);
   /** What the folder gave up on this open, when it gave up anything. */
   let movedOut = $state<MoveOut | null>(null);
@@ -216,6 +248,7 @@
       failureSaid.delete(folder);
       if (folder !== root) return;
       void refreshBackup();
+      void refreshAlternatives();
       if (exchange.received.length > 0 || exchange.removed.length > 0) void refreshTree();
       const said = exchangeMessages(exchange);
       if (said.length > 0) {
@@ -1260,9 +1293,23 @@
     hasOpenNote: () => root !== null && activePath !== null,
     addVersion: () => { void startAddVersion(); },
     openVersionHistory: () => { showVersionHistory = true; },
+    startAlternative: () => { void beginAlternative(); },
     openLogDir: () => { void openLogDir(); },
     openSettings: () => { showSettings = true; },
   };
+
+  /** Starts an alternative of the open note from its last version and opens it side by side. */
+  async function beginAlternative() {
+    if (!root || !activePath) return;
+    versionNotice = null;
+    try {
+      const started = await startAlternative(root, activePath);
+      await refreshAlternatives();
+      comparing = started.id;
+    } catch (e) {
+      versionNotice = friendlyError(e).summary;
+    }
+  }
 
   /**
    * Opens the dialog that records a version, after making sure the file on disk is the one the
@@ -1895,6 +1942,14 @@
           </span>
         </div>
       {/if}
+      {#if altNotice && comparing === null}
+        <div class="banner" role="status" data-testid="alternative-notice">
+          <span>{altNotice.text}</span>
+          <span class="banner-actions">
+            <button onclick={() => (comparing = altNotice?.alternative.id ?? null)} data-testid="alternative-compare">Compare</button>
+          </span>
+        </div>
+      {/if}
       {#if saveState.removed && !saveState.dirty}
         <p class="hint">This note was moved or deleted externally. Select another note.</p>
       {:else}
@@ -1951,6 +2006,24 @@
           if (root) void backupStore.syncIfConnected(root);
         }}
       />
+    {/if}
+    {#if comparingAlternative && root && activePath && comparingAlternative.rel === toRelative(activePath)}
+      {#key comparingAlternative.id}
+        <Alternatives
+          {root}
+          path={activePath}
+          alternative={comparingAlternative}
+          current={content}
+          dirty={saveState.dirty}
+          onclose={() => { comparing = null; }}
+          onchanged={(noteChanged) => {
+            void refreshAlternatives();
+            void refreshBackup();
+            if (noteChanged && activePath) void openSavedNote(activePath);
+            if (root) void backupStore.syncIfConnected(root);
+          }}
+        />
+      {/key}
     {/if}
     {#if showVersionHistory && root && activePath}
       <VersionHistory
