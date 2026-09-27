@@ -50,7 +50,7 @@ public sealed class TelemetryEmitter : ITelemetryEmitter
         if (!TelemetryEventName.All.Contains(eventName)) return; // the allowlist: anything else is dropped
         var props = TelemetryPayload.BuildErrorProperties(modelSlot, phase, ex.GetType().Name, _env);
         var envelope = TelemetryEnvelope.Build(_connection, eventName, props, _env.AppVersion, _clock.GetUtcNow());
-        _logger.LogInformation("telemetry: {Event} sent (slot={Slot}, phase={Phase}, type={Type})",
+        _logger.LogInformation("telemetry: {Event} sending (slot={Slot}, phase={Phase}, type={Type})",
             eventName, modelSlot ?? "-", phase, ex.GetType().Name);
         _ = SendAsync(new JsonArray(envelope));
     }
@@ -61,11 +61,11 @@ public sealed class TelemetryEmitter : ITelemetryEmitter
         {
             using var response = await _http.PostAsJsonAsync(_connection.TrackUrl, batch).ConfigureAwait(false);
             if (!response.IsSuccessStatusCode)
-                _logger.LogDebug("telemetry: ingestion answered {Status}; dropped", (int)response.StatusCode);
+                _logger.LogInformation("telemetry: ingestion answered {Status}; dropped", (int)response.StatusCode);
         }
         catch (Exception e)
         {
-            _logger.LogDebug("telemetry: send failed ({Type}); dropped", e.GetType().Name);
+            _logger.LogInformation("telemetry: send failed ({Type}); dropped", e.GetType().Name);
         }
     }
 }
