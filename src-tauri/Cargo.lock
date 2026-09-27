@@ -4735,6 +4735,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "tauri-kit-sidecar"
+version = "0.1.1"
+source = "git+https://github.com/iyulab/tauri-kit?tag=v0.1.1#2ca81ca18ed25c260b9424ea29518efbb70aef62"
+dependencies = [
+ "libc",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "tauri-macros"
 version = "2.6.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5030,6 +5039,7 @@ dependencies = [
  "tauri",
  "tauri-build",
  "tauri-kit-credentials",
+ "tauri-kit-sidecar",
  "tauri-plugin-dialog",
  "tauri-plugin-log",
  "tauri-plugin-opener",

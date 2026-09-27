@@ -273,7 +273,7 @@ pub fn run_publish(
     cmd.args(&canopy.prefix_args);
     cmd.args(canopy_args(vault, out, options, tokens_file.as_ref().map(|f| f.path())));
     // Run the canopy CLI without flashing a console window (Windows).
-    crate::process_ext::no_console_window(&mut cmd);
+    tauri_kit_sidecar::hide_console(&mut cmd);
 
     let output = spawn_bounded(cmd, timeout)?;
     if !output.status.success() {

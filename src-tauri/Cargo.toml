@@ -42,6 +42,9 @@ ureq = { version = "3", features = ["json"] }
 # Secrets (BYO API key, publish token, remote credentials) in the OS credential store, never on
 # disk in plaintext. Test runs and development builds get entries of their own.
 tauri-kit-credentials = { git = "https://github.com/iyulab/tauri-kit", tag = "v0.1.1" }
+# The local AI helper process: no console window, stopped together with everything it starts
+# (also when this app crashes), and a free loopback port for it to listen on.
+tauri-kit-sidecar = { git = "https://github.com/iyulab/tauri-kit", tag = "v0.1.1" }
 # Structured logging to the OS app log directory (app_log_dir). The `log` facade
 # (log::info!/warn!/error!) is used at call sites; the plugin wires the backend.
 log = "0.4"

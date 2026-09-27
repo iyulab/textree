@@ -1,12 +1,12 @@
 use serde::{Deserialize, Serialize};
-use std::io::{BufRead, BufReader, Write};
-use std::net::TcpListener;
-use std::process::{Child, Command, Stdio};
+use std::io::{BufRead, BufReader};
+use std::process::Command;
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 use std::path::Path;
 use tauri::{AppHandle, Manager, State};
+use tauri_kit_sidecar::{free_loopback_port, Output, Sidecar};
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -48,15 +48,6 @@ pub struct HealthResponse {
     pub generator_download: Option<DownloadSnapshot>,
 }
 
-/// Bind 127.0.0.1:0 to let the OS pick a free port, then release it so the
-/// host can claim it. Avoids fixed-port collisions (lesson from Filer).
-pub fn alloc_loopback_port() -> std::io::Result<u16> {
-    let listener = TcpListener::bind("127.0.0.1:0")?;
-    let port = listener.local_addr()?.port();
-    drop(listener);
-    Ok(port)
-}
-
 pub fn parse_health(body: &str) -> Option<HealthResponse> {
     serde_json::from_str(body).ok()
 }
@@ -76,7 +67,8 @@ impl Default for HostStatusCell {
 pub struct HostHandle {
     status: Mutex<HostStatusCell>,
     port: Mutex<Option<u16>>,
-    child: Mutex<Option<Child>>,
+    /// The running host and everything it started, stopped together (see [`shutdown_host`]).
+    child: Mutex<Option<Sidecar>>,
     generation: AtomicU64,
     /// Separate single-flight counter for `ask` streams.
     /// Must NOT share `generation` — that counter drives the health-poll thread
@@ -110,6 +102,11 @@ impl HostHandle {
     fn set_status(&self, s: HostStatus) {
         self.status.lock().unwrap_or_else(|e| e.into_inner()).0 = s;
     }
+    /// The host's exit status, if the process has exited. Does not wait.
+    fn child_exit(&self) -> Option<std::process::ExitStatus> {
+        let mut guard = self.child.lock().unwrap_or_else(|e| e.into_inner());
+        guard.as_mut().and_then(|child| child.try_status().ok().flatten())
+    }
     /// Atomically claim the right to spawn the host: transition to `Starting` only if no spawn is
     /// already in flight (`Starting`) or up (`Ready`), all under a single lock so the check-and-set
     /// is indivisible. The previous guard read the status and set `Starting` in two separate lock
@@ -117,11 +114,6 @@ impl HostHandle {
     /// callers (mount auto-spawn racing the `?`-enable, or a dev eager-spawn racing a manual
     /// trigger) both pass and double-spawn — orphaning the first child (clobbered in `child`) and
     /// leaking its port. Returns true to the single winner, false to everyone else.
-    /// The host's exit status, if the process has exited. Does not wait.
-    fn child_exit(&self) -> Option<std::process::ExitStatus> {
-        let mut guard = self.child.lock().unwrap_or_else(|e| e.into_inner());
-        guard.as_mut().and_then(|child| child.try_wait().ok().flatten())
-    }
     fn try_begin_spawn(&self) -> bool {
         let mut cell = self.status.lock().unwrap_or_else(|e| e.into_inner());
         if matches!(cell.0, HostStatus::Starting | HostStatus::Ready) {
@@ -244,7 +236,7 @@ pub fn spawn_host(
     if !handle.try_begin_spawn() {
         return;
     }
-    let port = match alloc_loopback_port() {
+    let port = match free_loopback_port() {
         Ok(p) => p,
         Err(e) => {
             log::error!("[host] port alloc failed: {e}");
@@ -267,14 +259,20 @@ pub fn spawn_host(
     for (k, v) in &extra_env {
         cmd.env(k, v);
     }
-    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
-    // Run the sidecar without flashing a console window (Windows). Without this,
-    // a GUI app gives the console-subsystem .NET host its own console window.
-    crate::process_ext::no_console_window(&mut cmd);
+    // host-out.log / host-err.log land in app_log_dir so they sit next to textree.log and the
+    // "Open log folder" palette command exposes them in one place. Both streams are drained on
+    // background threads, so a chatty host never blocks on a full pipe.
+    let _ = std::fs::create_dir_all(&log_dir);
+    let output = Output::Files {
+        stdout: log_dir.join("host-out.log"),
+        stderr: log_dir.join("host-err.log"),
+    };
+    // No console window on Windows, and the host joins a job object (a process group elsewhere),
+    // so whatever it starts is stopped with it — also when this app crashes.
     // The bundled host is published self-contained single-file (assemble-host-sidecar.ps1),
     // so it carries its own runtime — no DOTNET_ROOT needed. In dev, TEXTREE_HOST_EXE may point
     // at a framework-dependent build, which then relies on the ambient .NET runtime.
-    let mut child = match cmd.spawn() {
+    let child = match Sidecar::spawn(cmd, output) {
         Ok(c) => c,
         Err(e) => {
             log::error!("[host] spawn failed: {e}");
@@ -282,11 +280,6 @@ pub fn spawn_host(
             return;
         }
     };
-    // UTF-8 async drain (Filer mojibake/deadlock lesson).
-    // host-out.log / host-err.log land in app_log_dir so they sit next to textree.log
-    // and the "Open log folder" palette command exposes them in one place.
-    drain_utf8(child.stdout.take(), log_dir.join("host-out.log"));
-    drain_utf8(child.stderr.take(), log_dir.join("host-err.log"));
     *handle.port.lock().unwrap_or_else(|e| e.into_inner()) = Some(port);
     *handle.child.lock().unwrap_or_else(|e| e.into_inner()) = Some(child);
     *handle.active_provider.lock().unwrap_or_else(|e| e.into_inner()) = active_provider;
@@ -295,26 +288,6 @@ pub fn spawn_host(
     let my_gen = handle.generation.fetch_add(1, Ordering::SeqCst) + 1;
     let h = handle.clone();
     std::thread::spawn(move || poll_health(h, url, my_gen));
-}
-
-fn drain_utf8(stream: Option<impl std::io::Read + Send + 'static>, log: std::path::PathBuf) {
-    let Some(stream) = stream else { return };
-    std::thread::spawn(move || {
-        if let Some(parent) = log.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        let mut file = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&log)
-            .ok();
-        let reader = BufReader::new(stream);
-        for line in reader.lines().map_while(Result::ok) {
-            if let Some(f) = file.as_mut() {
-                let _ = writeln!(f, "{line}"); // bytes are UTF-8 from the .NET host
-            }
-        }
-    });
 }
 
 /// Per-poll decision for the health loop. Pure (no I/O) so it is unit-tested.
@@ -445,6 +418,9 @@ fn poll_health(handle: Arc<HostHandle>, base: String, my_gen: u64) {
 // Shutdown ladder
 // ---------------------------------------------------------------------------
 
+/// How long the host is given to exit on its own after being asked to, before it is stopped.
+const SHUTDOWN_GRACE: Duration = Duration::from_millis(300);
+
 pub fn shutdown_host(handle: &HostHandle) {
     // Invalidate any in-flight poll thread before we proceed; this ensures that a
     // poll thread whose /health response arrives after we return cannot overwrite
@@ -458,21 +434,10 @@ pub fn shutdown_host(handle: &HostHandle) {
             .send_empty();
     }
     let mut guard = handle.child.lock().unwrap_or_else(|e| e.into_inner());
-    if let Some(mut child) = guard.take() {
-        // give graceful shutdown a brief moment, then force.
-        std::thread::sleep(Duration::from_millis(300));
-        // The tree first, while the host is still alive: `taskkill /T` finds descendants through
-        // their parent, so once the host is killed whatever it started can no longer be reached.
-        #[cfg(windows)]
-        {
-            let pid = child.id();
-            let mut tk = Command::new("taskkill");
-            tk.args(["/F", "/T", "/PID", &pid.to_string()]);
-            crate::process_ext::no_console_window(&mut tk);
-            let _ = tk.output();
-        }
-        let _ = child.kill();
-        let _ = child.wait();
+    if let Some(child) = guard.take() {
+        // Give the graceful shutdown a brief moment, then stop the host and everything it started
+        // — even when the host itself has exited, what it started may not have.
+        let _ = child.shutdown(SHUTDOWN_GRACE);
     }
     handle.set_status(HostStatus::Unavailable);
 }
@@ -989,12 +954,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn alloc_loopback_port_returns_nonzero() {
-        let p = alloc_loopback_port().unwrap();
-        assert!(p > 0);
-    }
-
-    #[test]
     fn parse_health_reads_embedder_ready() {
         let h = parse_health(r#"{"status":"ok","embedderReady":true}"#).unwrap();
         assert_eq!(h.status, "ok");
@@ -1145,7 +1104,7 @@ mod tests {
         // starting" until the 15-minute ceiling.
         let handle = Arc::new(HostHandle::default());
         handle.set_status(HostStatus::Starting);
-        let mut cmd = if cfg!(windows) {
+        let cmd = if cfg!(windows) {
             let mut c = Command::new("cmd");
             c.args(["/C", "exit 7"]);
             c
@@ -1154,8 +1113,8 @@ mod tests {
             c.args(["-c", "exit 7"]);
             c
         };
-        crate::process_ext::no_console_window(&mut cmd);
-        *handle.child.lock().unwrap() = Some(cmd.spawn().expect("spawn a process that exits"));
+        *handle.child.lock().unwrap() =
+            Some(Sidecar::spawn(cmd, Output::Discard).expect("spawn a process that exits"));
 
         let started = Instant::now();
         let poller = {

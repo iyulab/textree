@@ -20,7 +20,6 @@ pub(crate) mod git_engine;
 pub(crate) mod git_transport;
 pub(crate) mod remote;
 pub(crate) mod pathsafe;
-pub(crate) mod process_ext;
 pub(crate) mod publish;
 pub(crate) mod publish_secret;
 pub(crate) mod search;
