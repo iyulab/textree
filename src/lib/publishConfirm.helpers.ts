@@ -17,6 +17,11 @@ function where(destination: PublishDestination): string {
   return destination.kind === "web" ? "to the web" : `into ${destination.path}`;
 }
 
+/** Whether there is anything to publish. An empty site would replace whatever is online now. */
+export function canPublish(notes: number, files: number): boolean {
+  return notes + files > 0;
+}
+
 /** One line: how much goes out, and where. */
 export function publishSummary(
   notes: number,

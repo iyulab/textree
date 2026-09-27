@@ -3,6 +3,7 @@
   import { publishPreview, type PublishPreview } from "./ipc";
   import { friendlyError, type FriendlyError } from "./friendlyError.helpers";
   import {
+    canPublish,
     hiddenLine,
     publishSummary,
     unrecordedLead,
@@ -27,7 +28,9 @@
   let scrim = $state<HTMLDivElement | null>(null);
   let go = $state<HTMLButtonElement | null>(null);
 
-  const ready = $derived(preview !== null && failure === null);
+  const ready = $derived(
+    preview !== null && failure === null && canPublish(preview.notes, preview.files),
+  );
 
   onMount(() => {
     scrim?.focus();

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  canPublish,
   displayName,
   hiddenLine,
   publishSummary,
@@ -9,6 +10,14 @@ import {
 } from "./publishConfirm.helpers";
 
 const web = { kind: "web" } as const;
+
+describe("canPublish", () => {
+  it("refuses an empty site, which would replace what is online", () => {
+    expect(canPublish(0, 0)).toBe(false);
+    expect(canPublish(1, 0)).toBe(true);
+    expect(canPublish(0, 2)).toBe(true);
+  });
+});
 
 describe("publishSummary", () => {
   it("counts notes and other files, and says where they go", () => {
