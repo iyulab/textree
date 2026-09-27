@@ -111,13 +111,15 @@ pub struct Outgoing {
     /// Every other file the renderer copies alongside the pages.
     pub files: Vec<String>,
     /// Files whose name starts with `.` — tooling state and secrets (`.env`, `.gitignore`), never
-    /// the author's content. Kept out of the site and listed so the person can see they were.
+    /// the author's content. The renderer leaves them out; they are listed so the person can see
+    /// they were.
     pub hidden: Vec<String>,
 }
 
 /// Lists what a publish renders, walking the vault the way the renderer does: folders whose name
-/// starts with `.` and `node_modules` are not entered, regular files are taken, and anything else
-/// (a symbolic link included — `file_type` does not follow it) is passed over.
+/// starts with `.` and `node_modules` are not entered, files whose name starts with `.` are left
+/// out, other regular files are taken, and anything else (a symbolic link included — `file_type`
+/// does not follow it) is passed over.
 pub fn outgoing(vault: &Path) -> io::Result<Outgoing> {
     fn walk(dir: &Path, rel: &str, found: &mut Outgoing) -> io::Result<()> {
         for entry in std::fs::read_dir(dir)? {
@@ -155,13 +157,12 @@ fn is_note(name: &str) -> bool {
     bytes.len() >= 3 && bytes[bytes.len() - 3..].eq_ignore_ascii_case(b".md")
 }
 
-/// The arguments after the renderer's own prefix: build `vault` into `out`, leaving `hidden` out.
+/// The arguments after the renderer's own prefix: build `vault` into `out`.
 fn canopy_args(
     vault: &Path,
     out: &Path,
     options: &PublishOptions,
     tokens_css: Option<&Path>,
-    hidden: &[String],
 ) -> Vec<OsString> {
     let mut args: Vec<OsString> = vec!["build".into(), vault.into(), out.into()];
     if let Some(title) = &options.site_title {
@@ -171,11 +172,6 @@ fn canopy_args(
     if let Some(path) = tokens_css {
         args.push("--tokens-css".into());
         args.push(path.into());
-    }
-    // TODO(upstream: canopy skips dot-directories but not dot-files; drop this once the pinned canopy does)
-    for rel in hidden {
-        args.push("--exclude".into());
-        args.push(rel.into());
     }
     args
 }
@@ -273,11 +269,9 @@ pub fn run_publish(
         None => None,
     };
 
-    let hidden = outgoing(vault).map_err(|e| e.to_string())?.hidden;
-
     let mut cmd = Command::new(&canopy.program);
     cmd.args(&canopy.prefix_args);
-    cmd.args(canopy_args(vault, out, options, tokens_file.as_ref().map(|f| f.path()), &hidden));
+    cmd.args(canopy_args(vault, out, options, tokens_file.as_ref().map(|f| f.path())));
     // Run the canopy CLI without flashing a console window (Windows).
     crate::process_ext::no_console_window(&mut cmd);
 
@@ -433,19 +427,14 @@ mod tests {
     }
 
     #[test]
-    fn a_hidden_file_is_left_out_of_the_render() {
+    fn a_hidden_file_is_counted_apart_from_what_goes_out() {
         let tmp = TempDir::new().unwrap();
         put(tmp.path(), ".env");
         put(tmp.path(), "a.md");
         let found = outgoing(tmp.path()).unwrap();
         assert_eq!(found.hidden, vec![".env"]);
         assert_eq!(found.notes, vec!["a.md"]);
-
-        let options = PublishOptions { site_title: None, tokens_css: None };
-        let args = canopy_args(tmp.path(), Path::new("site"), &options, None, &found.hidden);
-        let excluded = args.windows(2).any(|w| w[0] == "--exclude" && w[1] == ".env");
-        assert!(excluded, "expected `--exclude .env` in {args:?}");
-        assert_eq!(args[0], "build");
+        assert!(found.files.is_empty());
     }
 
     #[test]
@@ -456,7 +445,6 @@ mod tests {
             Path::new("o"),
             &options,
             Some(Path::new("t.css")),
-            &[],
         );
         let expected: Vec<OsString> =
             ["build", "v", "o", "--site-title", "Site", "--tokens-css", "t.css"]
