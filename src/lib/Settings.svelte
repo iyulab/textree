@@ -13,6 +13,7 @@
     presetDefaults, isValidByoUrlForPreset, isValidByoModel, byoProviderBadge,
   } from "$lib/settings.helpers";
   import { getByoConfig, setByoConfig, clearByoConfig, type ByoConfig, type ByoPreset } from "$lib/byoConfig";
+  import BackupPanel from "$lib/BackupPanel.svelte";
 
   interface Props {
     root: string | null;
@@ -248,6 +249,15 @@
       <h3>Vault</h3>
       <p class="vault-path" title={root ?? ""}>{root ?? "No vault open"}</p>
       <button type="button" class="action" onclick={onOpenVault}>Open / switch vault</button>
+    </section>
+
+    <section aria-label="Backup" data-testid="settings-backup">
+      <h3>Backup</h3>
+      {#if root}
+        <BackupPanel {root} />
+      {:else}
+        <p class="badge">Open a folder to back it up.</p>
+      {/if}
     </section>
 
     <section aria-label="Local AI">

@@ -117,6 +117,16 @@ npm run test:e2e
   > integration test `run_publish_via_assembled_sidecar` (run after assembling the payload; CI runs it
   > in the release build). See `scripts/assemble-canopy-sidecar.ps1`.
 
+**Backup:**
+
+- `backup-status.spec.ts` — the "Not backed up" indicator stays in view on an open note.
+- `backup.spec.ts` — connect a folder to a repository from the indicator (a wrong token is refused
+  and nothing is kept), a second folder receives the notes, a new version reaches the repository
+  in the background, and Settings shows and stops the same backup. The repository is served by
+  `git-remote.ts`: a bare repository behind `git http-backend` run as CGI from a small Node HTTP
+  server with Basic authentication on 127.0.0.1. Skipped when `git` is not on PATH. The spec
+  disconnects both folders at the end so no access token is left in the system credential store.
+
 ## Notes
 
 - `smoke.spec.ts` and `palette.spec.ts` depend on a local `sample-vault/` (gitignored). The rest

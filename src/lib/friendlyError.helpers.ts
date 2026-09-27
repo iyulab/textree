@@ -24,6 +24,32 @@ interface Rule {
 // renders raw OS errors as "<message> (os error N)", so the ")" is always present; the text
 // substrings are the cross-platform fallback when the numeric form is absent.
 const RULES: Rule[] = [
+  // Reaching a repository to back notes up. First, so a generic rule below cannot claim them.
+  {
+    match: ["refused these credentials"],
+    summary:
+      "The repository didn't accept this access token. Check that it's correct and allowed to read and write that repository.",
+  },
+  {
+    match: ["no repository at this address"],
+    summary: "There's no repository at this address, or the token can't see it. Check the address.",
+  },
+  {
+    match: ["could not reach the remote"],
+    summary: "The repository couldn't be reached. Check the address and your internet connection.",
+  },
+  {
+    match: ["unencrypted", "only http and https"],
+    summary: "Use a secure address that starts with https://.",
+  },
+  {
+    match: ["not connected to a remote"],
+    summary: "This folder isn't set up to back up anywhere.",
+  },
+  {
+    match: ["the remote answered with status", "does not serve a git repository"],
+    summary: "The repository site answered with an error. Check the address, or try again later.",
+  },
   {
     match: ["os error 13)", "permission denied", "access is denied"],
     summary:

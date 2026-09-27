@@ -93,4 +93,24 @@ describe("friendlyError", () => {
     const r = friendlyError("");
     expect(r.summary.length).toBeGreaterThan(0);
   });
+
+  it("explains what went wrong reaching a repository without machinery words", () => {
+    const cases = [
+      "the remote refused these credentials",
+      "no repository at this address",
+      "could not reach the remote: connection refused",
+      "this remote uses http, which would send your credentials unencrypted — use https",
+      "only http and https remotes are supported",
+      "this folder is not connected to a remote",
+      "the remote answered with status 500",
+      "this address does not serve a git repository over smart HTTP",
+    ];
+    for (const raw of cases) {
+      const r = friendlyError(raw);
+      expect(r.summary).not.toBe(raw);
+      expect(r.summary).not.toMatch(/(remote|git|push|pull|commit|branch|merge)/i);
+      expect(r.raw).toBe(raw);
+    }
+    expect(friendlyError("the remote refused these credentials").summary).toMatch(/access token/);
+  });
 });

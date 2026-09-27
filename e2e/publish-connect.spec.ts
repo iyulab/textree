@@ -74,7 +74,9 @@ async function openPublishSettings(p: Page) {
     await advanced.locator("summary").click();
   }
   await expect(advanced).toHaveAttribute("open", "");
-  return dialog;
+  // The publishing controls, not the whole dialog: the Backup section has a Connect and a
+  // Disconnect of its own.
+  return advanced;
 }
 
 /** Closes Settings and waits for it to go away, so the next test starts from a known state. */

@@ -1,7 +1,7 @@
 <script lang="ts">
   import { open } from "@tauri-apps/plugin-dialog";
   import { getCurrentWindow } from "@tauri-apps/api/window";
-  import { onMount, tick } from "svelte";
+  import { onMount, tick, untrack } from "svelte";
   import {
     notesBackedUp,
     openVault,
@@ -89,6 +89,9 @@
   import { extractFirstH1, isUnnamed, sanitizeForFilename } from "$lib/h1sync.helpers";
   import { NO_VAULT_HINT, NO_VAULT_PROMPT, NO_NOTE_PROMPT } from "$lib/emptyState";
   import { backupStatus } from "$lib/backupStatus.helpers";
+  import BackupDialog from "$lib/BackupDialog.svelte";
+  import { backupStore } from "$lib/remoteSync.svelte";
+  import { exchangeMessages, needsAttention } from "$lib/remoteSync.helpers";
   import { initialNoteSaveState, NoteSave } from "$lib/noteSave";
   import {
     baseName,
@@ -195,6 +198,38 @@
     }
   });
   const backup = $derived(backupStatus(backedUp));
+  let showBackup = $state(false);
+  // What the last exchange with the folder's repository did, when there is something to say.
+  // Exchanges that change nothing say nothing.
+  let backupNotice = $state<{ kind: "ok" | "error"; text: string; detail?: string } | null>(null);
+  $effect(() => {
+    const folder = root;
+    untrack(() => void backupStore.select(folder));
+  });
+  // Exchanges run in the background and may finish after the folder was left: what they say is
+  // only shown for the folder they were about. The watcher already reloads open notes from disk.
+  backupStore.listen({
+    exchanged: (folder, exchange) => {
+      if (folder !== root) return;
+      void refreshBackup();
+      if (exchange.received.length > 0 || exchange.removed.length > 0) void refreshTree();
+      const said = exchangeMessages(exchange);
+      if (said.length > 0) {
+        backupNotice = { kind: needsAttention(exchange) ? "error" : "ok", text: said.join(" ") };
+      }
+    },
+    failed: (folder, error, reason) => {
+      if (folder !== root) return;
+      void refreshBackup();
+      // One the person asked for says so where they asked; a background one says it quietly.
+      if (reason === "background") {
+        backupNotice = { kind: "error", text: `Couldn't back up: ${error.summary}`, detail: error.raw };
+      }
+    },
+    connectionChanged: (folder) => {
+      if (folder === root) void refreshBackup();
+    },
+  });
   let showSettings = $state(false);
 
   // Sync-conflict surfacing — derived from the live tree (no IPC). Non-destructive: we only
@@ -289,6 +324,7 @@
     const overtaken = () => mine !== vaultLoads;
     if (overtaken()) return false;
     tree = opened;
+    backupNotice = null; // it was about the folder being left
     // When the vault changes, the previous vault's selection, open note, and edit-mode context are invalid.
     // If not cleared, a stale selectedNode would wrongly target the previous vault's path as the
     // parent for creation/move, sending operations to the wrong location or failing.
@@ -336,6 +372,8 @@
       console.warn("Could not read edits kept from an earlier run:", e);
     }
     dismissedForeignViews = false; // re-evaluate the foreign-views notice for the new vault
+    // Take in what other devices sent and send what was recorded here — in the background.
+    void backupStore.syncIfConnected(path);
     return true;
   }
 
@@ -1628,6 +1666,16 @@
         ><Icon name="x" size={14} /></button>
       </div>
     {/if}
+    {#if backupNotice}
+      <div class="publish-banner {backupNotice.kind}" role="status" data-testid="backup-notice">
+        <span title={backupNotice.detail}>{backupNotice.kind === "ok" ? "✓" : "⚠"} {backupNotice.text}</span>
+        <button
+          class="banner-dismiss"
+          onclick={() => (backupNotice = null)}
+          aria-label="Dismiss"
+        ><Icon name="x" size={14} /></button>
+      </div>
+    {/if}
     {#if root && showSyncConflicts}
       <div class="conflict-banner" role="status" aria-label="Possible sync conflicts">
         <div class="conflict-head">
@@ -1756,8 +1804,13 @@
           <span class="status" data-testid="version-notice">{versionNotice}</span>
         {/if}
         {#if backup}
-          <span class="status backup-status" data-testid="backup-status" title={backup.tooltip}
-          >{backup.label}</span>
+          <button
+            type="button"
+            class="status backup-status"
+            data-testid="backup-status"
+            title={backup.tooltip}
+            onclick={() => (showBackup = true)}
+          >{backup.label}</button>
         {/if}
         <div class="title-tools">
           {#if !saveState.saveError && !saveState.removed}
@@ -1885,7 +1938,12 @@
         {root}
         paths={[activePath]}
         onclose={() => { showAddVersion = false; }}
-        ondone={(message) => { versionNotice = message; void refreshBackup(); }}
+        ondone={(message) => {
+          versionNotice = message;
+          void refreshBackup();
+          // A new version is only on this computer until it reaches the repository.
+          if (root) void backupStore.syncIfConnected(root);
+        }}
       />
     {/if}
     {#if showVersionHistory && root && activePath}
@@ -1918,6 +1976,9 @@
         onpublish={() => publishConfirm?.answer(true)}
         oncancel={() => publishConfirm?.answer(false)}
       />
+    {/if}
+    {#if showBackup && root}
+      <BackupDialog {root} onclose={() => { showBackup = false; }} />
     {/if}
     <!-- No `&& root` guard (unlike the other panels): Settings is usable with no vault open — the Vault section's "Open vault" path needs it. -->
     {#if showSettings}
@@ -2119,6 +2180,16 @@
   /* Outside the hover-revealed tools on purpose: a missing backup has to stay in view. */
   .backup-status {
     margin-left: auto;
+    padding: 0;
+    border: none;
+    background: none;
+    font-family: inherit;
+    cursor: pointer;
+  }
+  .backup-status:hover,
+  .backup-status:focus-visible {
+    color: var(--text-normal);
+    text-decoration: underline;
   }
   .backup-status + .title-tools {
     margin-left: 0;

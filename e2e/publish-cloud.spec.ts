@@ -94,11 +94,13 @@ test("Settings ▸ Advanced exposes the web-publishing connect controls", async 
 
   // Branch (read-only, non-destructive) on whether a token already exists in the keychain:
   // the control toggles between "Connect" and a connected + "Disconnect" state.
+  // Within the Advanced section: the Backup section has its own Connect / Disconnect.
+  const advanced = dialog.locator(".byo-advanced");
   if (await hasPublishTokenStored(page)) {
-    await expect(dialog.getByText(/Connected to web publishing/i)).toBeVisible();
-    await expect(dialog.getByRole("button", { name: "Disconnect" })).toBeVisible();
+    await expect(advanced.getByText(/Connected to web publishing/i)).toBeVisible();
+    await expect(advanced.getByRole("button", { name: "Disconnect" })).toBeVisible();
   } else {
-    await expect(dialog.getByRole("button", { name: "Connect", exact: true })).toBeVisible();
+    await expect(advanced.getByRole("button", { name: "Connect", exact: true })).toBeVisible();
   }
 
   await page.keyboard.press("Escape");
