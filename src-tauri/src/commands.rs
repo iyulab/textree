@@ -915,18 +915,13 @@ fn files_under(
 /// Contents that history already holds cost nothing to keep again: identical contents are one
 /// object either way. Nothing written here is part of the history anyone reads.
 fn keep_state_of(root: &Path, target: &Path) -> Result<(), String> {
-    let prepared = match crate::git_engine::prepare(root) {
-        Ok(p) => p,
-        // Without a repository there is nowhere to keep anything. Deleting still works; this
-        // is a safety net, not a precondition.
-        Err(e) => {
-            log::warn!(
-                "keep_state_of: no repository available: {}",
-                e.message()
-            );
-            return Ok(());
-        }
-    };
+    // A repository is made where none governs the folder, so failing here means one is there and
+    // cannot be opened (or none can be made). Then there is nowhere to keep anything, and going
+    // ahead would destroy the only copy: refuse, the same as for a file that cannot be read.
+    let prepared = crate::git_engine::prepare(root).map_err(|e| {
+        log::warn!("keep_state_of: no repository available: {}", e.message());
+        format!("there is nowhere to keep a copy first: {}", e.message())
+    })?;
 
     let mut entries: Vec<(PathBuf, Vec<u8>)> = Vec::new();
     for (on_disk, in_repo) in files_under(&prepared, root, target) {
@@ -2471,6 +2466,21 @@ mod tests {
 
         assert!(delete_node(root_s, note.clone()).is_err(), "the system refuses while it is held");
         assert!(Path::new(&note).exists());
+    }
+
+    #[test]
+    fn a_note_is_not_deleted_when_there_is_nowhere_to_keep_it() {
+        // A `.git` file pointing at a repository that is gone: the folder is governed by nothing
+        // that can be opened, and nothing can be made there either.
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        std::fs::write(root.join(".git"), "gitdir: ./moved-away\n").unwrap();
+        let root_s = root.to_string_lossy().to_string();
+        let note = seed_note(root, "only-copy.md", "nowhere else");
+        assert!(crate::git_engine::prepare(root).is_err(), "precondition: no repository");
+
+        assert!(delete_node(root_s, note.clone()).is_err());
+        assert_eq!(std::fs::read_to_string(&note).unwrap(), "nowhere else");
     }
 
     #[test]
