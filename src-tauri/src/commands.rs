@@ -951,7 +951,7 @@ fn keep_state_of(root: &Path, target: &Path) -> Result<(), String> {
     let prepared = crate::git_engine::prepare(root).map_err(|e| {
         log::warn!("keep_state_of: no repository available: {}", e.message());
         format!(
-            "Nothing was deleted: this folder's version history could not be opened, so there is              nowhere to keep a copy to bring it back from ({})",
+            "Nothing was deleted: this folder's version history could not be opened, so there is nowhere to keep a copy to bring it back from ({})",
             e.message()
         )
     })?;
@@ -2030,10 +2030,13 @@ pub fn restore_deleted(root: String, rel: String) -> Result<RestoredNote, String
 
     // Found free, then taken before it is written (a sync client, another program): the next free
     // place instead — bringing something back never costs what is there.
+    let mut tries = 0;
     let dest = loop {
         let dest = crate::fs_ops::place_restored(root_p, &rel).map_err(|e| e.to_string())?;
         match atomic_create_bytes(root_p, &dest, &content) {
-            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists && tries < crate::fs_ops::NAME_TRIES => {
+                tries += 1;
+            }
             written => break written.map(|()| dest).map_err(|e| e.to_string())?,
         }
     };

@@ -187,20 +187,33 @@ fn write_new(path: &Path, bytes: &[u8]) -> io::Result<()> {
 /// Creates a new file for `file_name` in `dir` under the first free name ([`unique_in`]), moving on
 /// to the next if that one is taken before it is created. Returns where it went.
 fn write_unique(dir: &Path, file_name: &str, bytes: &[u8]) -> io::Result<PathBuf> {
+    let mut tries = 0;
     loop {
         let path = unique_in(dir, file_name, false);
         match write_new(&path, bytes) {
-            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists && tries < NAME_TRIES => tries += 1,
             written => return written.map(|()| path),
         }
     }
+}
+
+/// How many times a free name is looked for again after it was taken before it could be used.
+/// Each retry means something else took the name in a moment; past this, something is refusing
+/// every name (a disagreement about what "taken" means), and looping would hold the folder's turn
+/// for good.
+pub(crate) const NAME_TRIES: u32 = 16;
+
+/// Whether anything at all is at `path` — a link that points nowhere included. `Path::exists`
+/// follows links and calls a dangling one absent, but creating or moving onto it is still refused.
+fn taken(path: &Path) -> bool {
+    path.symlink_metadata().is_ok()
 }
 
 /// Finds a non-colliding path for `file_name` inside `dir` (`name`, `name (1)`, …).
 /// Directories are not split on extension (so names like `journal.backup` are not altered).
 pub(crate) fn unique_in(dir: &Path, file_name: &str, is_dir: bool) -> PathBuf {
     let candidate = dir.join(file_name);
-    if !candidate.exists() {
+    if !taken(&candidate) {
         return candidate;
     }
     let (stem, ext) = match (is_dir, file_name.rsplit_once('.')) {
@@ -210,7 +223,7 @@ pub(crate) fn unique_in(dir: &Path, file_name: &str, is_dir: bool) -> PathBuf {
     let mut n = 1;
     loop {
         let c = dir.join(format!("{stem} ({n}){ext}"));
-        if !c.exists() {
+        if !taken(&c) {
             return c;
         }
         n += 1;
@@ -750,6 +763,24 @@ mod tests {
         let made = write_unique(tmp.path(), "taken.md", b"mine").unwrap();
         assert_eq!(made, tmp.path().join("taken (1).md"));
         assert_eq!(std::fs::read_to_string(&taken).unwrap(), "someone else's");
+    }
+
+    #[test]
+    fn a_link_that_points_nowhere_is_a_taken_name() {
+        let tmp = TempDir::new().unwrap();
+        let link = tmp.path().join("a.md");
+        #[cfg(windows)]
+        let made = std::os::windows::fs::symlink_file(tmp.path().join("gone.md"), &link);
+        #[cfg(unix)]
+        let made = std::os::unix::fs::symlink(tmp.path().join("gone.md"), &link);
+        if made.is_err() {
+            return; // creating links needs a privilege this account may not have
+        }
+        assert!(!link.exists(), "precondition: the link points nowhere");
+
+        let made = write_unique(tmp.path(), "a.md", b"new").unwrap();
+        assert_eq!(made, tmp.path().join("a (1).md"));
+        assert!(link.symlink_metadata().is_ok(), "the link is left alone");
     }
 
     #[test]
