@@ -43,6 +43,11 @@ pub fn relative(root: &Path, path: &Path) -> Option<String> {
 }
 
 /// Keeps `kept` in `dir`, under a name that orders by when it was kept. Returns the name.
+///
+/// `write` must create the file and refuse with [`io::ErrorKind::AlreadyExists`] when one is
+/// there: edits of different notes are kept at the same moment (closing keeps every unwritten
+/// one at once), and a name checked free and then written could be taken in between — writing
+/// over another note's edit.
 pub fn keep(
     dir: &Path,
     kept: &Kept,
@@ -52,12 +57,10 @@ pub fn keep(
     let mut n = 0u32;
     loop {
         let id = format!("{:013}-{n}", kept.at);
-        let file = dir.join(format!("{id}.json"));
-        if !file.exists() {
-            write(&file, &body)?;
-            return Ok(id);
+        match write(&dir.join(format!("{id}.json")), &body) {
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => n += 1,
+            written => return written.map(|()| id),
         }
-        n += 1;
     }
 }
 
@@ -108,11 +111,12 @@ fn valid_id(id: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Write;
     use tempfile::TempDir;
 
     fn plain_write(path: &Path, bytes: &[u8]) -> io::Result<()> {
         std::fs::create_dir_all(path.parent().unwrap())?;
-        std::fs::write(path, bytes)
+        std::fs::File::create_new(path)?.write_all(bytes)
     }
 
     fn kept(rel: &str, text: &str, at: u64) -> Kept {

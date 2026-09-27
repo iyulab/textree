@@ -83,6 +83,29 @@ fn atomic_bytes_beside(path: &Path, content: &[u8]) -> io::Result<()> {
     persist(tmp, path)
 }
 
+/// [`atomic_bytes_beside`] for a file that must not exist yet: refuses with
+/// [`io::ErrorKind::AlreadyExists`] rather than replacing one.
+fn atomic_new_beside(path: &Path, content: &[u8]) -> io::Result<()> {
+    let dir = path
+        .parent()
+        .ok_or_else(|| io::Error::other("no parent directory"))?;
+    std::fs::create_dir_all(dir)?;
+    let mut tmp = NamedTempFile::new_in(dir)?;
+    tmp.write_all(content)?;
+    tmp.as_file().sync_all()?;
+    let mut tmp = Some(tmp);
+    crate::fs_ops::patiently(|| {
+        let file = tmp.take().expect("put back after every refused attempt");
+        match file.persist_noclobber(path) {
+            Ok(_) => Ok(()),
+            Err(e) => {
+                tmp = Some(e.file);
+                Err(e.error)
+            }
+        }
+    })
+}
+
 /// Atomic file write: write to a temp file in repository storage (or beside the target when no
 /// repository governs the folder), then rename onto the target. Even if a crash or power loss
 /// happens mid-write, the target file is not truncated ("the FS is the truth").
@@ -509,7 +532,7 @@ pub async fn keep_stranded(
             .map(|d| d.as_millis() as u64)
             .unwrap_or(0);
         let kept = crate::stranded::Kept { rel, text, base, at };
-        crate::stranded::keep(&stranded_dir(&root)?, &kept, atomic_bytes_beside)
+        crate::stranded::keep(&stranded_dir(&root)?, &kept, atomic_new_beside)
             .map_err(|e| e.to_string())
     })
     .await
@@ -2299,6 +2322,38 @@ mod tests {
     }
 
     #[test]
+    fn edits_of_different_notes_kept_at_the_same_moment_are_all_kept() {
+        let tmp = TempDir::new().unwrap();
+        let dir = stranded_dir(tmp.path()).unwrap();
+        let start = std::sync::Arc::new(std::sync::Barrier::new(8));
+        let keepers: Vec<_> = (0..8)
+            .map(|i| {
+                let (dir, start) = (dir.clone(), start.clone());
+                std::thread::spawn(move || {
+                    let kept = crate::stranded::Kept {
+                        rel: format!("note-{i}.md"),
+                        text: format!("typed {i}"),
+                        base: String::new(),
+                        at: 7,
+                    };
+                    start.wait();
+                    crate::stranded::keep(&dir, &kept, atomic_new_beside).unwrap()
+                })
+            })
+            .collect();
+        let ids: std::collections::HashSet<String> =
+            keepers.into_iter().map(|k| k.join().unwrap()).collect();
+
+        assert_eq!(ids.len(), 8, "every edit got a name of its own");
+        let mut texts: Vec<String> = crate::stranded::list(&dir)
+            .into_iter()
+            .map(|(_, k)| k.text)
+            .collect();
+        texts.sort();
+        assert_eq!(texts, (0..8).map(|i| format!("typed {i}")).collect::<Vec<_>>());
+    }
+
+    #[test]
     fn kept_edits_come_back_as_paths_in_the_folder_they_were_typed_in() {
         let tmp = TempDir::new().unwrap();
         let dir = stranded_dir(tmp.path()).unwrap();
@@ -2308,7 +2363,7 @@ mod tests {
             base: "before".into(),
             at: 1,
         };
-        let id = crate::stranded::keep(&dir, &kept, atomic_bytes_beside).unwrap();
+        let id = crate::stranded::keep(&dir, &kept, atomic_new_beside).unwrap();
 
         let back = stranded_edits(tmp.path()).unwrap();
         assert_eq!(
