@@ -306,9 +306,13 @@ mod tests {
         use std::process::Command;
         use std::time::{Duration, Instant};
 
-        // `ping -n 3 127.0.0.1` runs for ~2 seconds. Our deadline is 200ms.
-        let mut cmd = Command::new("cmd");
-        cmd.args(["/C", "ping", "-n", "3", "127.0.0.1"]);
+        // `ping -n 31 127.0.0.1` runs for ~30 seconds. Our deadline is 200ms. The gap is what the
+        // test measures — returning long before the child would have ended on its own — so it has
+        // to be wide enough that a loaded machine starting the child slowly cannot close it.
+        // Started directly rather than through `cmd /C`, so killing it ends it: a grandchild
+        // would outlive the kill and run its thirty seconds in the background.
+        let mut cmd = Command::new("ping");
+        cmd.args(["-n", "31", "127.0.0.1"]);
 
         let start = Instant::now();
         let result = spawn_bounded(cmd, Duration::from_millis(200));
@@ -319,8 +323,8 @@ mod tests {
             "the error should say it timed out"
         );
         assert!(
-            start.elapsed() < Duration::from_secs(1),
-            "must kill and return near the 200ms deadline, not wait ~2s for ping: took {:?}",
+            start.elapsed() < Duration::from_secs(10),
+            "must kill and return near the 200ms deadline, not wait ~30s for ping: took {:?}",
             start.elapsed()
         );
     }
