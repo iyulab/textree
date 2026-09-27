@@ -2634,6 +2634,44 @@ mod tests {
         assert!(!tmp.path().join(".git").exists());
     }
 
+    /// The same exchange against a real hosted repository, over https. Run by hand:
+    /// `TEXTREE_CHECK_REPO=<https address of an empty private repository>`
+    /// `TEXTREE_CHECK_TOKEN=<token with write access>`
+    /// `cargo test --lib a_hosted_repository -- --ignored --nocapture`
+    #[test]
+    #[ignore = "needs a real hosted repository and a token"]
+    fn a_hosted_repository_carries_notes_between_two_folders() {
+        let (Ok(url), Ok(token)) =
+            (std::env::var("TEXTREE_CHECK_REPO"), std::env::var("TEXTREE_CHECK_TOKEN"))
+        else {
+            panic!("set TEXTREE_CHECK_REPO and TEXTREE_CHECK_TOKEN");
+        };
+        let tmp = TempDir::new().unwrap();
+        let locks = NoteLocks::default();
+        let here = tmp.path().join("here");
+        let there = tmp.path().join("there");
+        std::fs::create_dir_all(&here).unwrap();
+        std::fs::create_dir_all(&there).unwrap();
+        let (here_s, there_s) = (here.to_string_lossy().to_string(), there.to_string_lossy().to_string());
+
+        let stamp = format!("# Check\n\n{}\n", std::process::id());
+        seed_note(&here, "check.md", &stamp);
+        commit_notes(here_s.clone(), vec![here.join("check.md").to_string_lossy().to_string()], "check".into())
+            .unwrap();
+        connect_remote(here_s.clone(), url.clone(), "".into(), token.clone()).unwrap();
+        let sent = sync_remote(here_s.clone(), &locks).unwrap();
+        assert!(sent.sent, "{sent:?}");
+        assert!(notes_backed_up(here_s.clone()).unwrap());
+
+        connect_remote(there_s.clone(), url, "".into(), token).unwrap();
+        let got = sync_remote(there_s.clone(), &locks).unwrap();
+        assert!(got.received.contains(&"check.md".to_string()), "{got:?}");
+        assert_eq!(std::fs::read_to_string(there.join("check.md")).unwrap(), stamp);
+
+        disconnect_remote(here_s).unwrap();
+        disconnect_remote(there_s).unwrap();
+    }
+
     #[test]
     fn two_folders_connected_to_one_remote_exchange_what_they_recorded() {
         use crate::git_transport::test_server::{SECRET, USER};

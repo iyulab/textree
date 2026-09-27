@@ -147,7 +147,9 @@ impl HttpStream {
         let result = match request {
             None => {
                 let url = format!("{}/info/refs?service={service}", self.base);
-                let mut req = ureq::get(&url).header("Git-Protocol", "version=1");
+                // No `Git-Protocol` header: a server that honours it answers with a leading
+                // "version 1" line, which libgit2's parser does not accept.
+                let mut req = ureq::get(&url);
                 if let Some(auth) = &authorization {
                     req = req.header("Authorization", auth);
                 }
@@ -296,6 +298,7 @@ pub(crate) mod test_server {
         let mut length = 0usize;
         let mut content_type = String::new();
         let mut authorization = String::new();
+        let mut protocol = String::new();
         loop {
             line.clear();
             reader.read_line(&mut line)?;
@@ -308,6 +311,7 @@ pub(crate) mod test_server {
                     "content-length" => length = v.trim().parse().unwrap_or(0),
                     "content-type" => content_type = v.trim().to_string(),
                     "authorization" => authorization = v.trim().to_string(),
+                    "git-protocol" => protocol = v.trim().to_string(),
                     _ => {}
                 }
             }
@@ -337,6 +341,8 @@ pub(crate) mod test_server {
             .env("CONTENT_TYPE", &content_type)
             .env("CONTENT_LENGTH", length.to_string())
             .env("REMOTE_USER", USER)
+            // As a hosted server does: a client that asks for a protocol version gets it.
+            .env("HTTP_GIT_PROTOCOL", &protocol)
             .env("REMOTE_ADDR", "127.0.0.1")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
