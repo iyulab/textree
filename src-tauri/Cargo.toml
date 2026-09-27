@@ -27,7 +27,7 @@ tauri-plugin-dialog = "2.7.1"
 # Atomic note writes (temp + rename), so a crash mid-write cannot truncate a note.
 tempfile = "3"
 # Crash-safe writes of this app's own settings, outside the notes folder.
-tauri-kit-fs = { git = "https://github.com/iyulab/tauri-kit", tag = "v0.1.1" }
+tauri-kit-fs = "0.2"
 notify-debouncer-full = "0.7.0"
 # Pasted image attachments: decodes the binary that crosses IPC as a base64 string.
 base64 = "0.22"
@@ -43,10 +43,10 @@ tauri-plugin-process = "2.3.1"
 ureq = { version = "3", features = ["json"] }
 # Secrets (BYO API key, publish token, remote credentials) in the OS credential store, never on
 # disk in plaintext. Test runs and development builds get entries of their own.
-tauri-kit-credentials = { git = "https://github.com/iyulab/tauri-kit", tag = "v0.1.1" }
+tauri-kit-credentials = "0.2"
 # The local AI helper process: no console window, stopped together with everything it starts
 # (also when this app crashes), and a free loopback port for it to listen on.
-tauri-kit-sidecar = { git = "https://github.com/iyulab/tauri-kit", tag = "v0.1.1" }
+tauri-kit-sidecar = "0.2"
 # Structured logging to the OS app log directory (app_log_dir). The `log` facade
 # (log::info!/warn!/error!) is used at call sites; the plugin wires the backend.
 log = "0.4"

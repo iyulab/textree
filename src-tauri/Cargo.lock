@@ -4725,8 +4725,9 @@ dependencies = [
 
 [[package]]
 name = "tauri-kit-credentials"
-version = "0.1.1"
-source = "git+https://github.com/iyulab/tauri-kit?tag=v0.1.1#2ca81ca18ed25c260b9424ea29518efbb70aef62"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f5572695381527f11e8385ca87269c2177c2b9145fc6bac8abe020fc31b18c35"
 dependencies = [
  "apple-native-keyring-store",
  "keyring-core",
@@ -4736,16 +4737,18 @@ dependencies = [
 
 [[package]]
 name = "tauri-kit-fs"
-version = "0.1.1"
-source = "git+https://github.com/iyulab/tauri-kit?tag=v0.1.1#2ca81ca18ed25c260b9424ea29518efbb70aef62"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6161629deb93b9062d2c95add11c61f7572aba079ae0e9a8ce8d5685b3ea5294"
 dependencies = [
  "tempfile",
 ]
 
 [[package]]
 name = "tauri-kit-sidecar"
-version = "0.1.1"
-source = "git+https://github.com/iyulab/tauri-kit?tag=v0.1.1#2ca81ca18ed25c260b9424ea29518efbb70aef62"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5f65ac79703126f185d2b45f0d8d894a48345707c874fd5aac59b9db8cc66424"
 dependencies = [
  "libc",
  "windows-sys 0.61.2",
