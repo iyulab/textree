@@ -396,6 +396,35 @@ describe("NoteSave — switching notes", () => {
     expect(await second).toBe("close");
   });
 
+  it("closing keeps a stuck edit with the vault it was typed in, after another vault opened", async () => {
+    let root = "/one";
+    let active: string | null = "A.md";
+    const kept: [string, string][] = [];
+    const save = new NoteSave(initialNoteSaveState(), {
+      root: () => root,
+      activePath: () => active,
+      write: () => new Promise<WriteOutcome>(() => {}), // the first folder stopped answering
+      keepStranded: async (vault, e) => {
+        kept.push([vault, e.path]);
+        return `id-${kept.length}`;
+      },
+      closeWaitMs: 10,
+    });
+    save.opened("a0");
+    save.schedule("A.md", "a1");
+    active = "B.md";
+    save.opened("b0"); // A left, its write stuck
+    await settle();
+    root = "/two";
+    active = null;
+    save.closed();
+
+    const closing = save.beforeClosing();
+    await vi.advanceTimersByTimeAsync(10);
+    expect(await closing).toBe("close");
+    expect(kept).toEqual([["/one", "A.md"]]);
+  });
+
   it("a write that comes back while the close waits is not mistaken for a stuck one", async () => {
     const h = harness();
     h.save.opened("a0");

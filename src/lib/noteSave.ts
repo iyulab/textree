@@ -577,8 +577,10 @@ export class NoteSave {
     const waiting = new Set<PendingEdit>([...this.#running.keys(), ...this.#queued]);
     if (this.#pending) waiting.add(this.#pending);
     for (const edit of waiting) {
-      if (this.#done.has(edit) || this.#stranded.some((k) => k.edit === edit) || !root) continue;
-      this.#strand(root, edit);
+      // An edit to a note left keeps the vault it was typed in, which may no longer be the open one.
+      const vault = this.#vaultOf.get(edit) ?? root;
+      if (this.#done.has(edit) || this.#stranded.some((k) => k.edit === edit) || !vault) continue;
+      this.#strand(vault, edit);
     }
     await Promise.all(this.#stranded.map((k) => k.keeping));
     return this.#stranded.every((k) => k.id !== null);

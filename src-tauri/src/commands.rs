@@ -938,7 +938,10 @@ fn keep_state_of(root: &Path, target: &Path) -> Result<(), String> {
     // ahead would destroy the only copy: refuse, the same as for a file that cannot be read.
     let prepared = crate::git_engine::prepare(root).map_err(|e| {
         log::warn!("keep_state_of: no repository available: {}", e.message());
-        format!("there is nowhere to keep a copy first: {}", e.message())
+        format!(
+            "Nothing was deleted: this folder's version history could not be opened, so there is              nowhere to keep a copy to bring it back from ({})",
+            e.message()
+        )
     })?;
 
     let mut entries: Vec<(PathBuf, Vec<u8>)> = Vec::new();
