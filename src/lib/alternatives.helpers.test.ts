@@ -13,6 +13,7 @@ function roundTrips(before: string, after: string): void {
 
 describe("tokens", () => {
   it("gives the text back when joined", () => {
+    // forbidden-tokens: allow non-latin - word boundaries in scripts other than Latin are what this case is about
     for (const t of ["", "Hello, world!", "회의록 초안입니다.\n\n다음 주 월요일", "a  b\tc", "日本語の文章"]) {
       expect(tokens(t).join("")).toBe(t);
     }
@@ -36,10 +37,14 @@ describe("wordDiff", () => {
   });
 
   it("finds word boundaries in Korean", () => {
+    // forbidden-tokens: allow non-latin - word boundaries in scripts other than Latin are what this case is about
     const segments = wordDiff("다음 회의는 월요일에 합니다.", "다음 회의는 화요일에 합니다.");
     const changed = segments.filter((s) => s.kind !== "same").map((s) => s.text);
+    // forbidden-tokens: allow non-latin - word boundaries in scripts other than Latin are what this case is about
     expect(changed.join("")).not.toContain("다음");
+    // forbidden-tokens: allow non-latin - word boundaries in scripts other than Latin are what this case is about
     expect(changed.join("")).not.toContain("합니다");
+    // forbidden-tokens: allow non-latin - word boundaries in scripts other than Latin are what this case is about
     roundTrips("다음 회의는 월요일에 합니다.", "다음 회의는 화요일에 합니다.");
   });
 
@@ -60,6 +65,7 @@ describe("wordDiff", () => {
   });
 
   it("round-trips any pair of versions", () => {
+    // forbidden-tokens: allow non-latin - word boundaries in scripts other than Latin are what this case is about
     const words = ["alpha", "beta", "가나", "다라", " ", "\n", ",", "."];
     let seed = 7;
     const pick = () => {
