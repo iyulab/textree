@@ -112,7 +112,7 @@ pub(crate) fn atomic_write_bytes(root: &Path, path: &Path, content: &[u8]) -> io
 /// [`atomic_write_bytes`] for a file that must not exist yet: refuses with
 /// [`io::ErrorKind::AlreadyExists`] rather than replacing one that arrived after its place was
 /// found free.
-fn atomic_create_bytes(root: &Path, path: &Path, content: &[u8]) -> io::Result<()> {
+pub(crate) fn atomic_create_bytes(root: &Path, path: &Path, content: &[u8]) -> io::Result<()> {
     atomic_write_in_vault(root, path, content, Landing::New)
 }
 
@@ -944,7 +944,7 @@ fn files_under(
 ///
 /// Contents that history already holds cost nothing to keep again: identical contents are one
 /// object either way. Nothing written here is part of the history anyone reads.
-fn keep_state_of(root: &Path, target: &Path) -> Result<(), String> {
+pub(crate) fn keep_state_of(root: &Path, target: &Path) -> Result<(), String> {
     // A repository is made where none governs the folder, so failing here means one is there and
     // cannot be opened (or none can be made). Then there is nowhere to keep anything, and going
     // ahead would destroy the only copy: refuse, the same as for a file that cannot be read.

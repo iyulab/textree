@@ -16,12 +16,14 @@
 //! ran ahead of the files would let the next recorded note quietly undo what arrived.
 
 use std::collections::BTreeSet;
-use std::path::Path;
+use std::io;
+use std::path::{Path, PathBuf};
 
 use git2::{Diff, DiffOptions, ErrorCode, Index, IndexEntry, IndexTime, Oid, Repository, Tree};
 
 use crate::git_engine::{commit_identities, VaultRepo, NOTES_REF, SNAPSHOT_REF};
 use crate::git_transport::{with_credentials, Credentials};
+use crate::note_locks::NoteLocks;
 
 /// Where the remote's references are kept once fetched: `refs/textree/notes` arrives as
 /// `refs/textree-remote/notes`.
@@ -274,44 +276,208 @@ fn joined_tree(
     index.write_tree_to(repo)
 }
 
-/// The notes a step would write to disk whose file here differs from what this machine last
-/// recorded — an edit that was saved but not yet added as a version.
+/// The notes a step would write to disk whose file here holds something else than both what
+/// this machine last recorded and what arrived — an edit that was saved but not yet added as a
+/// version. A file that already matches what arrived is not one: a step that stopped half-way
+/// leaves exactly that.
 fn unrecorded_among(
     vault: &VaultRepo,
     root: &Path,
     step: &Step,
 ) -> Result<Vec<String>, git2::Error> {
     let repo = vault.repo();
-    let (ours, target) = match step {
-        Step::Adopt { to } => (None, *to),
-        Step::FastForward { from, to } => (Some(*from), *to),
-        Step::Join { from, commit, .. } => (Some(*from), *commit),
-        Step::Nothing | Step::Held { .. } => return Ok(Vec::new()),
+    let Some((from, to)) = movement(step) else {
+        return Ok(Vec::new());
     };
-    let our_tree = match ours {
+    let from_tree = match from {
         Some(id) => Some(repo.find_commit(id)?.tree()?),
         None => None,
     };
-    let target_tree = repo.find_commit(target)?.tree()?;
+    let to_tree = repo.find_commit(to)?.tree()?;
     let mut out = Vec::new();
-    for path in changed(repo, our_tree.as_ref(), &target_tree)? {
+    for path in changed(repo, from_tree.as_ref(), &to_tree)? {
         let Some(in_vault) = vault.path_in_vault(Path::new(&path)) else {
             continue;
         };
-        let on_disk = std::fs::read(root.join(&in_vault)).ok();
-        let recorded = match &our_tree {
-            Some(tree) => match tree.get_path(Path::new(&path)) {
-                Ok(entry) => Some(repo.find_blob(entry.id())?.content().to_vec()),
-                Err(e) if e.code() == ErrorCode::NotFound => None,
-                Err(e) => return Err(e),
-            },
-            None => None,
-        };
-        if on_disk != recorded {
+        let on_disk = read_if_present(&root.join(&in_vault)).ok().flatten();
+        if on_disk != blob_at(repo, Some(&to_tree), &path)?
+            && on_disk != blob_at(repo, from_tree.as_ref(), &path)?
+        {
             out.push(path);
         }
     }
     Ok(out)
+}
+
+/// What taking in the notes reference did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Taken {
+    /// Nothing arrived that this machine does not have.
+    Nothing,
+    /// The notes here now match what arrived.
+    Done {
+        written: Vec<String>,
+        removed: Vec<String>,
+    },
+    /// Both sides changed these notes; nothing moved.
+    Held { overlap: Vec<String> },
+    /// These notes hold edits here that nobody recorded yet, and what arrived changes them.
+    /// Nothing moved: taking the rest in would let recording them later quietly undo what
+    /// arrived.
+    KeptBack { notes: Vec<String> },
+    /// Something was recorded here while this ran. What was written matches what arrived, so the
+    /// next exchange picks up from there.
+    Overtaken,
+}
+
+/// Takes in what [`plan`] worked out: what was kept of deleted notes first, then the notes —
+/// files before the reference, all of them or none.
+///
+/// Files first, because the other order is the one that loses work: a reference that moved
+/// ahead of its files makes their old contents look like edits, and recording them undoes what
+/// arrived. Files first, a stop half-way leaves files that already match what arrived, and the
+/// next exchange finds them so.
+///
+/// Every note involved is held for the whole step, so a save cannot land between the check
+/// that its file is untouched and the write that replaces it.
+pub fn apply(
+    vault: &VaultRepo,
+    root: &Path,
+    plan: &Plan,
+    locks: &NoteLocks,
+) -> Result<Taken, String> {
+    let repo = vault.repo();
+    let err = |e: git2::Error| e.message().to_string();
+    if let Some((from, to)) = movement(&plan.snapshots) {
+        // Nothing on disk follows this reference, so it moves alone. A lost race leaves it for
+        // the next exchange.
+        let _ = advance(repo, SNAPSHOT_REF, from, to);
+    }
+    let (from, to) = match &plan.notes {
+        Step::Held { overlap } => {
+            return Ok(Taken::Held {
+                overlap: overlap.clone(),
+            })
+        }
+        step => match movement(step) {
+            Some(m) => m,
+            None => return Ok(Taken::Nothing),
+        },
+    };
+
+    let from_tree = match from {
+        Some(id) => Some(repo.find_commit(id).map_err(err)?.tree().map_err(err)?),
+        None => None,
+    };
+    let to_tree = repo.find_commit(to).map_err(err)?.tree().map_err(err)?;
+    let mut changes: Vec<(String, PathBuf)> = Vec::new();
+    for path in changed(repo, from_tree.as_ref(), &to_tree).map_err(err)? {
+        if let Some(in_vault) = vault.path_in_vault(Path::new(&path)) {
+            changes.push((path, root.join(in_vault)));
+        }
+    }
+    // One order for every caller that holds several notes at once, so two of them cannot each
+    // wait for the other.
+    changes.sort_by(|a, b| a.1.cmp(&b.1));
+    let _turns: Vec<_> = changes.iter().map(|(_, file)| locks.turn(file)).collect();
+
+    let mut writes = Vec::new();
+    let mut kept_back = Vec::new();
+    for (path, file) in &changes {
+        let recorded = blob_at(repo, from_tree.as_ref(), path).map_err(err)?;
+        let arriving = blob_at(repo, Some(&to_tree), path).map_err(err)?;
+        let on_disk = read_if_present(file).map_err(|e| e.to_string())?;
+        if on_disk == arriving {
+            continue;
+        }
+        if on_disk != recorded {
+            kept_back.push(path.clone());
+            continue;
+        }
+        writes.push((path.clone(), file.clone(), on_disk.is_some(), arriving));
+    }
+    if !kept_back.is_empty() {
+        return Ok(Taken::KeptBack { notes: kept_back });
+    }
+
+    let mut written = Vec::new();
+    let mut removed = Vec::new();
+    for (path, file, present, arriving) in writes {
+        match arriving {
+            Some(content) => {
+                if let Some(dir) = file.parent() {
+                    std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+                }
+                // Not registered as the app's own write: an open note has to see it and reload.
+                let wrote = if present {
+                    crate::commands::atomic_write_bytes(root, &file, &content)
+                } else {
+                    crate::commands::atomic_create_bytes(root, &file, &content)
+                };
+                wrote.map_err(|e| format!("{path}: {e}"))?;
+                written.push(path);
+            }
+            None => {
+                // A note leaving this folder is a deletion here like any other: what it held is
+                // kept where deleted notes are listed, whatever the other side did about it.
+                crate::commands::keep_state_of(root, &file).map_err(|e| format!("{path}: {e}"))?;
+                crate::fs_ops::patiently(|| std::fs::remove_file(&file))
+                    .map_err(|e| format!("{path}: {e}"))?;
+                removed.push(path);
+            }
+        }
+    }
+    match advance(repo, NOTES_REF, from, to) {
+        Ok(()) => Ok(Taken::Done { written, removed }),
+        Err(_) => Ok(Taken::Overtaken),
+    }
+}
+
+fn movement(step: &Step) -> Option<(Option<Oid>, Oid)> {
+    match step {
+        Step::Adopt { to } => Some((None, *to)),
+        Step::FastForward { from, to } => Some((Some(*from), *to)),
+        Step::Join { from, commit, .. } => Some((Some(*from), *commit)),
+        Step::Nothing | Step::Held { .. } => None,
+    }
+}
+
+/// Moves `reference` from `from` to `to` only if nothing moved it meanwhile.
+fn advance(
+    repo: &Repository,
+    reference: &str,
+    from: Option<Oid>,
+    to: Oid,
+) -> Result<(), git2::Error> {
+    let message = "take in from remote";
+    match from {
+        Some(from) => repo.reference_matching(reference, to, true, from, message),
+        None => repo.reference(reference, to, false, message),
+    }
+    .map(drop)
+}
+
+fn blob_at(
+    repo: &Repository,
+    tree: Option<&Tree<'_>>,
+    path: &str,
+) -> Result<Option<Vec<u8>>, git2::Error> {
+    let Some(tree) = tree else {
+        return Ok(None);
+    };
+    match tree.get_path(Path::new(path)) {
+        Ok(entry) => Ok(Some(repo.find_blob(entry.id())?.content().to_vec())),
+        Err(e) if e.code() == ErrorCode::NotFound => Ok(None),
+        Err(e) => Err(e),
+    }
+}
+
+fn read_if_present(file: &Path) -> io::Result<Option<Vec<u8>>> {
+    match std::fs::read(file) {
+        Ok(bytes) => Ok(Some(bytes)),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(e),
+    }
 }
 
 #[cfg(test)]
@@ -375,24 +541,13 @@ mod tests {
             id_of(self.repo(), NOTES_REF).unwrap()
         }
 
-        /// Moves the notes reference as taking a step in would (the disk half is not built yet).
-        fn apply(&self, step: &Step) {
-            let (from, to) = match step {
-                Step::Adopt { to } => (None, *to),
-                Step::FastForward { from, to } => (Some(*from), *to),
-                Step::Join { from, commit, .. } => (Some(*from), *commit),
-                _ => return,
-            };
-            match from {
-                Some(from) => self
-                    .repo()
-                    .reference_matching(NOTES_REF, to, true, from, "take in")
-                    .unwrap(),
-                None => self
-                    .repo()
-                    .reference(NOTES_REF, to, false, "take in")
-                    .unwrap(),
-            };
+        /// Takes in what arrived, as the app will.
+        fn apply(&self, plan: &Plan) -> Taken {
+            apply(&self.vault, &self.root, plan, &NoteLocks::default()).unwrap()
+        }
+
+        fn read(&self, rel: &str) -> Option<String> {
+            std::fs::read_to_string(self.root.join(rel)).ok()
         }
     }
 
@@ -427,7 +582,7 @@ mod tests {
         let (_tmp, remote, a, b) = setup();
         a.record("manual.md", "# Manual\n");
         a.send(&remote);
-        b.apply(&b.take(&remote).notes);
+        b.apply(&b.take(&remote));
         a.record("manual.md", "# Manual\n\nMore.\n");
         a.send(&remote);
 
@@ -442,7 +597,7 @@ mod tests {
         let (_tmp, remote, a, b) = setup();
         a.record("manual.md", "# Manual\n");
         a.send(&remote);
-        b.apply(&b.take(&remote).notes);
+        b.apply(&b.take(&remote));
 
         a.record("release-notes.md", "# 1.0\n");
         a.send(&remote);
@@ -470,7 +625,14 @@ mod tests {
         // The file the remote brought has no edits here, so it may be written.
         assert!(plan.unrecorded_here.is_empty());
 
-        b.apply(&plan.notes);
+        assert!(matches!(b.apply(&plan), Taken::Done { .. }));
+        assert_eq!(
+            b.read("release-notes.md").as_deref(),
+            Some(
+                "# 1.0
+"
+            )
+        );
         assert_eq!(b.send(&remote), Sent::Done);
     }
 
@@ -479,7 +641,7 @@ mod tests {
         let (_tmp, remote, a, b) = setup();
         a.record("manual.md", "# Manual\n");
         a.send(&remote);
-        b.apply(&b.take(&remote).notes);
+        b.apply(&b.take(&remote));
 
         a.record("manual.md", "# Manual\n\nFrom a.\n");
         a.send(&remote);
@@ -506,7 +668,7 @@ mod tests {
         a.record("manual.md", "# Manual\n");
         a.record("old.md", "# Old\n");
         a.send(&remote);
-        b.apply(&b.take(&remote).notes);
+        b.apply(&b.take(&remote));
 
         // a deletes old.md: the recorded tree loses it.
         {
@@ -544,7 +706,7 @@ mod tests {
         let (_tmp, remote, a, b) = setup();
         a.record("manual.md", "# Manual\n");
         a.send(&remote);
-        b.apply(&b.take(&remote).notes);
+        b.apply(&b.take(&remote));
         b.save("manual.md", "# Manual\n\nTyped here, not yet a version.\n");
 
         a.record("manual.md", "# Manual\n\nFrom a.\n");
@@ -560,12 +722,12 @@ mod tests {
         let (_tmp, remote, a, b) = setup();
         a.record("manual.md", "# Manual\n");
         a.send(&remote);
-        b.apply(&b.take(&remote).notes);
+        b.apply(&b.take(&remote));
         a.record("release-notes.md", "# 1.0\n");
         a.send(&remote);
         b.record("faq.md", "# FAQ\n");
         let plan = b.take(&remote);
-        b.apply(&plan.notes);
+        b.apply(&plan);
 
         for (path, expected) in [("release-notes.md", 1), ("faq.md", 1), ("manual.md", 1)] {
             let versions =
@@ -663,5 +825,250 @@ mod tests {
             .filter_map(|r| r.ok().and_then(|r| r.name().ok().map(str::to_string)))
             .collect();
         assert!(names.iter().all(|n| !n.starts_with(TRACKING)), "{names:?}");
+    }
+
+    #[test]
+    fn catching_up_writes_the_notes_before_moving_the_reference() {
+        let (_tmp, remote, a, b) = setup();
+        a.record(
+            "manual.md",
+            "# Manual
+",
+        );
+        a.send(&remote);
+        assert!(matches!(b.apply(&b.take(&remote)), Taken::Done { .. }));
+        assert_eq!(
+            b.read("manual.md").as_deref(),
+            Some(
+                "# Manual
+"
+            )
+        );
+        assert_eq!(b.tip(), a.tip());
+
+        a.record(
+            "manual.md",
+            "# Manual
+
+More.
+",
+        );
+        a.send(&remote);
+        let taken = b.apply(&b.take(&remote));
+        assert_eq!(
+            taken,
+            Taken::Done {
+                written: vec!["manual.md".into()],
+                removed: vec![]
+            }
+        );
+        assert_eq!(
+            b.read("manual.md").as_deref(),
+            Some(
+                "# Manual
+
+More.
+"
+            )
+        );
+        assert_eq!(b.tip(), a.tip());
+    }
+
+    #[test]
+    fn an_edit_nobody_recorded_keeps_everything_back() {
+        let (_tmp, remote, a, b) = setup();
+        a.record(
+            "manual.md",
+            "# Manual
+",
+        );
+        a.record(
+            "faq.md", "# FAQ
+",
+        );
+        a.send(&remote);
+        b.apply(&b.take(&remote));
+        let before = b.tip();
+        b.save(
+            "manual.md",
+            "# Manual
+
+Typed here.
+",
+        );
+
+        a.record(
+            "manual.md",
+            "# Manual
+
+From a.
+",
+        );
+        a.record(
+            "faq.md",
+            "# FAQ
+
+From a.
+",
+        );
+        a.send(&remote);
+        let taken = b.apply(&b.take(&remote));
+        assert_eq!(
+            taken,
+            Taken::KeptBack {
+                notes: vec!["manual.md".into()]
+            }
+        );
+        // All or nothing: not even the untouched note was written, and nothing moved.
+        assert_eq!(
+            b.read("manual.md").as_deref(),
+            Some(
+                "# Manual
+
+Typed here.
+"
+            )
+        );
+        assert_eq!(
+            b.read("faq.md").as_deref(),
+            Some(
+                "# FAQ
+"
+            )
+        );
+        assert_eq!(b.tip(), before);
+    }
+
+    #[test]
+    fn a_step_that_stopped_half_way_is_finished_by_the_next() {
+        let (_tmp, remote, a, b) = setup();
+        a.record(
+            "manual.md",
+            "# Manual
+",
+        );
+        a.send(&remote);
+        b.apply(&b.take(&remote));
+        a.record(
+            "manual.md",
+            "# Manual
+
+More.
+",
+        );
+        a.send(&remote);
+        // As if the file was written and the app stopped before the reference moved.
+        b.save(
+            "manual.md",
+            "# Manual
+
+More.
+",
+        );
+
+        let plan = b.take(&remote);
+        assert!(
+            plan.unrecorded_here.is_empty(),
+            "a file matching what arrived is not an edit"
+        );
+        assert_eq!(
+            b.apply(&plan),
+            Taken::Done {
+                written: vec![],
+                removed: vec![]
+            }
+        );
+        assert_eq!(b.tip(), a.tip());
+    }
+
+    #[test]
+    fn a_note_the_remote_removed_is_removed_here_and_stays_in_the_history() {
+        let (_tmp, remote, a, b) = setup();
+        a.record(
+            "manual.md",
+            "# Manual
+",
+        );
+        a.record(
+            "old.md", "# Old
+",
+        );
+        a.send(&remote);
+        b.apply(&b.take(&remote));
+        assert!(b.read("old.md").is_some());
+        {
+            let repo = a.repo();
+            let tip = repo.find_commit(a.tip()).unwrap();
+            let mut index = Index::new().unwrap();
+            index.read_tree(&tip.tree().unwrap()).unwrap();
+            index.remove_path(Path::new("old.md")).unwrap();
+            let tree = repo.find_tree(index.write_tree_to(repo).unwrap()).unwrap();
+            let (author, committer) = commit_identities(repo).unwrap();
+            repo.commit(
+                Some(NOTES_REF),
+                &author,
+                &committer,
+                "delete",
+                &tree,
+                &[&tip],
+            )
+            .unwrap();
+        }
+        a.send(&remote);
+
+        let taken = b.apply(&b.take(&remote));
+        assert_eq!(
+            taken,
+            Taken::Done {
+                written: vec![],
+                removed: vec!["old.md".into()]
+            }
+        );
+        assert!(b.read("old.md").is_none());
+        // Kept where deleted notes are listed, as any deletion here is.
+        let kept =
+            crate::git_engine::content_at_tip(b.repo(), SNAPSHOT_REF, Path::new("old.md")).unwrap();
+        assert_eq!(
+            kept.as_deref(),
+            Some(
+                &b"# Old
+"[..]
+            )
+        );
+    }
+
+    #[test]
+    fn a_version_added_while_taking_in_is_not_overwritten() {
+        let (_tmp, remote, a, b) = setup();
+        a.record(
+            "manual.md",
+            "# Manual
+",
+        );
+        a.send(&remote);
+        b.apply(&b.take(&remote));
+        a.record(
+            "manual.md",
+            "# Manual
+
+More.
+",
+        );
+        a.send(&remote);
+        let plan = b.take(&remote);
+        // Between planning and taking in, this machine records another note.
+        b.record(
+            "faq.md", "# FAQ
+",
+        );
+        let mine = b.tip();
+
+        assert_eq!(b.apply(&plan), Taken::Overtaken);
+        assert_eq!(b.tip(), mine, "the version recorded meanwhile stays");
+        // What was written matches what arrived, so the next exchange joins cleanly.
+        let next = b.take(&remote);
+        assert!(matches!(next.notes, Step::Join { .. }), "{:?}", next.notes);
+        assert!(next.unrecorded_here.is_empty());
+        assert!(matches!(b.apply(&next), Taken::Done { .. }));
     }
 }
