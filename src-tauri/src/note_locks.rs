@@ -211,6 +211,29 @@ mod tests {
     }
 
     #[test]
+    fn creating_in_a_folder_being_deleted_waits_for_the_delete() {
+        // Creating takes the folder's own turn: the folder itself, not something under it.
+        let locks = Arc::new(NoteLocks::default());
+        let deleting = locks.subtree(&[Path::new("/v/box")]);
+        let (waited, create) = blocked({
+            let locks = Arc::clone(&locks);
+            move || drop(locks.turn(Path::new("/v/box")))
+        });
+        assert!(waited, "a note created in a folder being deleted would be deleted unkept");
+        drop(deleting);
+        create.join().unwrap();
+
+        let creating = locks.turn(Path::new("/v/box"));
+        let (waited, delete) = blocked({
+            let locks = Arc::clone(&locks);
+            move || drop(locks.subtree(&[Path::new("/v")]))
+        });
+        assert!(waited, "and deleting the folder above waits for the creation");
+        drop(creating);
+        delete.join().unwrap();
+    }
+
+    #[test]
     fn what_lies_outside_a_changing_tree_does_not_wait() {
         let locks = NoteLocks::default();
         let _changing = locks.subtree(&[Path::new("/v/box")]);

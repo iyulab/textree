@@ -9,11 +9,16 @@
 //! The work itself lives in [`crate::commands`] under the same names, where tests call it
 //! directly. Only places a change reads from need a turn: a save never creates a file (one whose
 //! note is not there is refused as gone), so a place a change writes to cannot be raced by one.
+//!
+//! Creating does add to a folder, though, and a folder being deleted has already been kept as it
+//! was: something created in it meanwhile would be deleted with it, kept nowhere. So creating takes
+//! the folder's own turn ([`creating`]) — it waits while that folder, or one above it, is being
+//! changed, and such a change waits for it.
 
 use crate::commands::{self, off_main, DeletedNote, MoveOut, NoteVersion, RestoredNote};
 use crate::search::IndexHandle;
 use crate::note_locks::NoteLocks;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tauri::{AppHandle, State};
 
@@ -39,6 +44,25 @@ async fn changing<T: Send + 'static>(
         work()
     })
     .await
+}
+
+/// Runs `work` off the main thread while holding the turn of the folder it creates something in.
+async fn creating<T: Send + 'static>(
+    locks: &State<'_, Arc<NoteLocks>>,
+    folder: PathBuf,
+    work: impl FnOnce() -> Result<T, String> + Send + 'static,
+) -> Result<T, String> {
+    let locks = locks.inner().clone();
+    off_main(move || {
+        let _turn = locks.turn(&folder);
+        work()
+    })
+    .await
+}
+
+/// The folder `path` is in — where creating something beside it adds to.
+fn folder_of(path: &str) -> PathBuf {
+    Path::new(path).parent().map(Path::to_path_buf).unwrap_or_default()
 }
 
 #[tauri::command]
@@ -114,21 +138,36 @@ pub async fn restore_version(
     changing(&locks, vec![path.clone()], move || commands::restore_version(root, path, id)).await
 }
 
-// The rest create what was not there, or only read — nothing a save could land inside of.
+// The rest create what was not there — in the turn of the folder they add to ([`creating`]).
 
 #[tauri::command]
-pub async fn restore_deleted(root: String, rel: String) -> Result<RestoredNote, String> {
-    off_main(move || commands::restore_deleted(root, rel)).await
+pub async fn restore_deleted(
+    root: String,
+    rel: String,
+    locks: State<'_, Arc<NoteLocks>>,
+) -> Result<RestoredNote, String> {
+    let folder = folder_of(&Path::new(&root).join(&rel).to_string_lossy());
+    creating(&locks, folder, move || commands::restore_deleted(root, rel)).await
 }
 
 #[tauri::command]
-pub async fn create_note(root: String, parent: String, name: String) -> Result<String, String> {
-    off_main(move || commands::create_note(root, parent, name)).await
+pub async fn create_note(
+    root: String,
+    parent: String,
+    name: String,
+    locks: State<'_, Arc<NoteLocks>>,
+) -> Result<String, String> {
+    creating(&locks, PathBuf::from(&parent), move || commands::create_note(root, parent, name)).await
 }
 
 #[tauri::command]
-pub async fn create_untitled_note(root: String, parent: String) -> Result<String, String> {
-    off_main(move || commands::create_untitled_note(root, parent)).await
+pub async fn create_untitled_note(
+    root: String,
+    parent: String,
+    locks: State<'_, Arc<NoteLocks>>,
+) -> Result<String, String> {
+    creating(&locks, PathBuf::from(&parent), move || commands::create_untitled_note(root, parent))
+        .await
 }
 
 #[tauri::command]
@@ -137,23 +176,35 @@ pub async fn create_note_with_content(
     parent: String,
     name: String,
     content: String,
+    locks: State<'_, Arc<NoteLocks>>,
 ) -> Result<String, String> {
-    off_main(move || commands::create_note_with_content(root, parent, name, content)).await
+    creating(&locks, PathBuf::from(&parent), move || {
+        commands::create_note_with_content(root, parent, name, content)
+    })
+    .await
 }
 
 #[tauri::command]
-pub async fn create_folder(root: String, parent: String, name: String) -> Result<String, String> {
-    off_main(move || commands::create_folder(root, parent, name)).await
+pub async fn create_folder(
+    root: String,
+    parent: String,
+    name: String,
+    locks: State<'_, Arc<NoteLocks>>,
+) -> Result<String, String> {
+    creating(&locks, PathBuf::from(&parent), move || commands::create_folder(root, parent, name)).await
 }
 
+/// An attachment goes into an `assets` folder beside its note.
 #[tauri::command]
 pub async fn save_attachment(
     root: String,
     note: String,
     data: String,
     ext: String,
+    locks: State<'_, Arc<NoteLocks>>,
 ) -> Result<String, String> {
-    off_main(move || commands::save_attachment(root, note, data, ext)).await
+    let folder = folder_of(&note);
+    creating(&locks, folder, move || commands::save_attachment(root, note, data, ext)).await
 }
 
 /// Recording reads the notes and changes none of them: a save running meanwhile is recorded as it
