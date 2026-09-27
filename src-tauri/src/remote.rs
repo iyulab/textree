@@ -7,8 +7,11 @@
 //! - one side is simply ahead: the other catches up;
 //! - the two sides changed **different** notes: they are joined path by path. No note's text is
 //!   merged, and both sides' revisions stay in the history, so nothing is lost;
-//! - the two sides changed the **same** note (or one deleted what the other changed): nothing
-//!   moves. The incoming state stays where it arrived until a person decides.
+//! - the two sides changed the **same** note differently (or one deleted what the other changed):
+//!   nothing moves. The incoming state stays where it arrived until a person decides, and for a
+//!   note both sides still hold, the other side's version waits as an alternative of it
+//!   ([`crate::alternatives`]). Once every such note is decided — the other version picked, or set
+//!   aside — the two sides join, each decided note as it now stands here.
 //!
 //! Working out what would happen ([`plan`]) is separate from making it happen, and reads only:
 //! a join is prepared as an unreferenced revision, which is harmless if never used. Moving a
@@ -122,8 +125,9 @@ pub enum Step {
         commit: Oid,
         incoming: Vec<String>,
     },
-    /// Both sides changed these paths. Nothing moves until a person decides.
-    Held { overlap: Vec<String> },
+    /// Both sides changed these paths differently, and nobody has decided about the version that
+    /// arrived. Nothing moves until a person decides. `theirs` is the revision that arrived.
+    Held { overlap: Vec<String>, theirs: Oid },
 }
 
 /// What taking in everything that arrived would do.
@@ -190,10 +194,32 @@ fn plan_ref(repo: &Repository, local: &str, overlap: Overlap) -> Result<Step, gi
         .intersection(&theirs_changed)
         .cloned()
         .collect();
-    let incoming: Vec<String> = match overlap {
-        Overlap::Hold if !met.is_empty() => return Ok(Step::Held { overlap: met }),
-        _ => theirs_changed.difference(&ours_changed).cloned().collect(),
-    };
+    if let Overlap::Hold = overlap {
+        // Changed on both sides is not yet a question: both may have arrived at the same text (a
+        // person picked the version that arrived), or a person already kept this side's version
+        // over exactly this one. Only the rest waits.
+        let mut undecided = Vec::new();
+        for path in &met {
+            let ours_blob = blob_id(&our_tree, path);
+            let theirs_blob = blob_id(&their_tree, path);
+            if ours_blob == theirs_blob {
+                continue;
+            }
+            if let Some(blob) = theirs_blob {
+                if crate::alternatives::decided(repo, path, blob)? {
+                    continue;
+                }
+            }
+            undecided.push(path.clone());
+        }
+        if !undecided.is_empty() {
+            return Ok(Step::Held {
+                overlap: undecided,
+                theirs,
+            });
+        }
+    }
+    let incoming: Vec<String> = theirs_changed.difference(&ours_changed).cloned().collect();
 
     let tree = joined_tree(repo, &our_tree, &their_tree, &incoming)?;
     let (author, committer) = commit_identities(repo)?;
@@ -211,6 +237,10 @@ fn plan_ref(repo: &Repository, local: &str, overlap: Overlap) -> Result<Step, gi
         commit,
         incoming,
     })
+}
+
+fn blob_id(tree: &Tree<'_>, path: &str) -> Option<Oid> {
+    tree.get_path(Path::new(path)).ok().map(|e| e.id())
 }
 
 fn id_of(repo: &Repository, name: &str) -> Option<Oid> {
@@ -351,6 +381,8 @@ pub struct Exchange {
     pub removed: Vec<String>,
     /// Notes both sides changed. Nothing moved; a person decides.
     pub held: Vec<String>,
+    /// Of those, the notes whose version from elsewhere now waits as an alternative.
+    pub alternatives: Vec<String>,
     /// Notes the other side changed that hold unrecorded edits here. Nothing moved.
     pub kept_back: Vec<String>,
     /// The remote now holds everything recorded here.
@@ -377,7 +409,13 @@ pub fn exchange(
                 out.received.extend(written);
                 out.removed.extend(removed);
             }
-            Taken::Held { overlap } => out.held = overlap,
+            Taken::Held {
+                overlap,
+                alternatives,
+            } => {
+                out.held = overlap;
+                out.alternatives = alternatives;
+            }
             Taken::KeptBack { notes } => out.kept_back = notes,
             Taken::Nothing | Taken::Overtaken => {}
         }
@@ -437,8 +475,12 @@ pub enum Taken {
         written: Vec<String>,
         removed: Vec<String>,
     },
-    /// Both sides changed these notes; nothing moved.
-    Held { overlap: Vec<String> },
+    /// Both sides changed these notes; nothing moved. `alternatives` are the ones whose version
+    /// from elsewhere now waits beside them.
+    Held {
+        overlap: Vec<String>,
+        alternatives: Vec<String>,
+    },
     /// These notes hold edits here that nobody recorded yet, and what arrived changes them.
     /// Nothing moved: taking the rest in would let recording them later quietly undo what
     /// arrived.
@@ -466,15 +508,17 @@ pub fn apply(
 ) -> Result<Taken, String> {
     let repo = vault.repo();
     let err = |e: git2::Error| e.message().to_string();
+    take_in_alternatives(repo).map_err(err)?;
     if let Some((from, to)) = movement(&plan.snapshots) {
         // Nothing on disk follows this reference, so it moves alone. A lost race leaves it for
         // the next exchange.
         let _ = advance(repo, SNAPSHOT_REF, from, to);
     }
     let (from, to) = match &plan.notes {
-        Step::Held { overlap } => {
+        Step::Held { overlap, theirs } => {
             return Ok(Taken::Held {
                 overlap: overlap.clone(),
+                alternatives: keep_as_alternatives(repo, overlap, *theirs).map_err(err)?,
             })
         }
         step => match movement(step) {
@@ -549,6 +593,63 @@ pub fn apply(
         Ok(()) => Ok(Taken::Done { written, removed }),
         Err(_) => Ok(Taken::Overtaken),
     }
+}
+
+/// Keeps the arriving version of each held note both sides still hold as an alternative of it.
+/// A note one side deleted has no version here to be an alternative of; it stays held.
+fn keep_as_alternatives(repo: &Repository, overlap: &[String], theirs: Oid) -> Result<Vec<String>, git2::Error> {
+    let their_tree = repo.find_commit(theirs)?.tree()?;
+    let Some(our_tree) = crate::git_engine::tip_tree(repo, NOTES_REF) else {
+        return Ok(Vec::new());
+    };
+    let (author, committer) = commit_identities(repo)?;
+    let mut kept = Vec::new();
+    for path in overlap {
+        if blob_id(&our_tree, path).is_none() || blob_id(&their_tree, path).is_none() {
+            continue;
+        }
+        crate::alternatives::arrive(repo, theirs, Path::new(path), &author, &committer)?;
+        kept.push(path.clone());
+    }
+    Ok(kept)
+}
+
+/// Takes in the alternatives the remote holds, so one started on one machine is seen on the
+/// others: open ones this machine does not know yet,
+/// and endings. An alternative that ended here is never opened again from what arrives, and one
+/// that ended elsewhere ends here too. Moves references only; no note's file is touched.
+fn take_in_alternatives(repo: &Repository) -> Result<(), git2::Error> {
+    use crate::alternatives::{ALTERNATIVES, ENDED};
+    let arrived_prefix = |local: &str| format!("{TRACKING}{}", local.strip_prefix(OWN).unwrap_or(local));
+    for reference in repo.references_glob(&format!("{}*", arrived_prefix(ENDED)))? {
+        let reference = reference?;
+        let (Ok(name), Some(tip)) = (reference.name(), reference.target()) else { continue };
+        let id = &name[arrived_prefix(ENDED).len()..];
+        let ended_here = format!("{ENDED}{id}");
+        if id_of(repo, &ended_here).is_none() {
+            repo.reference(&ended_here, tip, false, "alternative ended elsewhere")?;
+        }
+    }
+    for reference in repo.references_glob(&format!("{}*", arrived_prefix(ALTERNATIVES)))? {
+        let reference = reference?;
+        let (Ok(name), Some(tip)) = (reference.name(), reference.target()) else { continue };
+        let id = &name[arrived_prefix(ALTERNATIVES).len()..];
+        if id_of(repo, &format!("{ENDED}{id}")).is_some() {
+            continue;
+        }
+        let open_here = format!("{ALTERNATIVES}{id}");
+        match id_of(repo, &open_here) {
+            None => {
+                repo.reference(&open_here, tip, false, "alternative from elsewhere")?;
+            }
+            // Versions added elsewhere are taken when they only add to what is here.
+            Some(here) if here != tip && repo.graph_descendant_of(tip, here)? => {
+                repo.reference_matching(&open_here, tip, true, here, "alternative from elsewhere")?;
+            }
+            Some(_) => {}
+        }
+    }
+    Ok(())
 }
 
 fn movement(step: &Step) -> Option<(Option<Oid>, Oid)> {
@@ -761,17 +862,140 @@ mod tests {
         let before = b.tip();
 
         let plan = b.take(&remote);
-        assert_eq!(
-            plan.notes,
-            Step::Held {
-                overlap: vec!["manual.md".to_string()]
-            }
+        assert!(
+            matches!(&plan.notes, Step::Held { overlap, .. } if overlap == &vec!["manual.md".to_string()]),
+            "expected held, got {:?}",
+            plan.notes
         );
         assert_eq!(b.tip(), before);
         assert!(
             plan.unrecorded_here.is_empty(),
             "nothing is written while held"
         );
+    }
+
+    /// Both machines hold manual.md; a and b then change it differently, a sends first.
+    fn diverged() -> (tempfile::TempDir, PathBuf, Machine, Machine) {
+        let (tmp, remote, a, b) = setup();
+        a.record("manual.md", "# Manual\n");
+        a.send(&remote);
+        b.apply(&b.take(&remote));
+        a.record("manual.md", "# Manual\n\nFrom a.\n");
+        a.send(&remote);
+        b.record("manual.md", "# Manual\n\nFrom b.\n");
+        (tmp, remote, a, b)
+    }
+
+    fn open_alternatives(m: &Machine) -> Vec<crate::alternatives::Alternative> {
+        crate::alternatives::list(m.repo()).unwrap()
+    }
+
+    #[test]
+    fn the_version_from_elsewhere_waits_as_an_alternative_and_is_not_asked_twice() {
+        let (_tmp, remote, _a, b) = diverged();
+        let before = b.tip();
+        let taken = b.apply(&b.take(&remote));
+        assert_eq!(
+            taken,
+            Taken::Held {
+                overlap: vec!["manual.md".to_string()],
+                alternatives: vec!["manual.md".to_string()],
+            }
+        );
+        assert_eq!(b.tip(), before, "nothing moved");
+        assert_eq!(b.read("manual.md").as_deref(), Some("# Manual\n\nFrom b.\n"));
+        let open = open_alternatives(&b);
+        assert_eq!(open.len(), 1);
+        assert_eq!(
+            crate::alternatives::content(b.repo(), &open[0]).unwrap().unwrap(),
+            b"# Manual\n\nFrom a.\n"
+        );
+
+        // Taking the same in again finds the same alternative.
+        b.apply(&b.take(&remote));
+        assert_eq!(open_alternatives(&b).len(), 1);
+    }
+
+    #[test]
+    fn once_the_version_from_elsewhere_is_picked_the_two_sides_join() {
+        let (_tmp, remote, a, b) = diverged();
+        b.apply(&b.take(&remote));
+        let id = open_alternatives(&b)[0].id.clone();
+        let (author, committer) = commit_identities(b.repo()).unwrap();
+        let chosen = crate::alternatives::pick(b.repo(), &id, &author, &committer).unwrap();
+        b.save("manual.md", std::str::from_utf8(&chosen).unwrap());
+
+        let plan = b.take(&remote);
+        assert!(matches!(plan.notes, Step::Join { .. }), "got {:?}", plan.notes);
+        assert!(matches!(b.apply(&plan), Taken::Done { .. }));
+        assert_eq!(b.send(&remote), Sent::Done);
+
+        // a takes in b's decision, which is a's own text.
+        assert!(matches!(a.apply(&a.take(&remote)), Taken::Done { .. }));
+        assert_eq!(a.read("manual.md").as_deref(), Some("# Manual\n\nFrom a.\n"));
+        assert!(open_alternatives(&a).is_empty(), "the ended alternative is not opened on a");
+    }
+
+    #[test]
+    fn once_the_version_from_elsewhere_is_set_aside_this_version_is_the_one_both_keep() {
+        let (_tmp, remote, a, b) = diverged();
+        b.apply(&b.take(&remote));
+        let id = open_alternatives(&b)[0].id.clone();
+        crate::alternatives::end(b.repo(), &id).unwrap();
+
+        let plan = b.take(&remote);
+        let Step::Join { commit, incoming, .. } = &plan.notes else {
+            panic!("expected a join, got {:?}", plan.notes);
+        };
+        assert!(incoming.is_empty(), "the decided note is not taken from elsewhere");
+        let joined = b.repo().find_commit(*commit).unwrap();
+        assert_eq!(joined.parent_count(), 2, "both histories are kept");
+        assert!(matches!(b.apply(&plan), Taken::Done { .. }));
+        assert_eq!(b.read("manual.md").as_deref(), Some("# Manual\n\nFrom b.\n"));
+        assert_eq!(b.send(&remote), Sent::Done);
+
+        assert!(matches!(a.apply(&a.take(&remote)), Taken::Done { .. }));
+        assert_eq!(a.read("manual.md").as_deref(), Some("# Manual\n\nFrom b.\n"));
+        // a's own version is not lost: it is the alternative b set aside, now ended on a too.
+        let ended = crate::alternatives::ended(a.repo()).unwrap();
+        assert_eq!(ended.len(), 1);
+        assert_eq!(
+            crate::alternatives::content(a.repo(), &ended[0]).unwrap().unwrap(),
+            b"# Manual\n\nFrom a.\n"
+        );
+    }
+
+    #[test]
+    fn a_new_change_after_a_decision_is_asked_about_again() {
+        let (_tmp, remote, a, b) = diverged();
+        b.apply(&b.take(&remote));
+        let id = open_alternatives(&b)[0].id.clone();
+        crate::alternatives::end(b.repo(), &id).unwrap();
+
+        a.record("manual.md", "# Manual\n\nFrom a, again.\n");
+        a.send(&remote);
+        let taken = b.apply(&b.take(&remote));
+        assert!(matches!(taken, Taken::Held { .. }), "got {taken:?}");
+        let open = open_alternatives(&b);
+        assert_eq!(open.len(), 1);
+        assert_ne!(open[0].id, id);
+    }
+
+    #[test]
+    fn an_alternative_started_on_one_machine_reaches_the_other() {
+        let (_tmp, remote, a, b) = setup();
+        a.record("manual.md", "# Manual\n");
+        let (author, committer) = commit_identities(a.repo()).unwrap();
+        let id = crate::alternatives::start(a.repo(), Path::new("manual.md"), &author, &committer).unwrap();
+        crate::alternatives::record(a.repo(), &id, b"# Another take\n", "try", &author, &committer).unwrap();
+        a.send(&remote);
+
+        b.apply(&b.take(&remote));
+        let open = open_alternatives(&b);
+        assert_eq!(open.len(), 1);
+        assert_eq!(open[0].id, id);
+        assert!(crate::alternatives::differs(b.repo(), &open[0]).unwrap());
+        assert_eq!(b.read("manual.md").as_deref(), Some("# Manual\n"), "the note itself is unchanged");
     }
 
     #[test]
@@ -805,11 +1029,10 @@ mod tests {
         b.record("old.md", "# Old, kept\n");
 
         let plan = b.take(&remote);
-        assert_eq!(
-            plan.notes,
-            Step::Held {
-                overlap: vec!["old.md".to_string()]
-            }
+        assert!(
+            matches!(&plan.notes, Step::Held { overlap, .. } if overlap == &vec!["old.md".to_string()]),
+            "expected held, got {:?}",
+            plan.notes
         );
     }
 

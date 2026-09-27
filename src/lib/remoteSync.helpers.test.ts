@@ -12,7 +12,7 @@ import {
 import type { RemoteExchange } from "./ipc";
 
 function exchange(part: Partial<RemoteExchange>): RemoteExchange {
-  return { received: [], removed: [], held: [], keptBack: [], sent: false, ...part };
+  return { received: [], removed: [], held: [], alternatives: [], keptBack: [], sent: false, ...part };
 }
 
 describe("repositoryLabel", () => {
@@ -83,6 +83,15 @@ describe("exchangeMessages", () => {
     ]);
     expect(exchangeMessages(exchange({ held: ["a.md", "b.md"] }))).toEqual([
       "2 notes changed both here and elsewhere — kept as they are for now: a, b",
+    ]);
+  });
+
+  it("names notes whose version from elsewhere is kept as an alternative", () => {
+    expect(
+      exchangeMessages(exchange({ held: ["a.md", "gone.md"], alternatives: ["a.md"] })),
+    ).toEqual([
+      "1 note changed both here and elsewhere — kept as it is for now: gone",
+      "1 note also changed elsewhere — the other version is kept as an alternative: a",
     ]);
   });
 

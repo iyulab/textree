@@ -90,7 +90,6 @@ fn random_id() -> Result<String, git2::Error> {
 
 /// The id of the alternative a revision brings for a note. Taking in the same revision again
 /// finds the same alternative instead of making another.
-#[allow(dead_code)] // taken in by the exchange (slice 3 task 2)
 fn arrival_id(theirs: Oid, path: &str) -> String {
     use sha2::{Digest, Sha256};
     let digest = Sha256::digest(format!("{theirs}\0{path}").as_bytes());
@@ -114,7 +113,8 @@ fn open(
 
 /// Starts an alternative of the note at `subject` from its last recorded version.
 ///
-/// Only notes can have alternatives (`D-81`), and only recorded ones: an alternative is a second
+/// Only notes can have alternatives — every other file is shared by all versions of the folder —
+/// and only recorded ones: an alternative is a second
 /// version beside one that exists, and until a version is added there is nothing to be beside.
 pub fn start(
     repo: &Repository,
@@ -142,7 +142,6 @@ pub fn start(
 /// Keeps the version of `subject` that `theirs` holds as an alternative, for a note that was
 /// changed both here and elsewhere. Returns the alternative's id; taking in the same revision
 /// again returns the same one, open or ended, without writing anything.
-#[allow(dead_code)] // taken in by the exchange (slice 3 task 2)
 pub fn arrive(
     repo: &Repository,
     theirs: Oid,
@@ -223,7 +222,6 @@ pub fn list(repo: &Repository) -> Result<Vec<Alternative>, git2::Error> {
 }
 
 /// Every alternative that has ended, picked or set aside.
-#[allow(dead_code)] // read by the exchange (slice 3 task 2)
 pub fn ended(repo: &Repository) -> Result<Vec<Alternative>, git2::Error> {
     listed(repo, ENDED)
 }
@@ -320,7 +318,6 @@ pub fn pick(
 
 /// Whether a person already decided about `blob` arriving for `path`: an alternative that arrived
 /// with it has ended. Taking in the same change again must not ask again.
-#[allow(dead_code)] // read by the exchange (slice 3 task 2)
 pub fn decided(repo: &Repository, path: &str, blob: Oid) -> Result<bool, git2::Error> {
     for alternative in ended(repo)? {
         if alternative.path != path || alternative.arrived_from.is_none() {

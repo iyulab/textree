@@ -47,7 +47,11 @@ function notes(n: number): string {
 /** One sentence per thing the exchange did that the person should know about. */
 export function exchangeMessages(exchange: RemoteExchange): string[] {
   const out: string[] = [];
-  const { received, removed, held, keptBack } = exchange;
+  const { received, removed, keptBack } = exchange;
+  // A note with an alternative is said as such; the rest of what was held (a note one side
+  // deleted) has no alternative to look at and stays as it is.
+  const alternatives = exchange.alternatives ?? [];
+  const held = exchange.held.filter((p) => !alternatives.includes(p));
   if (received.length > 0) {
     out.push(`${notes(received.length)} arrived from your backup.`);
   }
@@ -61,6 +65,12 @@ export function exchangeMessages(exchange: RemoteExchange): string[] {
     out.push(
       `${notes(held.length)} changed both here and elsewhere — kept as ${held.length === 1 ? "it is" : "they are"} ` +
         `for now: ${nameList(held)}`,
+    );
+  }
+  if (alternatives.length > 0) {
+    out.push(
+      `${notes(alternatives.length)} also changed elsewhere — the other version is kept as an ` +
+        `alternative: ${nameList(alternatives)}`,
     );
   }
   if (keptBack.length > 0) {

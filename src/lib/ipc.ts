@@ -450,6 +450,8 @@ export interface RemoteExchange {
   removed: string[];
   /** Notes both sides changed. Nothing moved for them; a person decides. */
   held: string[];
+  /** Of those, the notes whose version from elsewhere now waits as an alternative. */
+  alternatives: string[];
   /** Notes the other side changed that hold unrecorded edits here. Nothing moved. */
   keptBack: string[];
   /** The remote now holds everything recorded here. */
