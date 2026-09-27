@@ -536,6 +536,60 @@ describe("NoteSave — switching notes", () => {
     expect(save.stranded).toBe(0);
   });
 
+  it("a note opened again before its left edits land shows them once they do", async () => {
+    const shown: string[] = [];
+    const h = harness({ deps: { landedOnOpen: (t) => shown.push(t) } });
+    h.open("A.md", "a0");
+    h.save.schedule("A.md", "a1");
+    void h.save.flush();
+    await settle();
+    h.open("B.md", "b0"); // a1 still on its way
+    h.open("A.md", "a0"); // read before a1 landed
+    h.calls[0].settle(written);
+    await settle();
+    expect(shown).toEqual(["a1"]);
+
+    h.save.schedule("A.md", "a1 more");
+    void h.save.flush();
+    await settle();
+    expect(h.calls[1].expected).toBe("a1");
+  });
+
+  it("edits typed on a note opened again before its left edits landed do not write over them", async () => {
+    const shown: string[] = [];
+    const h = harness({ deps: { landedOnOpen: (t) => shown.push(t) } });
+    h.open("A.md", "a0");
+    h.save.schedule("A.md", "a1");
+    void h.save.flush();
+    await settle();
+    h.open("B.md", "b0");
+    h.open("A.md", "a0"); // read before a1 landed
+    h.save.schedule("A.md", "a0 typed"); // typed on what the read showed
+    h.calls[0].settle(written);
+    await settle();
+    expect(shown).toEqual([]); // not pulled out from under the typing
+
+    void h.save.flush();
+    await settle();
+    // Based on what the edit was typed on: disk holds a1, so this meets it as a conflict.
+    expect(h.calls[1].expected).toBe("a0");
+  });
+
+  it("a note opened again after its left edits landed is not reloaded", async () => {
+    const shown: string[] = [];
+    const h = harness({ deps: { landedOnOpen: (t) => shown.push(t) } });
+    h.open("A.md", "a0");
+    h.save.schedule("A.md", "a1");
+    void h.save.flush();
+    await settle();
+    h.open("B.md", "b0");
+    h.calls[0].settle(written);
+    await settle();
+    h.open("A.md", "a1");
+    await settle();
+    expect(shown).toEqual([]);
+  });
+
   it("edits to a note left behind are written into its vault when another vault opens before their turn", async () => {
     let root = "/one";
     let active: string | null = "A.md";

@@ -729,6 +729,18 @@ export class NoteSave {
       // Written into a vault no longer open: nothing on screen is about it.
       if (root !== this.deps.root()) return;
       this.deps.saved?.(job.path, job.text);
+      if (this.#vaultOf.has(job) && job.path === active) {
+        // Edits to a note left, landing after it was opened again — from a read that may have come
+        // before them. Nothing typed since: the screen follows the disk, if it is behind. Something
+        // typed since was typed on what the screen showed, not on these edits; it keeps that base, so
+        // its save meets these edits as a change on disk instead of writing over them.
+        const ownPending = this.#pending !== null && samePath(this.#pending.path, job.path);
+        if (!ownPending && this.#synced !== job.text) {
+          this.#synced = job.text;
+          this.deps.landedOnOpen?.(job.text);
+        }
+        return;
+      }
       if (job.path === active) this.#synced = job.text;
       if (this.#pending === job) {
         this.#pending = null;
