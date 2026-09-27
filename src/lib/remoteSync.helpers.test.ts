@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  isNewFailure,
   exchangeMessages,
   manualOutcome,
   nameList,
@@ -136,5 +137,18 @@ describe("relativeTime", () => {
 
   it("treats a time in the future as now", () => {
     expect(relativeTime(now + 10_000, now)).toBe("just now");
+  });
+});
+
+describe("isNewFailure", () => {
+  const offline = { summary: "Couldn't reach the repository.", raw: "net 1" };
+  it("says the first failure", () => {
+    expect(isNewFailure(null, offline)).toBe(true);
+  });
+  it("stays quiet while it keeps failing the same way", () => {
+    expect(isNewFailure(offline, { ...offline, raw: "net 2" })).toBe(false);
+  });
+  it("says a failure for another reason", () => {
+    expect(isNewFailure(offline, { summary: "The sign-in was refused.", raw: "401" })).toBe(true);
   });
 });

@@ -169,3 +169,48 @@ test("backup: connect from the indicator, receive in another folder, send new ve
     await remote.close();
   }
 });
+
+test("backup: a repository that cannot be reached is said once, not every time the folder opens", async () => {
+  test.setTimeout(90_000);
+  const remote = await startTestRemote();
+  const vault = createTempVault({ "memo.md": "# memo\n\nkept here\n" });
+  const elsewhere = createTempVault({ "other.md": "# other\n" });
+  const notice = page.getByTestId("backup-notice");
+
+  try {
+    await loadVault(page, vault);
+    await page.getByRole("treeitem", { name: /memo/ }).click();
+    await expectOpenNote(page, "memo");
+    await connectFromIndicator(page, remote, remote.token);
+    await expect(page.getByTestId("backup-where")).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(page.getByTestId("backup-dialog")).toHaveCount(0);
+
+    // The repository goes away (offline, server down): opening the folder says so.
+    await remote.close();
+    await loadVault(page, elsewhere);
+    await loadVault(page, vault);
+    await expect(notice).toContainText("Couldn't back up", { timeout: 30_000 });
+    await notice.getByRole("button", { name: "Dismiss" }).click();
+    await expect(notice).toHaveCount(0);
+
+    // Opening it again fails the same way: nothing new to say.
+    await loadVault(page, elsewhere);
+    await loadVault(page, vault);
+    // An exchange asked for now runs after the background one, so once it is done both are.
+    await page.keyboard.press("Control+,");
+    const settings = page.getByRole("dialog", { name: "Settings" });
+    const section = page.getByTestId("settings-backup");
+    await section.getByTestId("backup-sync-now").click();
+    await expect(section.getByTestId("backup-sync-now")).toBeEnabled({ timeout: 30_000 });
+    await expect(section.getByTestId("backup-error")).toBeVisible();
+    await settings.getByRole("button", { name: "Close settings" }).click();
+    await expect(settings).toHaveCount(0);
+    await expect(notice).toHaveCount(0);
+  } finally {
+    await tauriInvoke(page, "disconnect_remote", { root: vault }).catch(() => {});
+    removeTempVault(vault);
+    removeTempVault(elsewhere);
+    await remote.close().catch(() => {});
+  }
+});

@@ -91,7 +91,7 @@
   import { backupStatus } from "$lib/backupStatus.helpers";
   import BackupDialog from "$lib/BackupDialog.svelte";
   import { backupStore } from "$lib/remoteSync.svelte";
-  import { exchangeMessages, needsAttention } from "$lib/remoteSync.helpers";
+  import { exchangeMessages, isNewFailure, needsAttention } from "$lib/remoteSync.helpers";
   import { initialNoteSaveState, NoteSave } from "$lib/noteSave";
   import {
     baseName,
@@ -208,8 +208,12 @@
   });
   // Exchanges run in the background and may finish after the folder was left: what they say is
   // only shown for the folder they were about. The watcher already reloads open notes from disk.
+  // The background failure last said for each folder, so reopening a folder offline says it once.
+  // What was said, not what happened: a failure while another folder was open was never seen.
+  const failureSaid = new Map<string, FriendlyError>();
   backupStore.listen({
     exchanged: (folder, exchange) => {
+      failureSaid.delete(folder);
       if (folder !== root) return;
       void refreshBackup();
       if (exchange.received.length > 0 || exchange.removed.length > 0) void refreshTree();
@@ -221,8 +225,10 @@
     failed: (folder, error, reason) => {
       if (folder !== root) return;
       void refreshBackup();
-      // One the person asked for says so where they asked; a background one says it quietly.
-      if (reason === "background") {
+      // One the person asked for says so where they asked; a background one says it quietly, and
+      // only once while it keeps failing the same way.
+      if (reason === "background" && isNewFailure(failureSaid.get(folder) ?? null, error)) {
+        failureSaid.set(folder, error);
         backupNotice = { kind: "error", text: `Couldn't back up: ${error.summary}`, detail: error.raw };
       }
     },

@@ -6,6 +6,7 @@
  * nothing — a quiet background exchange stays quiet.
  */
 
+import type { FriendlyError } from "./friendlyError.helpers";
 import type { RemoteExchange } from "./ipc";
 
 /** How many note names a sentence lists before it says "and N more". */
@@ -96,4 +97,14 @@ export function relativeTime(then: number, now: number): string {
   if (hours < 24) return hours === 1 ? "1 hour ago" : `${hours} hours ago`;
   const days = Math.round(hours / 24);
   return days === 1 ? "1 day ago" : `${days} days ago`;
+}
+
+/**
+ * Whether a failed background exchange is news, given the failure last said for the folder.
+ * Opening a folder while offline fails the same way every time; the backup status already shows
+ * the risk, so the same failure is said once — until an exchange goes through or it fails for
+ * another reason.
+ */
+export function isNewFailure(said: FriendlyError | null, failure: FriendlyError): boolean {
+  return said?.summary !== failure.summary;
 }
