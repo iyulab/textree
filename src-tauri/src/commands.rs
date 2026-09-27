@@ -1350,6 +1350,20 @@ pub fn connect_remote(root: String, url: String, username: String, secret: Strin
     atomic_write_beside(&dir.join(crate::remote::CONNECTION_FILE), &text).map_err(|e| e.to_string())
 }
 
+/// Whether this folder's recorded notes are somewhere besides this machine: it is connected to a
+/// remote, and the remote held everything recorded here when they last exchanged. Asks nothing
+/// over the network, and makes no repository where none is.
+pub fn notes_backed_up(root: String) -> Result<bool, String> {
+    if remote_connection(root.clone())?.is_none() {
+        return Ok(false);
+    }
+    match history_repo(Path::new(&root))? {
+        Some(prepared) => crate::remote::backed_up(prepared.repo()).map_err(|e| e.message().to_string()),
+        // Nothing recorded yet: nothing that could be lost.
+        None => Ok(true),
+    }
+}
+
 /// Forgets this folder's remote on this machine. Nothing on the remote changes.
 pub fn disconnect_remote(root: String) -> Result<(), String> {
     let root_p = Path::new(&root);
@@ -2638,8 +2652,7 @@ mod tests {
         std::fs::create_dir_all(&there).unwrap();
         let (here_s, there_s) = (here.to_string_lossy().to_string(), there.to_string_lossy().to_string());
 
-        seed_note(&here, "manual.md", "# Manual
-");
+        seed_note(&here, "manual.md", "# Manual\n");
         commit_notes(here_s.clone(), vec![here.join("manual.md").to_string_lossy().to_string()], "first".into())
             .unwrap();
         connect_remote(here_s.clone(), url.clone(), USER.into(), SECRET.into()).unwrap();
@@ -2650,11 +2663,21 @@ mod tests {
         let sent = sync_remote(here_s.clone(), &locks).unwrap();
         assert!(sent.sent, "{sent:?}");
 
+        assert!(notes_backed_up(here_s.clone()).unwrap(), "sent, so kept on the remote");
+        seed_note(&here, "faq.md", "# FAQ\n");
+        commit_notes(here_s.clone(), vec![here.join("faq.md").to_string_lossy().to_string()], "second".into())
+            .unwrap();
+        assert!(!notes_backed_up(here_s.clone()).unwrap(), "recorded since, only here");
+        assert!(sync_remote(here_s.clone(), &locks).unwrap().sent);
+        assert!(notes_backed_up(here_s.clone()).unwrap());
+
+        // A new machine: an empty folder connected to the remote receives everything.
+        assert!(!notes_backed_up(there_s.clone()).unwrap(), "not connected");
         connect_remote(there_s.clone(), url, USER.into(), SECRET.into()).unwrap();
         let got = sync_remote(there_s.clone(), &locks).unwrap();
-        assert_eq!(got.received, vec!["manual.md".to_string()]);
-        assert_eq!(std::fs::read_to_string(there.join("manual.md")).unwrap(), "# Manual
-");
+        assert_eq!(got.received, vec!["faq.md".to_string(), "manual.md".to_string()]);
+        assert!(notes_backed_up(there_s.clone()).unwrap(), "what arrived is on the remote already");
+        assert_eq!(std::fs::read_to_string(there.join("manual.md")).unwrap(), "# Manual\n");
 
         disconnect_remote(here_s.clone()).unwrap();
         disconnect_remote(there_s.clone()).unwrap();

@@ -422,6 +422,14 @@ export async function disconnectRemote(root: string): Promise<void> {
   return invoke<void>("disconnect_remote", { root });
 }
 
+/**
+ * Whether this folder's recorded notes are somewhere besides this machine: connected to a remote
+ * that held everything recorded here at the last exchange. Asks nothing over the network.
+ */
+export async function notesBackedUp(root: string): Promise<boolean> {
+  return invoke<boolean>("notes_backed_up", { root });
+}
+
 /** One exchange: take in what arrived where it can, send what was recorded here. */
 export async function syncRemote(root: string): Promise<RemoteExchange> {
   return invoke<RemoteExchange>("sync_remote", { root });

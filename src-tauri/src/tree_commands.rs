@@ -276,6 +276,11 @@ pub async fn connect_remote(root: String, url: String, username: String, secret:
 }
 
 #[tauri::command]
+pub async fn notes_backed_up(root: String) -> Result<bool, String> {
+    off_main(move || commands::notes_backed_up(root)).await
+}
+
+#[tauri::command]
 pub async fn disconnect_remote(root: String) -> Result<(), String> {
     off_main(move || commands::disconnect_remote(root)).await
 }

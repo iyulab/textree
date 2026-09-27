@@ -3,11 +3,10 @@
  *
  * Versions live only in this repository's own refs, so until notes reach another machine this
  * computer holds the only copy. The indicator says so for as long as it stays true — it is a
- * standing fact, not a one-time notice, and it has nothing to press because there is nothing to
- * connect it to yet.
+ * standing fact, not a one-time notice.
  *
  * An existing `origin` does not count: a default push sends branches, not the refs versions are
- * kept in. "Backed up" means a remote that received those refs.
+ * kept in. "Backed up" means the folder's remote held those refs at the last exchange.
  */
 
 export interface BackupStatus {

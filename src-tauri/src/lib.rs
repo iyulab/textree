@@ -133,6 +133,7 @@ pub fn run() {
             tree_commands::remote_connection,
             tree_commands::connect_remote,
             tree_commands::disconnect_remote,
+            tree_commands::notes_backed_up,
             tree_commands::sync_remote,
             tree_commands::publish_site,
             tree_commands::publish_to_cloud,

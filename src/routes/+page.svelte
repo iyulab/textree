@@ -3,6 +3,7 @@
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import { onMount, tick } from "svelte";
   import {
+    notesBackedUp,
     openVault,
     ensureDefaultVault,
     listTree,
@@ -170,8 +171,30 @@
   let movedOut = $state<MoveOut | null>(null);
   /** What the last attempt to add a version came to. Not an error — it can also say nothing changed. */
   let versionNotice = $state<string | null>(null);
-  // Nothing sends versions anywhere yet; only a remote that receives refs/textree/* can make this true.
-  const backup = backupStatus(false);
+  // Backed up once the folder's remote held everything recorded here at the last exchange (it
+  // receives refs/textree/*, which a plain push of branches would not send). Asked without the
+  // network, so a stale answer can only ever be "not backed up".
+  let backedUp = $state(false);
+  let backupAsks = 0;
+  async function refreshBackup() {
+    const asking = root;
+    const mine = ++backupAsks;
+    if (!asking) return;
+    let answer = false;
+    try {
+      answer = await notesBackedUp(asking);
+    } catch {
+      answer = false; // unknown is shown as the risk it may be
+    }
+    if (mine === backupAsks && asking === root) backedUp = answer;
+  }
+  $effect(() => {
+    if (root) {
+      backedUp = false;
+      void refreshBackup();
+    }
+  });
+  const backup = $derived(backupStatus(backedUp));
   let showSettings = $state(false);
 
   // Sync-conflict surfacing — derived from the live tree (no IPC). Non-destructive: we only
@@ -1862,7 +1885,7 @@
         {root}
         paths={[activePath]}
         onclose={() => { showAddVersion = false; }}
-        ondone={(message) => { versionNotice = message; }}
+        ondone={(message) => { versionNotice = message; void refreshBackup(); }}
       />
     {/if}
     {#if showVersionHistory && root && activePath}

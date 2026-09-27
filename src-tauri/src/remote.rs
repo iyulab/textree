@@ -57,12 +57,10 @@ pub fn push(
     credentials: Option<Credentials>,
 ) -> Result<Sent, git2::Error> {
     crate::git_transport::install();
-    let mut names = Vec::new();
-    for reference in repo.references_glob(&format!("{OWN}*"))? {
-        if let Ok(name) = reference?.name() {
-            names.push(name.to_string());
-        }
-    }
+    let names: Vec<String> = own_references(repo)?
+        .into_iter()
+        .map(|(name, _)| name)
+        .collect();
     if names.is_empty() {
         return Ok(Sent::NothingToSend);
     }
@@ -391,6 +389,7 @@ pub fn exchange(
         match push(repo, url, credentials.clone()).map_err(err)? {
             Sent::Done => {
                 out.sent = true;
+                note_what_the_remote_holds(repo).map_err(err)?;
                 break;
             }
             Sent::NothingToSend => break,
@@ -400,6 +399,37 @@ pub fn exchange(
         }
     }
     Ok(out)
+}
+
+/// After a send the remote holds exactly this machine's references. Recording that under
+/// [`TRACKING`] is what lets [`backed_up`] answer without asking the remote.
+fn note_what_the_remote_holds(repo: &Repository) -> Result<(), git2::Error> {
+    for (name, id) in own_references(repo)? {
+        repo.reference(&tracking_of(&name), id, true, "sent to remote")?;
+    }
+    Ok(())
+}
+
+fn own_references(repo: &Repository) -> Result<Vec<(String, Oid)>, git2::Error> {
+    let mut out = Vec::new();
+    for reference in repo.references_glob(&format!("{OWN}*"))? {
+        let reference = reference?;
+        if let (Ok(name), Some(id)) = (reference.name(), reference.target()) {
+            out.push((name.to_string(), id));
+        }
+    }
+    Ok(out)
+}
+
+/// Whether the remote, as last seen, holds everything recorded here. Something recorded since
+/// the last exchange is only on this machine until the next one.
+pub fn backed_up(repo: &Repository) -> Result<bool, git2::Error> {
+    for (name, id) in own_references(repo)? {
+        if id_of(repo, &tracking_of(&name)) != Some(id) {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 /// What taking in the notes reference did.
@@ -719,13 +749,7 @@ mod tests {
         assert!(plan.unrecorded_here.is_empty());
 
         assert!(matches!(b.apply(&plan), Taken::Done { .. }));
-        assert_eq!(
-            b.read("release-notes.md").as_deref(),
-            Some(
-                "# 1.0
-"
-            )
-        );
+        assert_eq!(b.read("release-notes.md").as_deref(), Some("# 1.0\n"));
         assert_eq!(b.send(&remote), Sent::Done);
     }
 
