@@ -27,9 +27,9 @@ tauri-plugin-dialog = "2.7.1"
 # Atomic note writes (temp + rename), so a crash mid-write cannot truncate a note.
 tempfile = "3"
 # Crash-safe writes of this app's own settings, outside the notes folder.
-tauri-kit-fs = "0.6"
+tauri-kit-fs = "0.7"
 # Changes other programs make to the notes folder, without the app's own writes.
-tauri-kit-watch = "0.6"
+tauri-kit-watch = "0.7"
 # Pasted image attachments: decodes the binary that crosses IPC as a base64 string.
 base64 = "0.22"
 # Full-text index over note bodies. An n-gram tokenizer gives partial matches in scripts
@@ -44,10 +44,10 @@ tauri-plugin-process = "2.3.1"
 ureq = { version = "3", features = ["json"] }
 # Secrets (BYO API key, publish token, remote credentials) in the OS credential store, never on
 # disk in plaintext. Test runs and development builds get entries of their own.
-tauri-kit-credentials = "0.6"
+tauri-kit-credentials = "0.7"
 # The local AI helper process: no console window, stopped together with everything it starts
 # (also when this app crashes), and a free loopback port for it to listen on.
-tauri-kit-sidecar = "0.6"
+tauri-kit-sidecar = "0.7"
 # Structured logging to the OS app log directory (app_log_dir). The `log` facade
 # (log::info!/warn!/error!) is used at call sites; the plugin wires the backend.
 log = "0.4"
@@ -64,7 +64,4 @@ git2 = { version = "0.21", features = ["vendored-libgit2"] }
 
 [target."cfg(windows)".dependencies]
 tauri-plugin-updater = "2.10.1"
-# Renaming without replacing (MoveFileExW with no REPLACE flag) — std::fs::rename always replaces.
-# Already in the graph through tauri; no new code ships.
-windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem"] }
 

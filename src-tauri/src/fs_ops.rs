@@ -20,41 +20,11 @@ pub(crate) use tauri_kit_fs::patiently;
 /// Every move in this module goes through here — the ones that undo a half-done change most of
 /// all: an undo that gives up on a scanner's glance leaves the change half-done.
 ///
-/// Never replaces: a file already at `to` is refused with [`io::ErrorKind::AlreadyExists`].
-/// Every move here goes to a place meant to be free, and checking that first is not enough —
-/// something can arrive in between (another move, a sync client), and `std::fs::rename` would
-/// then destroy it without a trace.
-pub(crate) fn rename(from: &Path, to: &Path) -> io::Result<()> {
-    patiently(|| rename_no_replace(from, to))
-}
-
-#[cfg(windows)]
-fn rename_no_replace(from: &Path, to: &Path) -> io::Result<()> {
-    use std::os::windows::ffi::OsStrExt;
-    use windows_sys::Win32::Storage::FileSystem::MoveFileExW;
-    let wide = |p: &Path| -> Vec<u16> { p.as_os_str().encode_wide().chain(Some(0)).collect() };
-    let (from_w, to_w) = (wide(from), wide(to));
-    // SAFETY: both are NUL-terminated wide strings that outlive the call. No REPLACE_EXISTING.
-    if unsafe { MoveFileExW(from_w.as_ptr(), to_w.as_ptr(), 0) } != 0 {
-        return Ok(());
-    }
-    let e = io::Error::last_os_error();
-    // ERROR_ALREADY_EXISTS (183) and ERROR_FILE_EXISTS (80) both mean "something is there".
-    Err(match e.raw_os_error() {
-        Some(80) | Some(183) => io::Error::new(io::ErrorKind::AlreadyExists, e),
-        _ => e,
-    })
-}
-
-/// Outside Windows there is no portable no-replace rename in std; the check narrows the window
-/// without closing it. v1 ships on Windows only.
-#[cfg(not(windows))]
-fn rename_no_replace(from: &Path, to: &Path) -> io::Result<()> {
-    if to.symlink_metadata().is_ok() {
-        return Err(io::Error::new(io::ErrorKind::AlreadyExists, "the destination exists"));
-    }
-    std::fs::rename(from, to)
-}
+/// Never replaces: anything already at `to` is refused with [`io::ErrorKind::AlreadyExists`], in
+/// the same step as the move. Every move here goes to a place meant to be free, and checking that
+/// first is not enough — something can arrive in between (another move, a sync client), and
+/// `std::fs::rename` would then destroy it without a trace.
+pub(crate) use tauri_kit_fs::rename_new as rename;
 
 /// Supported image extensions (lowercase). Other formats are rejected.
 const IMAGE_EXTS: &[&str] = &["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "avif"];
