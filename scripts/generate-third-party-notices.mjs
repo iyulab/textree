@@ -20,10 +20,18 @@
  * to any package manager, and their terms constrain how the whole distribution may be shipped.
  */
 
-import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  PERMISSIVE,
+  cargoPackages,
+  needsReview as unaccepted,
+  noticesTable as table,
+  npmPackages,
+  nugetPackages,
+  writeOrCheck,
+} from "@iyulab/tauri-kit-dev/notices";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const TARGET = "x86_64-pc-windows-msvc";
@@ -35,124 +43,15 @@ const HOST_ASSETS = join(ROOT, "src-host", "src", "Textree.Host", "obj", "projec
 const HOST_PROPS = join(ROOT, "src-host", "Directory.Build.props");
 
 /**
- * License expressions that are compatible with this application's GPL-3.0-only license, either
- * because they are permissive or because they carry an explicit exception. Anything outside this
- * set is reported rather than silently listed: a copyleft term we cannot satisfy is a licensing
- * defect, not a formatting one.
+ * License expressions that are compatible with this application's GPL-3.0-only license: the
+ * permissive ones, plus the copyleft terms and exceptions GPL-3.0-only can carry. Anything outside
+ * this set is reported rather than silently listed: a copyleft term we cannot satisfy is a
+ * licensing defect, not a formatting one.
  */
-const KNOWN_COMPATIBLE = new Set([
-  "0BSD", "Apache-2.0", "BSD-2-Clause", "BSD-3-Clause", "BSL-1.0", "CC0-1.0", "ISC", "MIT",
-  "MIT-0", "MPL-2.0", "Python-2.0", "Unicode-3.0", "Unicode-DFS-2016", "Zlib", "zlib-acknowledgement",
-  "GPL-3.0-only", "GPL-3.0-or-later", "LGPL-2.1-or-later", "LGPL-3.0-or-later",
-  "Unlicense", "WTFPL", "CDLA-Permissive-2.0", "OpenSSL", "LicenseRef-Public-Domain",
+const COMPATIBLE = new Set([
+  ...PERMISSIVE,
+  "MPL-2.0", "GPL-3.0-only", "GPL-3.0-or-later", "LGPL-2.1-or-later", "LGPL-3.0-or-later",
 ]);
-
-/**
- * Splits an SPDX expression into the individual identifiers it mentions. A slash is treated as a
- * separator too: crates predating SPDX expressions still declare `MIT/Apache-2.0`, and reading
- * that as one unknown identifier would flag two dozen ordinary permissive crates for review.
- * A screen that reports things that are fine is a screen nobody reads.
- */
-function identifiersIn(expression) {
-  return expression
-    .replace(/[()]/g, " ")
-    .split(/\s*\/\s*|\s+(?:OR|AND|WITH)\s+/i)
-    .map((s) => s.trim())
-    .filter(Boolean);
-}
-
-/** True when at least one alternative of an SPDX expression is known to be compatible. */
-function isSatisfiable(expression) {
-  // An OR gives a choice, so one compatible alternative is enough. AND/WITH are approximated the
-  // same way on purpose: this is a screen that surfaces candidates for review, not a legal check.
-  return identifiersIn(expression).some((id) => KNOWN_COMPATIBLE.has(id));
-}
-
-function rustDependencies() {
-  const raw = execFileSync(
-    "cargo",
-    ["metadata", "--format-version", "1", "--filter-platform", TARGET],
-    { cwd: join(ROOT, "src-tauri"), encoding: "utf8", maxBuffer: 128 * 1024 * 1024 },
-  );
-  const meta = JSON.parse(raw);
-  const byId = new Map(meta.packages.map((p) => [p.id, p]));
-  const nodes = new Map(meta.resolve.nodes.map((n) => [n.id, n]));
-
-  // Walk only normal dependencies: a build-dependency's code runs during compilation and is not
-  // part of what is installed.
-  const reached = new Set();
-  const queue = [meta.resolve.root];
-  while (queue.length) {
-    const id = queue.shift();
-    if (reached.has(id)) continue;
-    reached.add(id);
-    for (const dep of nodes.get(id)?.deps ?? []) {
-      if (dep.dep_kinds.some((k) => k.kind === null)) queue.push(dep.pkg);
-    }
-  }
-  reached.delete(meta.resolve.root);
-
-  return [...reached]
-    .map((id) => byId.get(id))
-    .filter(Boolean)
-    .map((p) => ({
-      name: p.name,
-      version: p.version,
-      license: p.license ?? "(not declared)",
-      url: p.repository ?? `https://crates.io/crates/${p.name}`,
-    }))
-    .sort((a, b) => a.name.localeCompare(b.name) || a.version.localeCompare(b.version));
-}
-
-/**
- * Reads the production closure straight out of the lockfile rather than shelling out to npm: the
- * lockfile already records exactly what an install resolves to, and it makes this script runnable
- * without a package manager on the path.
- */
-function npmDependencies(lockPath = join(ROOT, "package-lock.json"), installedAt = ROOT) {
-  const lock = JSON.parse(readFileSync(lockPath, "utf8"));
-  const entries = [];
-  for (const [path, entry] of Object.entries(lock.packages)) {
-    if (!path || entry.dev || entry.link) continue; // "" is the application itself
-    const name = path.slice(path.lastIndexOf("node_modules/") + "node_modules/".length);
-
-    // The lockfile carries a license for most packages; fall back to the installed manifest, which
-    // also supplies the upstream URL the lockfile does not record.
-    let manifest = {};
-    try {
-      if (installedAt) manifest = JSON.parse(readFileSync(join(installedAt, path, "package.json"), "utf8"));
-    } catch {
-      // Not installed right now: the lockfile entry still describes what ships.
-    }
-    const declared =
-      entry.license ??
-      manifest.license ??
-      (Array.isArray(manifest.licenses) ? manifest.licenses.map((l) => l.type).join(" OR ") : null);
-    const repo =
-      typeof manifest.repository === "string" ? manifest.repository : manifest.repository?.url;
-
-    entries.push({
-      name,
-      version: entry.version ?? manifest.version ?? "(unknown)",
-      license: typeof declared === "string" ? declared : "(not declared)",
-      url: (repo ?? `https://www.npmjs.com/package/${name}`)
-        .replace(/^git\+/, "")
-        .replace(/\.git$/, ""),
-    });
-  }
-  return entries.sort(
-    (a, b) => a.name.localeCompare(b.name) || a.version.localeCompare(b.version),
-  );
-}
-
-/**
- * The renderer's closure comes from its committed lock file alone: whether the helper happens to
- * be assembled on this machine must not change the output, so installed manifests are not read
- * and every upstream link is the registry page.
- */
-function rendererDependencies() {
-  return npmDependencies(RENDERER_LOCK, null);
-}
 
 /** The Node.js version the renderer is bundled with, as the assembly script pins it. */
 function rendererNodeVersion() {
@@ -168,78 +67,22 @@ function hostDotnetMajor() {
   return m[1];
 }
 
-/**
- * A package that ships its license as a file instead of an SPDX expression: recognised only when
- * the file plainly says what it is. Anything else stays "see <file>" and is flagged for review.
- */
-function licenseFromFile(path) {
-  if (!existsSync(path)) return null;
-  const text = readFileSync(path, "utf8").trim();
-  if (/^MIT License\b/.test(text)) return "MIT";
-  if (/\bis Public Domain\b/i.test(text.slice(0, 200))) return "LicenseRef-Public-Domain";
-  return null;
-}
-
-const hasFiles = (assets) => !!assets && Object.keys(assets).some((f) => !f.endsWith("_._"));
-
-/**
- * NuGet packages that put code into the published host: those with runtime or native assets.
- * Meta-packages and analyzers carry none — what they bring in is listed through the packages
- * that do.
- */
-function hostDependencies() {
-  if (!existsSync(HOST_ASSETS)) {
+const rust = cargoPackages({ cwd: join(ROOT, "src-tauri"), target: TARGET });
+const npm = npmPackages({ lock: join(ROOT, "package-lock.json"), installedAt: ROOT });
+// The renderer's closure comes from its committed lock file alone: whether the helper happens to
+// be assembled on this machine must not change the output.
+const renderer = npmPackages({ lock: RENDERER_LOCK });
+const node = rendererNodeVersion();
+const host = (() => {
+  try {
+    return nugetPackages({ assets: HOST_ASSETS });
+  } catch {
     throw new Error("the host's dependency graph is missing — run `dotnet restore src-host/TextreeHost.slnx` first");
   }
-  const assets = JSON.parse(readFileSync(HOST_ASSETS, "utf8"));
-  const folder = Object.keys(assets.packageFolders ?? {})[0];
-  const entries = [];
-  for (const target of Object.values(assets.targets)) {
-    for (const [key, lib] of Object.entries(target)) {
-      if (lib.type !== "package") continue;
-      if (!hasFiles(lib.runtime) && !hasFiles(lib.native) && !hasFiles(lib.runtimeTargets)) continue;
-      const [name, version] = key.split("/");
-      const id = name.toLowerCase();
-      const nuspecPath = join(folder, id, version.toLowerCase(), `${id}.nuspec`);
-      const nuspec = existsSync(nuspecPath) ? readFileSync(nuspecPath, "utf8") : "";
-      const expression = nuspec.match(/<license\s+type="expression"\s*>([^<]+)<\/license>/)?.[1]?.trim();
-      const licenseFile = nuspec.match(/<license\s+type="file"\s*>([^<]+)<\/license>/)?.[1]?.trim();
-      const licenseUrl = nuspec.match(/<licenseUrl>([^<]+)<\/licenseUrl>/)?.[1]?.trim();
-      const repo =
-        nuspec.match(/<repository\b[^>]*\burl="([^"]+)"/)?.[1] ?? nuspec.match(/<projectUrl>([^<]+)<\/projectUrl>/)?.[1];
-      entries.push({
-        name,
-        version,
-        license:
-          expression ??
-          (licenseFile
-            ? licenseFromFile(join(folder, id, version.toLowerCase(), licenseFile)) ?? `see ${licenseFile} in the package`
-            : licenseUrl
-              ? `see ${licenseUrl}`
-              : "(not declared)"),
-        url: (repo ?? `https://www.nuget.org/packages/${name}`).replace(/\.git$/, ""),
-      });
-    }
-  }
-  const unique = new Map(entries.map((e) => [`${e.name}@${e.version}`, e]));
-  return [...unique.values()].sort((a, b) => a.name.localeCompare(b.name) || a.version.localeCompare(b.version));
-}
-
-function table(entries) {
-  const rows = entries.map(
-    (e) => `| \`${e.name}\` | ${e.version} | ${e.license} | ${e.url} |`,
-  );
-  return ["| Component | Version | License | Upstream |", "| --- | --- | --- | --- |", ...rows].join("\n");
-}
-
-const rust = rustDependencies();
-const npm = npmDependencies();
-const renderer = rendererDependencies();
-const node = rendererNodeVersion();
-const host = hostDependencies();
+})();
 const dotnet = hostDotnetMajor();
 
-const needsReview = [...rust, ...npm, ...renderer, ...host].filter((e) => !isSatisfiable(e.license));
+const needsReview = unaccepted([...rust, ...npm, ...renderer, ...host], COMPATIBLE);
 if (needsReview.length) {
   console.error("License expressions outside the known-compatible set — review before shipping:");
   for (const e of needsReview) console.error(`  ${e.name} ${e.version}: ${e.license}`);
@@ -298,19 +141,14 @@ function summary() {
 // --check makes this usable as a gate: a generated file only stays accurate if something notices
 // when it stops matching, and dependencies change far more often than anyone thinks to rerun a
 // script. Exits non-zero when the committed file is out of date.
-if (process.argv.includes("--check")) {
-  const committed = readFileSync(OUTPUT, "utf8");
-  if (committed === body) {
-    console.log(`THIRD-PARTY-NOTICES.md is up to date: ${summary()}.`);
-  } else {
-    console.error(
-      "THIRD-PARTY-NOTICES.md no longer matches the dependency graph.\n" +
-        "Run `node scripts/generate-third-party-notices.mjs` and commit the result.",
-    );
-    process.exitCode = 1;
-  }
+const check = process.argv.includes("--check");
+if (writeOrCheck(OUTPUT, body, { check })) {
+  console.log(check ? `THIRD-PARTY-NOTICES.md is up to date: ${summary()}.` : `Wrote ${OUTPUT}: ${summary()}.`);
 } else {
-  writeFileSync(OUTPUT, body, "utf8");
-  console.log(`Wrote ${OUTPUT}: ${summary()}.`);
+  console.error(
+    "THIRD-PARTY-NOTICES.md no longer matches the dependency graph.\n" +
+      "Run `node scripts/generate-third-party-notices.mjs` and commit the result.",
+  );
+  process.exitCode = 1;
 }
 if (needsReview.length) process.exitCode = 1;

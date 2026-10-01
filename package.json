@@ -24,9 +24,9 @@
     "notices": "node scripts/generate-third-party-notices.mjs",
     "notices:check": "node scripts/generate-third-party-notices.mjs --check",
     "tokens:check": "node scripts/check-forbidden-tokens.mjs",
-    "pins:check": "node scripts/canopy-stage.mjs && node scripts/check-pin-drift.mjs",
+    "pins:check": "node scripts/canopy-stage.mjs && tauri-kit-dev pin-drift --props src-host/Directory.Packages.props --assets src-host/src/Textree.Host/obj/project.assets.json --publisher iyulab --waivers scripts/pin-drift-waivers.json",
     "host:smoke": "node scripts/host-smoke.mjs",
-    "gate": "node scripts/gate.mjs",
+    "gate": "tauri-kit-dev gate --config scripts/gate.config.mjs",
     "tauri": "tauri"
   },
   "license": "GPL-3.0-only",
@@ -48,6 +48,7 @@
     "katex": "0.18.9"
   },
   "devDependencies": {
+    "@iyulab/tauri-kit-dev": "^0.2.0",
     "@playwright/test": "^1.60.0",
     "@sveltejs/adapter-static": "^3.0.6",
     "@sveltejs/kit": "^2.9.0",

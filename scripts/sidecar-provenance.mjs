@@ -20,11 +20,19 @@
  *   node scripts/sidecar-provenance.mjs stamp canopy [checkout]  # assemble-canopy-sidecar.ps1 calls it
  *   node scripts/sidecar-provenance.mjs check <host|canopy>      # prints the verdict; exit 1 unless current/pinned
  */
-import { createHash } from "node:crypto";
-import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join, relative, resolve } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  filesDigest,
+  filesUnder,
+  gitSourceState,
+  judgeStamp,
+  pendingDigest,
+  readStamp as readStampAt,
+  sha256,
+  writeStamp as writeStampAt,
+} from "@iyulab/tauri-kit-dev/provenance";
 import { CANOPY_CLI, CANOPY_MANIFEST_DIR, CANOPY_STAGE, canopyPin } from "./canopy-stage.mjs";
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -35,31 +43,8 @@ export const SIDECARS = {
 const APP_CONFIG = join(REPO, "src-tauri", "tauri.conf.json");
 
 const stampPath = (kind) => join(REPO, ".cache", "sidecar-provenance", `${kind}.json`);
-const readStamp = (kind) => (existsSync(stampPath(kind)) ? JSON.parse(readFileSync(stampPath(kind), "utf8")) : null);
-function writeStamp(kind, record) {
-  mkdirSync(dirname(stampPath(kind)), { recursive: true });
-  writeFileSync(stampPath(kind), JSON.stringify(record, null, 2) + "\n");
-}
-
-function gitIn(cwd, ...args) {
-  const r = spawnSync("git", args, { cwd, encoding: "utf8" });
-  if (r.status !== 0) throw new Error(`git ${args.join(" ")} failed: ${r.stderr.trim()}`);
-  return r.stdout;
-}
-
-const sha256 = (data) => createHash("sha256").update(data).digest("hex");
-
-/** Digest of uncommitted changes and untracked files under `pathspec`, or null when there are none. */
-function pendingDigest(cwd, pathspec) {
-  const diff = gitIn(cwd, "diff", "HEAD", "--binary", "--", pathspec);
-  const untracked = gitIn(cwd, "ls-files", "--others", "--exclude-standard", "--", pathspec)
-    .split("\n")
-    .filter(Boolean)
-    .sort();
-  if (diff === "" && untracked.length === 0) return null;
-  return sha256(diff + "\0" + untracked.map((f) => `${f}\0${sha256(readFileSync(join(cwd, f)))}`).join("\n"));
-}
-
+const readStamp = (kind) => readStampAt(stampPath(kind));
+const writeStamp = (kind, record) => writeStampAt(stampPath(kind), record);
 // ── host ────────────────────────────────────────────────────────────────────────────────────
 
 /**
@@ -69,10 +54,8 @@ function pendingDigest(cwd, pathspec) {
  * stamped with it, so a version bump outside the source folder still makes an older build stale.
  */
 export function sourceState(source) {
-  const tree = gitIn(REPO, "rev-parse", `HEAD:${source}`).trim();
-  const commit = gitIn(REPO, "rev-parse", "--short", "HEAD").trim();
   const version = JSON.parse(readFileSync(APP_CONFIG, "utf8")).version ?? null;
-  return { tree, commit, pending: pendingDigest(REPO, source), version };
+  return { ...gitSourceState(REPO, source), version };
 }
 
 export function stamp(kind) {
@@ -90,12 +73,10 @@ export function stamp(kind) {
  * unknown  — no stamp, or the exe is not the one the stamp describes
  */
 export function judge(record, exeSha256, now) {
-  if (!record || record.exeSha256 !== exeSha256) return { verdict: "unknown" };
   // A stamp from before versions were recorded has no `version` — it cannot vouch for one.
-  if (record.tree === now.tree && record.pending === now.pending && record.version === now.version) {
-    return { verdict: "current", built: record };
-  }
-  return { verdict: "stale", built: record };
+  const { tree, pending, version } = now;
+  const r = judgeStamp(record, { digestKey: "exeSha256", digest: exeSha256, expected: { tree, pending, version } });
+  return r.verdict === "unknown" ? r : { verdict: r.verdict === "match" ? "current" : "stale", built: r.built };
 }
 
 /** Verdict for `exePath`, or null when it is not the staged sidecar (nothing to compare against). */
@@ -130,21 +111,10 @@ const CANOPY_IN_STAGE = join(CANOPY_STAGE, "node_modules", "@iyulab", "canopy");
  * runtime from the assembly script's pinned version; hashing them would only make stamping slow.
  */
 function canopyStageDigest() {
-  const files = [join(CANOPY_STAGE, "package-lock.json")];
-  const walk = (dir) => {
-    for (const e of readdirSync(dir, { withFileTypes: true })) {
-      const full = join(dir, e.name);
-      if (e.isDirectory()) {
-        if (e.name !== "node_modules") walk(full);
-      } else {
-        files.push(full);
-      }
-    }
-  };
-  walk(CANOPY_IN_STAGE);
-  const named = files.map((f) => [relative(CANOPY_STAGE, f).split("\\").join("/"), f]);
-  named.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
-  return sha256(named.map(([n, f]) => `${n}\0${sha256(readFileSync(f))}`).join("\n"));
+  return filesDigest(CANOPY_STAGE, [
+    join(CANOPY_STAGE, "package-lock.json"),
+    ...filesUnder(CANOPY_IN_STAGE, { skip: ["node_modules"] }),
+  ]);
 }
 
 /** The installed renderer's version, or null when the stage holds none. */
@@ -163,7 +133,7 @@ export function stampCanopy(checkout) {
   const record = {
     source: fromCheckout ? "checkout" : "registry",
     version: installedCanopyVersion(),
-    commit: fromCheckout ? gitIn(checkout, "rev-parse", "HEAD").trim() : null,
+    commit: fromCheckout ? gitSourceState(checkout, ".").commit : null,
     pending: fromCheckout ? pendingDigest(checkout, ".") : null,
     lockSha256: fromCheckout ? null : sha256(committedLock),
     stageSha256: canopyStageDigest(),
@@ -180,11 +150,12 @@ export function stampCanopy(checkout) {
  * unknown   — no stamp, or the stage is not the one the stamp describes
  */
 export function judgeCanopy(record, stageSha256, pin, lockSha256) {
-  if (!record || record.stageSha256 !== stageSha256) return { verdict: "unknown", pin };
-  if (record.source === "registry" && record.version === pin && record.lockSha256 === lockSha256) {
-    return { verdict: "pinned", built: record, pin };
-  }
-  return { verdict: "unpinned", built: record, pin };
+  const r = judgeStamp(record, {
+    digestKey: "stageSha256",
+    digest: stageSha256,
+    expected: { source: "registry", version: pin, lockSha256 },
+  });
+  return r.verdict === "unknown" ? { verdict: "unknown", pin } : { verdict: r.verdict === "match" ? "pinned" : "unpinned", built: r.built, pin };
 }
 
 export function checkCanopy() {
