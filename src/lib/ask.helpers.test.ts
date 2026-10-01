@@ -7,6 +7,7 @@ import {
   buildChatMessages,
   fileToContext,
   resolveGenerationGate,
+  generatorFailureMessage,
   pruneOrphanedAssistantTurn,
   dropTrailingAssistantTurn,
   answerEndNotice,
@@ -214,5 +215,18 @@ describe('answerEndNotice', () => {
 
   it('says nothing under an answer that finished', () => {
     expect(answerEndNotice(undefined)).toBeNull();
+  });
+});
+
+describe('generatorFailureMessage', () => {
+  it('names the bundled model when no custom server is configured', () => {
+    expect(generatorFailureMessage('model download failed', false)).toBe(
+      'Local AI failed to start: model download failed',
+    );
+  });
+  it('names the custom server when one is configured', () => {
+    expect(generatorFailureMessage('an API key is required', true)).toBe(
+      "The custom AI server can't be used: an API key is required",
+    );
   });
 });

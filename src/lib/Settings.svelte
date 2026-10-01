@@ -10,7 +10,7 @@
   } from "$lib/ipc";
   import {
     computeAiSectionState, themeButtons, planEmbeddingToggle,
-    presetDefaults, isValidByoUrlForPreset, isValidByoModel, byoProviderBadge,
+    presetDefaults, isValidByoUrlForPreset, isValidByoModel, byoProviderBadge, byoKeyRequired,
   } from "$lib/settings.helpers";
   import { getByoConfig, setByoConfig, clearByoConfig, type ByoConfig, type ByoPreset } from "$lib/byoConfig";
   import BackupPanel from "$lib/BackupPanel.svelte";
@@ -331,7 +331,7 @@
             <input type="text" bind:value={byoModel} placeholder="e.g. llama3.1 (no provider default exists)" />
           </label>
           <label>
-            API Key (optional)
+            API Key {byoKeyRequired(byoPreset) ? "(required)" : "(optional)"}
             <input
               type="password"
               bind:value={byoApiKeyInput}
@@ -361,7 +361,8 @@
           <button
             type="button"
             class="action"
-            disabled={byoSaving || !isValidByoUrlForPreset(byoPreset, byoBaseUrl) || !isValidByoModel(byoModel)}
+            disabled={byoSaving || !isValidByoUrlForPreset(byoPreset, byoBaseUrl) || !isValidByoModel(byoModel)
+              || (byoKeyRequired(byoPreset) && !byoApiKeyInput.trim() && !byoHasStoredKey)}
             onclick={onSaveByo}
           >
             {byoSaving ? "Applying…" : "Save"}

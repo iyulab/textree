@@ -105,6 +105,13 @@ export function isValidByoUrlForPreset(preset: ByoPreset, url: string): boolean 
   return isValidByoUrl(url);
 }
 
+/** Hosted providers refuse a request without a key; a local server (Ollama, GPUStack, any other
+ * OpenAI-compatible server) accepts none. The AI helper refuses a hosted preset without one, so
+ * Save asks for it rather than letting the first chat fail. */
+export function byoKeyRequired(preset: ByoPreset): boolean {
+  return preset === "openai" || preset === "anthropic" || preset === "gemini" || preset === "grok";
+}
+
 /** Gates the Save button: a blank model has no real "provider default" to fall back on — the
  * host would send the literal placeholder string "default" as the model name, which fails on
  * the very first chat request against a real server. Required, not just recommended. */

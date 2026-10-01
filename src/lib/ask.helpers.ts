@@ -129,6 +129,14 @@ export function pruneOrphanedAssistantTurn(turns: ChatTurn[], status: string): C
   return ORPHAN_LEAVING_STATES.has(status) ? dropTrailingAssistantTurn(turns) : turns;
 }
 
+/** What the chat says when the generator reports a failure — naming the AI that actually failed:
+ * the bundled local model, or the custom server the user configured in Settings. */
+export function generatorFailureMessage(error: string, usingCustomServer: boolean): string {
+  return usingCustomServer
+    ? `The custom AI server can't be used: ${error}`
+    : `Local AI failed to start: ${error}`;
+}
+
 export function resolveGenerationGate(s: {
   status: string;
   generatorReady: boolean;

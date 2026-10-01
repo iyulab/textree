@@ -3,6 +3,7 @@
 import { ask, cancelAsk, hostStatus, prepareGeneration, readNote, semanticSearch } from './ipc';
 import type { SemanticHit, TreeNode } from './ipc';
 import { aiHost } from './aiHost.svelte';
+import { getByoConfig } from './byoConfig';
 import type { DownloadSnapshot } from './modelDownload.helpers';
 import {
   buildChatMessages,
@@ -10,6 +11,7 @@ import {
   dropTrailingAssistantTurn,
   extractCitations,
   fileToContext,
+  generatorFailureMessage,
   hasUsableContext,
   pruneOrphanedAssistantTurn,
   resolveGenerationGate,
@@ -130,7 +132,7 @@ class ChatStore {
     if (gate === 'error') {
       this.status = 'error';
       this.modelDownload = null;
-      this.errorMessage = `Local AI failed to start: ${st.generatorError}`;
+      this.errorMessage = generatorFailureMessage(st.generatorError ?? '', getByoConfig() !== null);
       return;
     }
     if (gate === 'preparing') {

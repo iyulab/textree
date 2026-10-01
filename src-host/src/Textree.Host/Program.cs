@@ -1,5 +1,6 @@
 using System.Text.Json;
 using IronProw.Core;
+using IronProw.IronHive;
 using LMSupply.Embedder;
 using Textree.Host;
 using Textree.Host.Contracts;
@@ -65,10 +66,18 @@ if (byoPreset is not null)
 
     // iron-prow gateway with exactly one provider (selection inert). The bridge owns provider
     // construction (substrate); the host only adapts the resulting IChatClient into ITextGenerator.
-    var prow = builder.Services.AddIronProw();
-    ByoProviderRegistration.Register(prow, byoPreset, byoBaseUrl, byoApiKey, byoModel);
-    builder.Services.AddSingleton<ITextGenerator>(sp =>
-        new RemoteChatTextGenerator(sp.GetRequiredService<IChatClient>(), byoModel));
+    // Settings the catalogue refuses never reach a provider: /health reports why instead.
+    var byoEndpoint = ByoProviderRegistration.EndpointFor(byoPreset, byoBaseUrl, byoApiKey);
+    if (ByoPresets.Validate(byoEndpoint) is { } unusable)
+    {
+        builder.Services.AddSingleton<ITextGenerator>(new UnusableTextGenerator(unusable));
+    }
+    else
+    {
+        ByoProviderRegistration.Register(builder.Services.AddIronProw(), byoEndpoint, byoModel);
+        builder.Services.AddSingleton<ITextGenerator>(sp =>
+            new RemoteChatTextGenerator(sp.GetRequiredService<IChatClient>(), byoModel));
+    }
 }
 else
 {

@@ -67,8 +67,8 @@ public sealed class RemoteChatTextGenerator : ITextGenerator
 
         var chatMessages = messages.Select(ToChatMessage).ToList();
         // ChatOptions.ModelId intentionally omitted: the bridge already binds `_model` into the
-        // underlying ChatClientAdapter at registration time (ByoProviderRegistration passes
-        // `model` to AddIronHive*, which threads it through as ChatClientAdapter's modelId ctor
+        // underlying ChatClientAdapter at registration time (ByoProviderRegistration hands
+        // `model` to AddIronHiveByo, which threads it through as ChatClientAdapter's modelId ctor
         // arg). ChatClientAdapter.ConvertToRequest resolves `options?.ModelId ?? _modelId`, so
         // setting it here would just repeat the same value already bound at the bridge.
         var chatOptions = new ChatOptions

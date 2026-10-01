@@ -4,32 +4,24 @@ using IronProw.IronHive;
 namespace Textree.Host.Rag;
 
 /// <summary>
-/// Maps a BYO preset to the matching IronProw.IronHive bridge registration. One provider only;
-/// the gateway's selection layer is inert for a single registration.
+/// Turns the BYO settings the desktop app hands over into an IronProw.IronHive endpoint and registers
+/// it. The preset catalogue — default addresses, what each preset requires, which provider serves it
+/// — belongs to <see cref="ByoPresets"/>; this class only adapts textree's settings onto it. One
+/// provider only; the gateway's selection layer is inert for a single registration.
 /// </summary>
 public static class ByoProviderRegistration
 {
     private const int Priority = 100;
 
-    public static IronProwBuilder Register(
-        IronProwBuilder builder, string preset, string baseUrl, string? apiKey, string model)
-    {
-        // The OpenAI SDK wraps ApiKey in an ApiKeyCredential that throws on empty; unauthenticated
-        // local servers (Ollama) don't check it, so pass a placeholder when blank. This placeholder
-        // is only meaningful for key-optional LAN providers (ollama/gpustack) — frontier providers
-        // (openai/anthropic/gemini/grok) require a real key, and a blank one here will 401 on the
-        // first real request, surfaced to the user via LastError.
-        string key = string.IsNullOrEmpty(apiKey) ? "not-required" : apiKey;
+    /// <summary>
+    /// The endpoint for what the settings hold. A preset id the catalogue does not know is read as
+    /// <c>custom</c> (any OpenAI-compatible server), which is how such ids were always served; the
+    /// catalogue then asks for the base URL that preset needs instead of guessing a wire.
+    /// </summary>
+    public static ByoEndpoint EndpointFor(string preset, string? baseUrl, string? apiKey) =>
+        new(ByoPresets.Find(preset)?.Id ?? ByoPresets.Custom.Id, baseUrl ?? "", apiKey ?? "");
 
-        return preset.ToLowerInvariant() switch
-        {
-            "openai" => builder.AddIronHiveOpenAI("byo", Priority, model, c => { c.ApiKey = key; if (!string.IsNullOrEmpty(baseUrl)) c.BaseUrl = baseUrl; }),
-            "anthropic" => builder.AddIronHiveAnthropic("byo", Priority, model, c => { c.ApiKey = key; if (!string.IsNullOrEmpty(baseUrl)) c.BaseUrl = baseUrl; }),
-            // GoogleAIConfig has no direct BaseUrl; the endpoint override lives on HttpOptions.
-            "gemini" => builder.AddIronHiveGoogleAI("byo", Priority, model, c => { c.ApiKey = key; if (!string.IsNullOrEmpty(baseUrl)) c.HttpOptions = new Google.GenAI.Types.HttpOptions { BaseUrl = baseUrl }; }),
-            "gpustack" => builder.AddIronHiveGpuStack("byo", Priority, model, c => { c.ApiKey = key; c.BaseUrl = baseUrl; }),
-            // grok, custom, ollama, and any unknown preset → generic OpenAI-compatible.
-            _ => builder.AddIronHiveOpenAICompatible("byo", Priority, model, c => { c.ApiKey = key; c.BaseUrl = baseUrl; }),
-        };
-    }
+    /// <summary>Registers <paramref name="endpoint"/>, which must have passed <see cref="ByoPresets.Validate"/>.</summary>
+    public static IronProwBuilder Register(IronProwBuilder builder, ByoEndpoint endpoint, string model) =>
+        builder.AddIronHiveByo("byo", Priority, model, endpoint);
 }

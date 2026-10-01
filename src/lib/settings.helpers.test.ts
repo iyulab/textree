@@ -8,6 +8,7 @@ import {
   isValidByoUrlForPreset,
   isValidByoModel,
   byoProviderBadge,
+  byoKeyRequired,
 } from "./settings.helpers";
 
 describe("computeAiSectionState", () => {
@@ -154,5 +155,14 @@ describe("byoProviderBadge", () => {
   });
   it("shows the preset name for a BYO preset", () => {
     expect(byoProviderBadge("ollama")).toBe("Custom server (Ollama)");
+  });
+});
+
+describe("byoKeyRequired", () => {
+  it("asks for a key for hosted providers", () => {
+    for (const p of ["openai", "anthropic", "gemini", "grok"] as const) expect(byoKeyRequired(p)).toBe(true);
+  });
+  it("leaves the key optional for local and other OpenAI-compatible servers", () => {
+    for (const p of ["ollama", "gpustack", "custom"] as const) expect(byoKeyRequired(p)).toBe(false);
   });
 });
