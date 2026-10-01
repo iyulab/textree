@@ -124,7 +124,7 @@ public sealed class HealthDownloadTests
     }
 
     // ── Test host: replaces IEmbedderLoader and/or ModelStatus with stubs ──
-    private sealed class TextreeHostFactory : WebApplicationFactory<Program>
+    private sealed class TextreeHostFactory : HostFactory
     {
         private readonly IEmbedderLoader? _loader;
         private readonly ModelStatus? _modelStatus;
@@ -144,6 +144,7 @@ public sealed class HealthDownloadTests
 
         protected override void ConfigureWebHost(Microsoft.AspNetCore.Hosting.IWebHostBuilder builder)
         {
+            base.ConfigureWebHost(builder);
             builder.ConfigureTestServices(services =>
             {
                 if (_loader is not null)

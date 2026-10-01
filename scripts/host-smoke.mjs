@@ -21,6 +21,7 @@
  * this one. `--any-build` runs it anyway, and the verdict line says what was tested.
  */
 import { spawn, spawnSync } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
@@ -71,6 +72,10 @@ ${output.slice(-3000)}`);
 
 const port = await freePort();
 const base = `http://127.0.0.1:${port}`;
+// The host serves only whoever started it: a fresh token, as the app hands one to each run.
+const token = randomBytes(32).toString("base64url");
+const auth = { authorization: `Bearer ${token}` };
+const hostEnv = { ...process.env, TEXTREE_HOST_TOKEN: token };
 const vault = mkdtempSync(join(tmpdir(), "textree-host-smoke-"));
 writeFileSync(join(vault, "garden.md"), "# Garden\nTomatoes need full sun and regular watering.\n");
 writeFileSync(join(vault, "taxes.md"), "# Taxes\nFile the quarterly estimate before the deadline.\n");
@@ -78,9 +83,10 @@ const slashed = vault.replace(/\\/g, "/");
 
 console.log(`[host:smoke] starting ${EXE ?? "the host project"} on ${base}`);
 const host = EXE
-  ? spawn(EXE, ["--urls", base], { stdio: ["ignore", "pipe", "pipe"] })
+  ? spawn(EXE, ["--urls", base], { stdio: ["ignore", "pipe", "pipe"], env: hostEnv })
   : spawn("dotnet", ["run", "--project", PROJECT, "--", "--urls", base], {
       stdio: ["ignore", "pipe", "pipe"],
+      env: hostEnv,
       shell: process.platform === "win32",
     });
 host.stdout.on("data", (d) => (output += d));
@@ -89,14 +95,14 @@ host.stderr.on("data", (d) => (output += d));
 const post = (path, body) =>
   fetch(base + path, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", ...auth },
     body: body === undefined ? undefined : JSON.stringify(body),
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   }).catch((err) => fail(`${path} got no answer (${err.name}) — host ${host.exitCode === null ? "still running" : `exited ${host.exitCode}`}`));
 
 async function health() {
   try {
-    return await (await fetch(`${base}/health`, { signal: AbortSignal.timeout(5000) })).json();
+    return await (await fetch(`${base}/health`, { headers: auth, signal: AbortSignal.timeout(5000) })).json();
   } catch {
     return null;
   }
@@ -158,7 +164,7 @@ try {
   console.log("[host:smoke] a cut-off answer says why it ended");
   console.log(provenance && provenance.verdict !== "current" ? "[host:smoke] OK — but for the exe above, not a known build of the current source" : "[host:smoke] OK");
 } finally {
-  await fetch(`${base}/shutdown`, { method: "POST", signal: AbortSignal.timeout(5000) }).catch(() => {});
+  await fetch(`${base}/shutdown`, { method: "POST", headers: auth, signal: AbortSignal.timeout(5000) }).catch(() => {});
   for (let i = 0; i < 20 && host.exitCode === null; i++) await sleep(500);
   // `dotnet run` goes through a shell on Windows: killing the shell leaves the host running,
   // holding the build output locked. End the whole tree.

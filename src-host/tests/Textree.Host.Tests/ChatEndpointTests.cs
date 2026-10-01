@@ -173,7 +173,7 @@ public sealed class ChatEndpointTests
     }
 
     // ── Test host: swaps the real generator for a stub via ConfigureTestServices ──────
-    public sealed class Factory : WebApplicationFactory<Program>
+    public sealed class Factory : HostFactory
     {
         private readonly ITextGenerator _generator;
 
@@ -181,6 +181,7 @@ public sealed class ChatEndpointTests
 
         protected override void ConfigureWebHost(Microsoft.AspNetCore.Hosting.IWebHostBuilder builder)
         {
+            base.ConfigureWebHost(builder);
             builder.ConfigureTestServices(services =>
             {
                 services.RemoveAll<ITextGenerator>();

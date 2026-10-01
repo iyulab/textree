@@ -5,6 +5,7 @@ using Textree.Host;
 using Textree.Host.Contracts;
 using Textree.Host.Rag;
 using Textree.Host.Telemetry;
+using TauriKit.Sidecar.Loopback;
 // Program.cs also constructs Textree.Host.Rag.ChatMessage below (the /chat DTO mapping); alias
 // M.E.AI's IChatClient explicitly rather than `using Microsoft.Extensions.AI;`, which would make
 // the unqualified `ChatMessage` reference ambiguous between the two types.
@@ -76,6 +77,19 @@ else
 }
 
 var app = builder.Build();
+
+// Only the desktop app that started this process may call it. Listening on 127.0.0.1 keeps other
+// machines out, not other programs on this one — any of them, under any account, could otherwise
+// index or search a folder of its choosing as this user, or spend the user's AI key. The app hands
+// a fresh token to each run; every request must carry it. Read after Build so a test host's
+// settings count. Without a token the host refuses to start rather than serve everyone.
+var hostToken = app.Configuration[HostToken.Setting];
+if (string.IsNullOrEmpty(hostToken) || hostToken.Length < HostToken.MinimumLength)
+{
+    throw new InvalidOperationException(
+        $"{HostToken.Setting} is missing or shorter than {HostToken.MinimumLength} characters; the host serves only the app that started it.");
+}
+app.UseBearerToken(hostToken);
 
 // Background embedder load — host starts listening immediately.
 // The background task resolves IEmbedderLoader from the DI container so that
