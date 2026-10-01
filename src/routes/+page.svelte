@@ -160,7 +160,6 @@
   $effect(() => {
     liveDoc = content;
   });
-  let frontmatter = $derived(parseFrontmatter(liveDoc));
   // Reading view toggle (ephemeral, per-session) — clean read-only render vs. live-preview editing.
   let reading = $state(false);
   let activeName = $state("");
@@ -196,6 +195,8 @@
   let viewingAlternative = $derived(
     viewing === null ? null : (alternatives.find((a) => a.id === viewing?.alternative.id) ?? viewing.alternative),
   );
+  // The page header shows what is in the editor: the alternative's own title and icon while it is open.
+  let frontmatter = $derived(parseFrontmatter(viewing ? altLive : liveDoc));
 
   /** Shows `alternative` in the editor in place of its note: its draft if one is kept, else its last version. */
   async function openAlternative(alternative: NoteAlternative) {

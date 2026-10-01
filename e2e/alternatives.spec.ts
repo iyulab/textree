@@ -184,3 +184,26 @@ test("alternatives: go back and forth — what is typed stays with the alternati
     removeTempVault(vault);
   }
 });
+
+test("alternatives: the page header shows the title of what is open — the alternative's, then the note's", async () => {
+  const vault = createTempVault({ "plan.md": "---\ntitle: Plan A\n---\n\nThe first plan.\n" });
+  try {
+    await loadVault(page, vault);
+    await page.getByRole("treeitem", { name: /plan/ }).click();
+    await expectOpenNote(page, "plan");
+    await expect(page.locator(".page-title")).toHaveText("Plan A");
+    await addVersion(page);
+    await command(page, ">start an alternative");
+    await expect(page.getByTestId("alternative-viewing")).toBeVisible();
+
+    await typeInEditor(page, "---\ntitle: Plan B\n---\n\nA second plan.\n");
+    await expect(page.locator(".page-title")).toHaveText("Plan B");
+
+    await page.getByTestId("alternative-back").click();
+    await expect(page.getByTestId("alternative-viewing")).toHaveCount(0);
+    await expect(page.locator(".page-title")).toHaveText("Plan A");
+    expect(readVaultFile(vault, "plan.md")).toContain("title: Plan A");
+  } finally {
+    removeTempVault(vault);
+  }
+});
