@@ -3,16 +3,16 @@
     <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
   </PropertyGroup>
   <ItemGroup>
-    <PackageVersion Include="FluxIndex.Core" Version="0.57.0" />
-    <PackageVersion Include="FluxIndex.Storage.SQLite" Version="0.57.0" />
-    <PackageVersion Include="FluxIndex.Providers.LMSupply" Version="0.57.0" />
-    <PackageVersion Include="FluxFeed" Version="0.35.9" />
-    <PackageVersion Include="FileFlux" Version="0.31.7" />
-    <PackageVersion Include="LMSupply.Embedder" Version="0.85.0" />
-    <PackageVersion Include="LMSupply.Generator" Version="0.85.0" />
-    <PackageVersion Include="LMSupply.Generator.Onnx" Version="0.85.0" />
-    <PackageVersion Include="IronProw.LMSupply" Version="0.8.3" />
-    <PackageVersion Include="IronProw.IronHive" Version="0.8.3" />
+    <PackageVersion Include="FluxIndex.Core" Version="0.66.0" />
+    <PackageVersion Include="FluxIndex.Storage.SQLite" Version="0.66.0" />
+    <PackageVersion Include="FluxIndex.Providers.LMSupply" Version="0.66.0" />
+    <PackageVersion Include="FluxFeed" Version="0.39.2" />
+    <PackageVersion Include="FileFlux" Version="0.33.10" />
+    <PackageVersion Include="LMSupply.Embedder" Version="0.97.0" />
+    <PackageVersion Include="LMSupply.Generator" Version="0.97.0" />
+    <PackageVersion Include="LMSupply.Generator.Onnx" Version="0.97.0" />
+    <PackageVersion Include="IronProw.LMSupply" Version="0.10.6" />
+    <PackageVersion Include="IronProw.IronHive" Version="0.10.6" />
     <PackageVersion Include="sqlite-vec" Version="0.1.7-alpha.2.1" />
     <PackageVersion Include="Microsoft.Data.Sqlite" Version="10.0.12" />
   </ItemGroup>
