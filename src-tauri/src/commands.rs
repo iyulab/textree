@@ -2224,8 +2224,15 @@ pub fn add_alternative_version(
     let repo = prepared.repo();
     let (author, committer) =
         crate::git_engine::commit_identities(repo).map_err(|e| e.message().to_string())?;
+    let _turn = crate::drafts::TURN.lock().unwrap_or_else(|e| e.into_inner());
     let oid = crate::alternatives::record(repo, &id, text.as_bytes(), &message, &author, &committer)
         .map_err(|e| e.message().to_string())?;
+    // The draft is now a version — unless something newer was typed since this text was taken.
+    let alternative = crate::alternatives::get(repo, &id).map_err(|e| e.message().to_string())?;
+    let file = draft_file(&drafts_dir(Path::new(&root))?, &alternative)?;
+    if crate::drafts::read(&file).map_err(|e| e.to_string())?.as_deref() == Some(text.as_str()) {
+        forget_draft(&drafts_dir(Path::new(&root))?, &id);
+    }
     Ok(oid.map(|o| o.to_string()))
 }
 
@@ -2247,6 +2254,10 @@ pub fn use_alternative(root: String, path: String, id: String) -> Result<(), Str
     if alternative.path != crate::git_engine::slashed(&prepared.path_in_repo(Path::new(&rel))) {
         return Err("that alternative belongs to another note".into());
     }
+    let _turn = crate::drafts::TURN.lock().unwrap_or_else(|e| e.into_inner());
+    let drafts = drafts_dir(root_p)?;
+    add_draft_as_version(repo, &drafts, &alternative)?;
+    let alternative = crate::alternatives::get(repo, &id).map_err(|e| e.message().to_string())?;
     let chosen = crate::alternatives::content(repo, &alternative)
         .map_err(|e| e.message().to_string())?
         .ok_or_else(|| "that alternative holds no version of its note".to_string())?;
@@ -2256,16 +2267,80 @@ pub fn use_alternative(root: String, path: String, id: String) -> Result<(), Str
     let (author, committer) =
         crate::git_engine::commit_identities(repo).map_err(|e| e.message().to_string())?;
     crate::alternatives::pick(repo, &id, &author, &committer).map_err(|e| e.message().to_string())?;
+    forget_draft(&drafts, &id);
     log::info!("use_alternative: {rel} from {id}");
     Ok(())
 }
 
 /// Ends an alternative without using it. The note stays as it is; the alternative is kept.
+///
+/// What was still being typed into it is added to it as a version first, so the ended alternative
+/// keeps it.
 pub fn set_aside_alternative(root: String, id: String) -> Result<(), String> {
-    let prepared = writable_history(Path::new(&root))?;
-    crate::alternatives::end(prepared.repo(), &id).map_err(|e| e.message().to_string())?;
+    let root_p = Path::new(&root);
+    let prepared = writable_history(root_p)?;
+    let repo = prepared.repo();
+    let _turn = crate::drafts::TURN.lock().unwrap_or_else(|e| e.into_inner());
+    let drafts = drafts_dir(root_p)?;
+    let alternative = crate::alternatives::get(repo, &id).map_err(|e| e.message().to_string())?;
+    add_draft_as_version(repo, &drafts, &alternative)?;
+    crate::alternatives::end(repo, &id).map_err(|e| e.message().to_string())?;
+    forget_draft(&drafts, &id);
     log::info!("set_aside_alternative: {id}");
     Ok(())
+}
+
+fn drafts_dir(root: &Path) -> Result<PathBuf, String> {
+    Ok(personal_dir(root)?.join(crate::drafts::DIR))
+}
+
+fn draft_file(drafts: &Path, alternative: &crate::alternatives::Alternative) -> Result<PathBuf, String> {
+    crate::drafts::file(drafts, &alternative.id, &alternative.path)
+        .ok_or_else(|| "that alternative's note cannot be kept here".to_string())
+}
+
+/// Adds what is being typed into `alternative` to it as a version, when there is anything.
+fn add_draft_as_version(
+    repo: &git2::Repository,
+    drafts: &Path,
+    alternative: &crate::alternatives::Alternative,
+) -> Result<(), String> {
+    let Some(text) = crate::drafts::read(&draft_file(drafts, alternative)?).map_err(|e| e.to_string())? else {
+        return Ok(());
+    };
+    let (author, committer) =
+        crate::git_engine::commit_identities(repo).map_err(|e| e.message().to_string())?;
+    crate::alternatives::record(repo, &alternative.id, text.as_bytes(), "Alternative version", &author, &committer)
+        .map_err(|e| e.message().to_string())?;
+    Ok(())
+}
+
+/// The draft is in the ended alternative by now; one left behind costs nothing but space.
+fn forget_draft(drafts: &Path, id: &str) {
+    if let Err(e) = crate::drafts::remove(drafts, id) {
+        log::warn!("alternative {id}: its draft could not be removed: {e}");
+    }
+}
+
+/// What is being typed into an alternative, or `None` when nothing is — it then holds just its
+/// last version (see [`alternative_text`]).
+pub fn alternative_draft(root: String, id: String) -> Result<Option<String>, String> {
+    let root_p = Path::new(&root);
+    let prepared = history_repo(root_p)?.ok_or_else(|| "no such alternative".to_string())?;
+    let alternative = crate::alternatives::get(prepared.repo(), &id).map_err(|e| e.message().to_string())?;
+    crate::drafts::read(&draft_file(&drafts_dir(root_p)?, &alternative)?).map_err(|e| e.to_string())
+}
+
+/// Keeps what is being typed into an alternative, outside the folder. The note is not touched.
+pub fn write_alternative_draft(root: String, id: String, text: String) -> Result<(), String> {
+    let root_p = Path::new(&root);
+    let prepared = history_repo(root_p)?.ok_or_else(|| "no such alternative".to_string())?;
+    if !crate::state_dir::writable(&personal_dir(root_p)?).map_err(|e| e.to_string())? {
+        return Err(NEWER_SETTINGS.into());
+    }
+    let _turn = crate::drafts::TURN.lock().unwrap_or_else(|e| e.into_inner());
+    let alternative = crate::alternatives::get(prepared.repo(), &id).map_err(|e| e.message().to_string())?;
+    atomic_write_beside(&draft_file(&drafts_dir(root_p)?, &alternative)?, &text).map_err(|e| e.to_string())
 }
 
 /// Brings a deleted note back into the folder.
@@ -3561,6 +3636,78 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&a).unwrap(), "mine");
         assert!(list_alternatives(root_s.clone()).unwrap().is_empty());
         assert!(use_alternative(root_s, a, alt.id).is_err(), "one that ended cannot be used");
+    }
+
+    #[test]
+    fn what_is_typed_into_an_alternative_stays_out_of_the_folder_until_it_is_a_version() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        git2::Repository::init(root).unwrap();
+        let root_s = root.to_string_lossy().to_string();
+
+        let note = record_note(root, "a.md", "mine");
+        let alt = start_alternative(root_s.clone(), note.clone()).unwrap();
+        assert_eq!(alternative_draft(root_s.clone(), alt.id.clone()).unwrap(), None);
+
+        write_alternative_draft(root_s.clone(), alt.id.clone(), "half a thought".into()).unwrap();
+        assert_eq!(
+            alternative_draft(root_s.clone(), alt.id.clone()).unwrap().as_deref(),
+            Some("half a thought")
+        );
+        assert_eq!(std::fs::read_to_string(&note).unwrap(), "mine", "the note is the other side");
+        assert_eq!(alternative_text(root_s.clone(), alt.id.clone()).unwrap(), "mine");
+        let in_folder: Vec<_> = std::fs::read_dir(root).unwrap().flatten().map(|e| e.file_name()).collect();
+        assert_eq!(in_folder.len(), 2, "only the note and the repository: {in_folder:?}");
+
+        // Adding exactly what was typed makes it a version and lets the draft go.
+        add_alternative_version(root_s.clone(), alt.id.clone(), "half a thought".into(), "v".into()).unwrap();
+        assert_eq!(alternative_text(root_s.clone(), alt.id.clone()).unwrap(), "half a thought");
+        assert_eq!(alternative_draft(root_s.clone(), alt.id.clone()).unwrap(), None);
+
+        // Typed on after the text was taken: the newer draft is kept.
+        write_alternative_draft(root_s.clone(), alt.id.clone(), "a whole thought".into()).unwrap();
+        add_alternative_version(root_s.clone(), alt.id.clone(), "half a thought, then".into(), "v".into())
+            .unwrap();
+        assert_eq!(
+            alternative_draft(root_s, alt.id).unwrap().as_deref(),
+            Some("a whole thought")
+        );
+    }
+
+    #[test]
+    fn ending_an_alternative_keeps_what_was_still_being_typed_into_it() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        git2::Repository::init(root).unwrap();
+        let root_s = root.to_string_lossy().to_string();
+
+        // Used: the note gets what was last typed, not the last version.
+        let a = record_note(root, "a.md", "mine");
+        let used = start_alternative(root_s.clone(), a.clone()).unwrap();
+        write_alternative_draft(root_s.clone(), used.id.clone(), "typed, never added".into()).unwrap();
+        use_alternative(root_s.clone(), a.clone(), used.id.clone()).unwrap();
+        assert_eq!(std::fs::read_to_string(&a).unwrap(), "typed, never added");
+        assert!(alternative_draft(root_s.clone(), used.id.clone()).is_err(), "it has ended");
+
+        // Set aside: the note stays, and the ended alternative holds what was typed.
+        let b = record_note(root, "b.md", "bee");
+        let aside = start_alternative(root_s.clone(), b.clone()).unwrap();
+        write_alternative_draft(root_s.clone(), aside.id.clone(), "an idea for later".into()).unwrap();
+        set_aside_alternative(root_s.clone(), aside.id.clone()).unwrap();
+        assert_eq!(std::fs::read_to_string(&b).unwrap(), "bee");
+        let repo = git2::Repository::open(root).unwrap();
+        let ended = crate::alternatives::ended(&repo).unwrap();
+        let kept = ended.iter().find(|e| e.id == aside.id).expect("kept as ended");
+        assert_eq!(
+            crate::alternatives::content(&repo, kept).unwrap().as_deref(),
+            Some("an idea for later".as_bytes())
+        );
+        // Nothing is left behind for either.
+        let drafts = drafts_dir(root).unwrap();
+        assert!(!drafts.join(&used.id).exists() && !drafts.join(&aside.id).exists());
+        // And nothing more can be typed into one that ended.
+        assert!(write_alternative_draft(root_s, aside.id.clone(), "late".into()).is_err());
+        assert!(!drafts.join(&aside.id).exists());
     }
 
     #[test]

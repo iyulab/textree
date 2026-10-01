@@ -34,6 +34,10 @@
     listStranded,
     listAlternatives,
     startAlternative,
+    alternativeText,
+    alternativeDraft,
+    writeAlternativeDraft,
+    addAlternativeVersion,
     type NoteAlternative,
     type TreeNode,
     type SearchHit,
@@ -65,6 +69,7 @@
   import VersionHistory from "$lib/VersionHistory.svelte";
   import Alternatives from "$lib/Alternatives.svelte";
   import { noticeFor } from "$lib/alternatives.helpers";
+  import { DraftWriter } from "$lib/alternativeDraft.helpers";
   import DeletedNotes from "$lib/DeletedNotes.svelte";
   import MigrationNotice from "$lib/MigrationNotice.svelte";
   import Settings from "$lib/Settings.svelte";
@@ -182,6 +187,96 @@
   let comparingAlternative = $derived(
     comparing === null ? null : (alternatives.find((a) => a.id === comparing) ?? null),
   );
+  // The alternative open in the editor in place of its note, when one is. What is typed goes to
+  // its draft (outside the folder), never to the note; going back to the note leaves it there.
+  type Viewing = { alternative: NoteAlternative; notePath: string; initial: string; writer: DraftWriter };
+  let viewing = $state<Viewing | null>(null);
+  let altLive = $state("");
+  let altFailure = $state<string | null>(null);
+  let viewingAlternative = $derived(
+    viewing === null ? null : (alternatives.find((a) => a.id === viewing?.alternative.id) ?? viewing.alternative),
+  );
+
+  /** Shows `alternative` in the editor in place of its note: its draft if one is kept, else its last version. */
+  async function openAlternative(alternative: NoteAlternative) {
+    const atRoot = root;
+    const notePath = activePath;
+    if (!atRoot || !notePath) return;
+    altFailure = null;
+    try {
+      const [recorded, draft] = await Promise.all([
+        alternativeText(atRoot, alternative.id),
+        alternativeDraft(atRoot, alternative.id),
+      ]);
+      if (root !== atRoot || activePath !== notePath) return; // moved on meanwhile
+      const initial = draft ?? recorded;
+      content = liveDoc; // the note's editor is rebuilt from this when it comes back
+      comparing = null;
+      altLive = initial;
+      viewing = {
+        alternative,
+        notePath,
+        initial,
+        writer: new DraftWriter(atRoot, alternative.id, writeAlternativeDraft, (e) => {
+          altFailure = `What you typed in the alternative is not kept yet: ${friendlyError(e).summary}`;
+        }),
+      };
+    } catch (e) {
+      versionNotice = friendlyError(e).summary;
+    }
+  }
+
+  function handleAltEdit(text: string) {
+    altLive = text;
+    viewing?.writer.schedule(text);
+  }
+
+  /** Back to the note. What was typed in the alternative stays in its draft — nothing is asked. */
+  async function backToNote() {
+    const was = viewing;
+    if (!was) return;
+    if (!(await was.writer.flush())) return; // not kept yet: stay, the failure is on screen
+    if (viewing === was) {
+      viewing = null;
+      altFailure = null;
+    }
+  }
+
+  /** Adds what the alternative holds on screen to it as a version. */
+  async function addVersionOfAlternative() {
+    const was = viewing;
+    if (!was) return;
+    altFailure = null;
+    try {
+      await was.writer.flush();
+      const added = await addAlternativeVersion(was.writer.root, was.alternative.id, altLive, "Alternative version");
+      versionNotice = added === null ? "The alternative already holds exactly this." : "Version added to the alternative.";
+      await refreshAlternatives();
+      if (root) void backupStore.syncIfConnected(root);
+    } catch (e) {
+      altFailure = friendlyError(e).summary;
+    }
+  }
+
+  /** Before an alternative ends from the comparison: what was typed into it must be in its draft. */
+  async function settleAlternativeDraft(id: string): Promise<boolean> {
+    if (viewing?.alternative.id !== id) return true;
+    return viewing.writer.flush();
+  }
+
+  // Leaving the note (or the folder) leaves the alternative too; what is owed is still written,
+  // to the folder and alternative it was typed for.
+  $effect(() => {
+    const path = activePath;
+    const folder = root;
+    const was = untrack(() => viewing);
+    if (was && (folder !== was.writer.root || path === null || !samePath(path, was.notePath))) {
+      void was.writer.flush();
+      viewing = null;
+      altFailure = null;
+    }
+  });
+
   let alternativeReads = 0;
   async function refreshAlternatives() {
     const asking = root;
@@ -189,7 +284,14 @@
     if (!asking) return;
     try {
       const found = await listAlternatives(asking);
-      if (mine === alternativeReads && asking === root) alternatives = found;
+      if (mine === alternativeReads && asking === root) {
+        alternatives = found;
+        // Ended — used or set aside, here or by an exchange: there is nothing left to show.
+        if (viewing && !found.some((a) => a.id === viewing?.alternative.id)) {
+          viewing = null;
+          altFailure = null;
+        }
+      }
     } catch (e) {
       console.warn("Could not read alternatives:", e);
     }
@@ -1291,7 +1393,8 @@
     publishToWeb: () => { void publishToWeb(); },
     openDeletedNotes: () => { showDeletedNotes = true; },
     hasOpenNote: () => root !== null && activePath !== null,
-    addVersion: () => { void startAddVersion(); },
+    // While the alternative is in the editor, a version is added to what is being written there.
+    addVersion: () => { void (viewing ? addVersionOfAlternative() : startAddVersion()); },
     openVersionHistory: () => { showVersionHistory = true; },
     startAlternative: () => { void beginAlternative(); },
     openLogDir: () => { void openLogDir(); },
@@ -1305,7 +1408,7 @@
     try {
       const started = await startAlternative(root, activePath);
       await refreshAlternatives();
-      comparing = started.id;
+      await openAlternative(started);
     } catch (e) {
       versionNotice = friendlyError(e).summary;
     }
@@ -1522,6 +1625,16 @@
 
     const win = getCurrentWindow();
     const unlistenClose = win.onCloseRequested(async (event) => {
+      // What was typed into an alternative is written first; if it cannot be, the window stays open
+      // with the failure on screen.
+      if (viewing?.writer.pending) {
+        event.preventDefault();
+        if (!(await viewing.writer.flush())) return;
+        if (!save.pending && save.stranded === 0 && save.writing === 0) {
+          await win.destroy();
+          return;
+        }
+      }
       if (!save.pending && save.stranded === 0 && save.writing === 0) return; // nothing to save → proceed with default close
       event.preventDefault();
       // Unsaved edits keep the window open, with the banner or warning saying why (see beforeClosing).
@@ -1942,10 +2055,31 @@
           </span>
         </div>
       {/if}
-      {#if altNotice && comparing === null}
+      {#if viewingAlternative}
+        <div class="banner" role="status" data-testid="alternative-viewing">
+          <span>
+            {viewingAlternative.arrived
+              ? "You are looking at the version from elsewhere."
+              : "You are writing the alternative of this note."}
+          </span>
+          <span class="banner-actions">
+            {#if !viewingAlternative.arrived}
+              <button onclick={() => void addVersionOfAlternative()} data-testid="alternative-add-version">Add version</button>
+            {/if}
+            {#if comparing === null}
+              <button onclick={() => (comparing = viewingAlternative?.id ?? null)} data-testid="alternative-compare">Compare</button>
+            {/if}
+            <button onclick={() => void backToNote()} data-testid="alternative-back">Back to this note</button>
+          </span>
+        </div>
+        {#if altFailure}
+          <p class="hint" role="alert" data-testid="alternative-failure">{altFailure}</p>
+        {/if}
+      {:else if altNotice && comparing === null}
         <div class="banner" role="status" data-testid="alternative-notice">
           <span>{altNotice.text}</span>
           <span class="banner-actions">
+            <button onclick={() => { if (altNotice) void openAlternative(altNotice.alternative); }} data-testid="alternative-open">Open it</button>
             <button onclick={() => (comparing = altNotice?.alternative.id ?? null)} data-testid="alternative-compare">Compare</button>
           </span>
         </div>
@@ -1959,6 +2093,18 @@
         />
         <div class="note-body">
           <div class="editor-pane">
+            {#if viewing}
+              <Editor
+                docKey={`alternative:${viewing.alternative.id}`}
+                initialDoc={viewing.initial}
+                editable={!viewing.alternative.arrived}
+                {reading}
+                {notePaths}
+                onchange={handleAltEdit}
+                onImagePaste={handleImagePaste}
+                onWikiLink={handleWikiLink}
+              />
+            {:else}
             <Editor
               docKey={`${activePath}@${reloadVersion}`}
               initialDoc={content}
@@ -1970,6 +2116,7 @@
               onWikiLink={handleWikiLink}
               onBlur={() => void maybeSyncH1Filename()}
             />
+            {/if}
           </div>
           <Backlinks
             links={backlinks.for(activePath ? toRelative(activePath) : null)}
@@ -2013,7 +2160,10 @@
           {root}
           path={activePath}
           alternative={comparingAlternative}
-          current={content}
+          current={liveDoc}
+          shown={viewing?.alternative.id === comparingAlternative.id ? altLive : null}
+          beforeEnding={() => settleAlternativeDraft(comparingAlternative.id)}
+          onopen={viewing ? undefined : () => void openAlternative(comparingAlternative)}
           dirty={saveState.dirty}
           onclose={() => { comparing = null; }}
           onchanged={(noteChanged) => {

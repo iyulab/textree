@@ -164,6 +164,19 @@ export async function alternativeText(root: string, id: string): Promise<string>
   return invoke<string>("alternative_text", { root, id });
 }
 
+/**
+ * What is being typed into an alternative — kept outside the folder until it is added as a version.
+ * Null when nothing is: the alternative then holds just {@link alternativeText}.
+ */
+export async function alternativeDraft(root: string, id: string): Promise<string | null> {
+  return invoke<string | null>("alternative_draft", { root, id });
+}
+
+/** Keeps what is being typed into an alternative. The note's file is not touched. */
+export async function writeAlternativeDraft(root: string, id: string, text: string): Promise<void> {
+  return invoke<void>("write_alternative_draft", { root, id, text });
+}
+
 /** Adds a version to an alternative. Null when it already holds exactly this. */
 export async function addAlternativeVersion(
   root: string,
@@ -176,13 +189,17 @@ export async function addAlternativeVersion(
 
 /**
  * Makes an alternative's version the note — written to the file and recorded as one new
- * version — and ends the alternative. What was on disk is kept first.
+ * version — and ends the alternative. What was on disk is kept first, and what was still being
+ * typed into the alternative is its version.
  */
 export async function useAlternative(root: string, path: string, id: string): Promise<void> {
   return invoke<void>("use_alternative", { root, path, id });
 }
 
-/** Ends an alternative without using it. The note stays as it is; the alternative is kept. */
+/**
+ * Ends an alternative without using it. The note stays as it is; the alternative is kept, with
+ * what was still being typed into it.
+ */
 export async function setAsideAlternative(root: string, id: string): Promise<void> {
   return invoke<void>("set_aside_alternative", { root, id });
 }

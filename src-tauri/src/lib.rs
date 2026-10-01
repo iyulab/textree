@@ -3,6 +3,7 @@ pub(crate) mod byo_secret;
 pub(crate) mod cloud_auth;
 pub(crate) mod cloud_publish;
 pub(crate) mod commands;
+pub(crate) mod drafts;
 pub(crate) mod host;
 pub(crate) mod fs_ops;
 #[cfg(test)]
@@ -111,6 +112,8 @@ pub fn run() {
             tree_commands::list_alternatives,
             tree_commands::start_alternative,
             tree_commands::alternative_text,
+            tree_commands::alternative_draft,
+            tree_commands::write_alternative_draft,
             tree_commands::add_alternative_version,
             tree_commands::use_alternative,
             tree_commands::set_aside_alternative,

@@ -7,7 +7,11 @@ import {
   removeTempVault,
   readVaultFile,
   expectOpenNote,
+  listVaultDir,
+  sidecarDir,
 } from "./helpers";
+import { existsSync, readdirSync } from "node:fs";
+import { join } from "node:path";
 
 /**
  * An alternative of a note: start one, work on it beside the note, compare word by word, and
@@ -41,19 +45,36 @@ async function addVersion(p: Page): Promise<void> {
   await expect(p.getByTestId("add-version")).toHaveCount(0);
 }
 
-/** Opens `name` and starts an alternative of it, with `text` added to the alternative. */
+/** Replaces what the editor shows with `text`. */
+async function typeInEditor(p: Page, text: string): Promise<void> {
+  await p.locator(".cm-content").click();
+  await p.keyboard.press("Control+a");
+  await p.keyboard.insertText(text);
+}
+
+/**
+ * Opens `name` and starts an alternative of it — which opens it in the editor in place of the
+ * note — with `text` added to the alternative, then compares the two.
+ */
 async function startWith(p: Page, vault: string, name: string, text: string): Promise<void> {
   await loadVault(p, vault);
   await p.getByRole("treeitem", { name: new RegExp(name) }).click();
   await expectOpenNote(p, name);
   await addVersion(p);
   await command(p, ">start an alternative");
-  const panel = p.getByTestId("alternatives");
-  await expect(panel).toBeVisible();
-  await p.getByTestId("alternative-edit").click();
-  await p.getByTestId("alternative-editor").fill(text);
+  await expect(p.getByTestId("alternative-viewing")).toContainText("writing the alternative");
+  await typeInEditor(p, text);
   await p.getByTestId("alternative-add-version").click();
-  await expect(p.getByTestId("alternative-editor")).toHaveCount(0);
+  await expect(p.getByTestId("version-notice")).toContainText("Version added to the alternative.");
+  await p.getByTestId("alternative-compare").click();
+  await expect(p.getByTestId("alternatives")).toBeVisible();
+}
+
+/** The notes whose alternative drafts are kept for `vault`, outside it. */
+function draftsKept(vault: string): string[] {
+  const dir = join(sidecarDir(vault), "drafts");
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir).flatMap((id) => readdirSync(join(dir, id)));
 }
 
 function refsUnder(vault: string, prefix: string): string[] {
@@ -90,8 +111,9 @@ test("alternatives: set one aside and the note stays; an open one is announced o
   try {
     await startWith(page, vault, "idea", "# Idea\n\nA much longer version.\n");
 
-    // Closed, the note says it has an alternative, and Compare opens it again.
+    // Back on the note, it says it has an alternative, and Compare opens it again.
     await page.getByRole("button", { name: "Close comparison" }).click();
+    await page.getByTestId("alternative-back").click();
     await expect(page.getByTestId("alternative-notice")).toContainText("You have an alternative of this note.");
     await page.getByTestId("alternative-compare").click();
     await expect(page.getByTestId("alternative-text")).toContainText("much longer");
@@ -116,6 +138,48 @@ test("alternatives: a note never added as a version says so instead of starting 
     await command(page, ">start an alternative");
     await expect(page.getByTestId("version-notice")).toContainText("add a version of this note first");
     await expect(page.getByTestId("alternatives")).toHaveCount(0);
+  } finally {
+    removeTempVault(vault);
+  }
+});
+
+test("alternatives: go back and forth — what is typed stays with the alternative, the note is untouched", async () => {
+  const vault = createTempVault({ "draft.md": "# Draft\n\nThe note as it is.\n" });
+  try {
+    await loadVault(page, vault);
+    await page.getByRole("treeitem", { name: /draft/ }).click();
+    await expectOpenNote(page, "draft");
+    await addVersion(page);
+    await command(page, ">start an alternative");
+    await expect(page.getByTestId("alternative-viewing")).toBeVisible();
+
+    // Typed, never added as a version, and nothing asked on the way back.
+    await typeInEditor(page, "# Draft\n\nA different take, half done.\n");
+    await page.getByTestId("alternative-back").click();
+    await expect(page.getByTestId("alternative-viewing")).toHaveCount(0);
+    await expect(page.locator(".cm-content")).toContainText("The note as it is.");
+    expect(readVaultFile(vault, "draft.md")).toContain("The note as it is.");
+    // Kept outside the folder, under the alternative.
+    await expect.poll(() => draftsKept(vault)).toEqual(["draft.md"]);
+    expect(listVaultDir(vault, "").sort()).toEqual([".git", "draft.md"]);
+
+    // Coming back picks it up where it was left.
+    await expect(page.getByTestId("alternative-notice")).toContainText("You have an alternative of this note.");
+    await page.getByTestId("alternative-open").click();
+    await expect(page.locator(".cm-content")).toContainText("A different take, half done.");
+
+    // Set aside from the comparison: the ended alternative holds what was typed, and the draft goes.
+    await page.getByTestId("alternative-compare").click();
+    await expect(page.getByTestId("alternative-text")).toContainText("half done");
+    await page.getByTestId("alternative-set-aside").click();
+    await expect(page.getByTestId("alternative-viewing")).toHaveCount(0);
+    await expect(page.locator(".cm-content")).toContainText("The note as it is.");
+    expect(readVaultFile(vault, "draft.md")).toContain("The note as it is.");
+    const [ended] = refsUnder(vault, "refs/textree/ended/");
+    expect(execFileSync("git", ["-C", vault, "show", `${ended}:draft.md`], { encoding: "utf8" })).toContain(
+      "half done",
+    );
+    await expect.poll(() => draftsKept(vault)).toEqual([]);
   } finally {
     removeTempVault(vault);
   }

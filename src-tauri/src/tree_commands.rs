@@ -147,6 +147,17 @@ pub async fn alternative_text(root: String, id: String) -> Result<String, String
     off_main(move || commands::alternative_text(root, id)).await
 }
 
+/// What is being typed into an alternative is kept outside the folder.
+#[tauri::command]
+pub async fn alternative_draft(root: String, id: String) -> Result<Option<String>, String> {
+    off_main(move || commands::alternative_draft(root, id)).await
+}
+
+#[tauri::command]
+pub async fn write_alternative_draft(root: String, id: String, text: String) -> Result<(), String> {
+    off_main(move || commands::write_alternative_draft(root, id, text)).await
+}
+
 /// Adding a version to an alternative writes a reference only.
 #[tauri::command]
 pub async fn add_alternative_version(
