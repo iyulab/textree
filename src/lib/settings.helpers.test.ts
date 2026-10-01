@@ -1,4 +1,6 @@
 import { describe, it, expect } from "vitest";
+import { BYO_PRESET_IDS } from "./byoConfig";
+import presetFile from "./byo-presets.json";
 import {
   computeAiSectionState,
   themeButtons,
@@ -97,32 +99,29 @@ describe("presetDefaults", () => {
 });
 
 describe("presetDefaults frontier baseUrls", () => {
-  it("prefills openai", () => {
+  it("prefills every hosted provider with its own address", () => {
     expect(presetDefaults("openai").baseUrl).toBe("https://api.openai.com/v1");
-  });
-  it("prefills grok", () => {
     expect(presetDefaults("grok").baseUrl).toBe("https://api.x.ai/v1");
-  });
-  it("leaves gemini baseUrl blank (native SDK default)", () => {
-    expect(presetDefaults("gemini").baseUrl).toBe("");
-  });
-  it("leaves anthropic baseUrl blank (SDK default)", () => {
-    expect(presetDefaults("anthropic").baseUrl).toBe("");
+    expect(presetDefaults("anthropic").baseUrl).toBe("https://api.anthropic.com");
+    expect(presetDefaults("gemini").baseUrl).toBe("https://generativelanguage.googleapis.com");
   });
 });
 
 describe("isValidByoUrlForPreset", () => {
-  it("accepts a blank baseUrl for anthropic", () => {
-    expect(isValidByoUrlForPreset("anthropic", "")).toBe(true);
+  it("accepts a blank baseUrl for every preset with a default address", () => {
+    for (const p of ["ollama", "gpustack", "openai", "anthropic", "gemini", "grok"] as const) {
+      expect(isValidByoUrlForPreset(p, "")).toBe(true);
+    }
   });
-  it("accepts a blank baseUrl for gemini", () => {
-    expect(isValidByoUrlForPreset("gemini", "")).toBe(true);
-  });
-  it("rejects a blank baseUrl for non-anthropic/gemini presets", () => {
-    expect(isValidByoUrlForPreset("openai", "")).toBe(false);
+  it("rejects a blank baseUrl for custom, which has no default", () => {
+    expect(isValidByoUrlForPreset("custom", "")).toBe(false);
   });
   it("accepts a valid http(s) baseUrl for any preset", () => {
     expect(isValidByoUrlForPreset("openai", "https://api.openai.com/v1")).toBe(true);
+    expect(isValidByoUrlForPreset("custom", "http://lan:8080/v1")).toBe(true);
+  });
+  it("rejects a malformed baseUrl even where blank would do", () => {
+    expect(isValidByoUrlForPreset("openai", "not a url")).toBe(false);
   });
 });
 
@@ -179,5 +178,12 @@ describe("byoTestLabel", () => {
   it("carries the reason of a failed check", () => {
     expect(byoTestLabel({ ok: false, message: "The server didn't accept the API key." }))
       .toBe("✗ Connection failed: The server didn't accept the API key.");
+  });
+});
+
+describe("byo-presets.json", () => {
+  it("lists exactly the presets the app knows, in the order Settings offers them", () => {
+    expect(Object.keys(presetFile)).toEqual(["ollama", "gpustack", "openai", "anthropic", "gemini", "grok", "custom"]);
+    expect(BYO_PRESET_IDS).toEqual(Object.keys(presetFile));
   });
 });

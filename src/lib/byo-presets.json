@@ -1,0 +1,9 @@
+{
+  "ollama": { "label": "Ollama", "defaultBaseUrl": "http://localhost:11434", "apiKeyRequired": false },
+  "gpustack": { "label": "GPUStack", "defaultBaseUrl": "http://localhost:8080", "apiKeyRequired": false },
+  "openai": { "label": "OpenAI", "defaultBaseUrl": "https://api.openai.com/v1", "apiKeyRequired": true },
+  "anthropic": { "label": "Anthropic", "defaultBaseUrl": "https://api.anthropic.com", "apiKeyRequired": true },
+  "gemini": { "label": "Gemini", "defaultBaseUrl": "https://generativelanguage.googleapis.com", "apiKeyRequired": true },
+  "grok": { "label": "Grok", "defaultBaseUrl": "https://api.x.ai/v1", "apiKeyRequired": true },
+  "custom": { "label": "Custom", "defaultBaseUrl": "", "apiKeyRequired": false }
+}

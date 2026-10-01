@@ -12,8 +12,11 @@
   import {
     computeAiSectionState, themeButtons, planEmbeddingToggle, byoTestLabel,
     presetDefaults, isValidByoUrlForPreset, isValidByoModel, byoProviderBadge, byoKeyRequired,
+    byoBaseUrlOptional,
   } from "$lib/settings.helpers";
-  import { getByoConfig, setByoConfig, clearByoConfig, type ByoConfig, type ByoPreset } from "$lib/byoConfig";
+  import {
+    getByoConfig, setByoConfig, clearByoConfig, BYO_PRESETS, BYO_PRESET_IDS, type ByoConfig, type ByoPreset,
+  } from "$lib/byoConfig";
   import BackupPanel from "$lib/BackupPanel.svelte";
 
   interface Props {
@@ -311,20 +314,20 @@
         </label>
         {#if byoEnabled}
           <div class="seg-group" role="group" aria-label="Preset">
-            {#each (["ollama", "gpustack", "openai", "anthropic", "gemini", "grok", "custom"] as const) as p (p)}
+            {#each BYO_PRESET_IDS as p (p)}
               <button
                 type="button"
                 class="seg"
                 class:active={byoPreset === p}
                 aria-pressed={byoPreset === p}
                 onclick={() => onPresetChange(p)}
-              >{p}</button>
+              >{BYO_PRESETS[p].label}</button>
             {/each}
           </div>
           <label>
-            Base URL{#if byoPreset === "anthropic" || byoPreset === "gemini"} (optional){/if}
+            Base URL{#if byoBaseUrlOptional(byoPreset)} (optional){/if}
             <input type="text" bind:value={byoBaseUrl}
-              placeholder={byoPreset === "anthropic" || byoPreset === "gemini" ? "leave blank for the default endpoint" : "http://localhost:11434"} />
+              placeholder={byoBaseUrlOptional(byoPreset) ? BYO_PRESETS[byoPreset].defaultBaseUrl : "https://your-server/v1"} />
           </label>
           <label>
             Model (required)

@@ -6,7 +6,7 @@
  */
 import type { ThemeMode } from "./theme.svelte";
 import type { ByoConnectionTestResult, HostStatus } from "./ipc";
-import type { ByoPreset } from "./byoConfig";
+import { BYO_PRESETS, type ByoPreset } from "./byoConfig";
 
 export type AiBadge = "ready" | "preparing" | "unavailable";
 
@@ -73,19 +73,15 @@ export function planEmbeddingToggle(next: boolean, currentGenConsent: boolean): 
   return { nextAiConsent: false, nextGenConsent: false, host: "shutdown" };
 }
 
-const PRESET_DEFAULT_BASE_URL: Record<ByoPreset, string> = {
-  ollama: "http://localhost:11434",
-  gpustack: "http://localhost:8080",
-  openai: "https://api.openai.com/v1",
-  anthropic: "",
-  gemini: "",
-  grok: "https://api.x.ai/v1",
-  custom: "",
-};
-
-/** Prefill values for the preset segmented control in Settings ▸Advanced. */
+/** Prefill values for the preset segmented control in Settings ▸Advanced: the preset's own
+ * address, so what the AI helper will call is on screen. */
 export function presetDefaults(preset: ByoPreset): { baseUrl: string } {
-  return { baseUrl: PRESET_DEFAULT_BASE_URL[preset] };
+  return { baseUrl: BYO_PRESETS[preset].defaultBaseUrl };
+}
+
+/** Whether the preset works with the base URL left blank (the AI helper then uses its default). */
+export function byoBaseUrlOptional(preset: ByoPreset): boolean {
+  return BYO_PRESETS[preset].defaultBaseUrl !== "";
 }
 
 /** Minimal client-side sanity check before enabling the "Test connection"/"Save" buttons. */
@@ -98,10 +94,10 @@ export function isValidByoUrl(url: string): boolean {
   }
 }
 
-/** Anthropic and Gemini's native SDKs supply their own base URL, so a blank value is valid for
- * those presets only. Every other preset needs a concrete http(s) endpoint. */
+/** A blank base URL is valid for every preset that has a default address; otherwise it must be a
+ * concrete http(s) endpoint. */
 export function isValidByoUrlForPreset(preset: ByoPreset, url: string): boolean {
-  if ((preset === "anthropic" || preset === "gemini") && url.trim() === "") return true;
+  if (byoBaseUrlOptional(preset) && url.trim() === "") return true;
   return isValidByoUrl(url);
 }
 
@@ -109,7 +105,7 @@ export function isValidByoUrlForPreset(preset: ByoPreset, url: string): boolean 
  * OpenAI-compatible server) accepts none. The AI helper refuses a hosted preset without one, so
  * Save asks for it rather than letting the first chat fail. */
 export function byoKeyRequired(preset: ByoPreset): boolean {
-  return preset === "openai" || preset === "anthropic" || preset === "gemini" || preset === "grok";
+  return BYO_PRESETS[preset].apiKeyRequired;
 }
 
 /** Gates the Save button: a blank model has no real "provider default" to fall back on — the
@@ -123,11 +119,10 @@ export function isValidByoModel(model: string): boolean {
  * (Rust's #[derive(Default)] gives Mutex<String> "" rather than "local" — both map here). */
 export function byoProviderBadge(activeProvider: string): string {
   if (activeProvider === "" || activeProvider === "local") return "Local model";
-  const labels: Record<string, string> = {
-    ollama: "Ollama", gpustack: "GPUStack", openai: "OpenAI",
-    anthropic: "Anthropic", gemini: "Gemini", grok: "Grok",
-  };
-  return `Custom server (${labels[activeProvider] ?? activeProvider})`;
+  const label = Object.hasOwn(BYO_PRESETS, activeProvider)
+    ? BYO_PRESETS[activeProvider as ByoPreset].label
+    : activeProvider;
+  return `Custom server (${label})`;
 }
 
 /** The line under Settings ▸ Advanced "Test connection": checking, then what the check found. */

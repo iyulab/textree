@@ -158,14 +158,15 @@ test("selecting the openai preset prefills its base URL", async () => {
   await expect(dialog).toBeHidden();
 });
 
-// ── Test 6: anthropic preset leaves the base URL blank yet Save is enabled once a key is given ──
-test("selecting anthropic makes the base URL optional (blank is savable)", async () => {
+// ── Test 6: a preset with a default address shows it, and a blank base URL is still savable ──
+test("selecting anthropic prefills its address, and the base URL may be left blank", async () => {
   await openSettingsViaPalette(page);
   const dialog = page.getByRole("dialog", { name: "Settings" });
   await dialog.getByText("Advanced: custom AI server").click();
   await dialog.getByLabel("Use a custom AI server").check();
   await dialog.getByRole("button", { name: /^anthropic$/i }).click();
-  await expect(dialog.getByLabel(/Base URL/)).toHaveValue("");
+  await expect(dialog.getByLabel(/Base URL/)).toHaveValue("https://api.anthropic.com");
+  await dialog.getByLabel(/Base URL/).fill("");
   // Model is required for Save; a blank base URL must still allow Save for anthropic. A hosted
   // provider refuses requests without a key, so Save waits for one too.
   await dialog.getByLabel("Model (required)").fill("claude-opus-4-5");
