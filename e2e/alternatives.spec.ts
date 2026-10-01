@@ -10,7 +10,7 @@ import {
   listVaultDir,
   sidecarDir,
 } from "./helpers";
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 /**
@@ -203,6 +203,41 @@ test("alternatives: the page header shows the title of what is open — the alte
     await expect(page.getByTestId("alternative-viewing")).toHaveCount(0);
     await expect(page.locator(".page-title")).toHaveText("Plan A");
     expect(readVaultFile(vault, "plan.md")).toContain("title: Plan A");
+  } finally {
+    removeTempVault(vault);
+  }
+});
+
+test("alternatives: when what was typed cannot be kept, another note does not open until it can be", async () => {
+  const vault = createTempVault({ "plan.md": "# Plan\n\nThe first plan.\n", "other.md": "# Other\n" });
+  try {
+    await loadVault(page, vault);
+    await page.getByRole("treeitem", { name: /plan/ }).click();
+    await expectOpenNote(page, "plan");
+    await addVersion(page);
+    await command(page, ">start an alternative");
+    await expect(page.getByTestId("alternative-viewing")).toBeVisible();
+
+    // A folder where the draft goes makes every write of it fail.
+    const [ref] = refsUnder(vault, "refs/textree/alternatives/");
+    const blocker = join(sidecarDir(vault), "drafts", ref.split("/").pop() ?? "", "plan.md");
+    mkdirSync(blocker, { recursive: true });
+    writeFileSync(join(blocker, "keep"), "");
+
+    await typeInEditor(page, "# Plan\n\nA second plan, only on screen.\n");
+    await expect(page.getByTestId("alternative-failure")).toBeVisible({ timeout: 10_000 });
+    await page.getByRole("treeitem", { name: /other/ }).click();
+    // Still here: leaving would have dropped the only copy of what was typed.
+    await expect(page.getByTestId("alternative-viewing")).toBeVisible();
+    await expect(page.locator(".cm-content")).toContainText("only on screen");
+
+    // Once it can be written, leaving writes it first.
+    rmSync(blocker, { recursive: true, force: true });
+    await page.getByRole("treeitem", { name: /other/ }).click();
+    await expectOpenNote(page, "other");
+    await expect(page.getByTestId("alternative-viewing")).toHaveCount(0);
+    expect(readFileSync(blocker, "utf8")).toContain("only on screen");
+    expect(readVaultFile(vault, "plan.md")).toContain("The first plan.");
   } finally {
     removeTempVault(vault);
   }

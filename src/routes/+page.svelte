@@ -102,7 +102,7 @@
   import BackupDialog from "$lib/BackupDialog.svelte";
   import { backupStore } from "$lib/remoteSync.svelte";
   import { exchangeMessages, isNewFailure, needsAttention } from "$lib/remoteSync.helpers";
-  import { initialNoteSaveState, NoteSave } from "$lib/noteSave";
+  import { initialNoteSaveState, NoteSave, type LeaveOutcome } from "$lib/noteSave";
   import {
     baseName,
     noteStem,
@@ -230,6 +230,17 @@
   function handleAltEdit(text: string) {
     altLive = text;
     viewing?.writer.schedule(text);
+  }
+
+  /**
+   * Before leaving the open note — another note, another folder, a change to the tree. What was
+   * typed into an alternative open in its place is written to its draft first: once the note is
+   * left nothing holds that text but the draft, so when it cannot be written nothing leaves (the
+   * failure is on screen). Then the note's own edits.
+   */
+  async function leaveNote(): Promise<LeaveOutcome> {
+    if (viewing && !(await viewing.writer.flush())) return "failed";
+    return save.beforeLeaving();
   }
 
   /** Back to the note. What was typed in the alternative stays in its draft — nothing is asked. */
@@ -451,7 +462,7 @@
    *  another folder was opened before this one answered. */
   async function loadVault(path: string): Promise<boolean> {
     // preserve unsaved edits before switching vault
-    if ((await save.beforeLeaving()) !== "saved") return false;
+    if ((await leaveNote()) !== "saved") return false;
     const mine = ++vaultLoads;
     root = path;
     let opened: TreeNode[];
@@ -717,7 +728,7 @@
     if (!root || !activePath || !name || name === activeName) return;
     const node = findByBody(tree, activePath);
     if (!node) return;
-    const left = await save.beforeLeaving(); // preserve unsaved edits before rename
+    const left = await leaveNote(); // preserve unsaved edits before rename
     if (left === "asking") return;
     if (left === "failed" || left === "busy") {
       opError = friendlyError(leaveRefusal("Rename", left)); // like its failure below: a refusal is not a failed save
@@ -804,7 +815,7 @@
       renamingPath = null; // no-op cancel
       return null;
     }
-    const left = await save.beforeLeaving(); // preserve unsaved edits before the structure change
+    const left = await leaveNote(); // preserve unsaved edits before the structure change
     if (left === "asking") {
       return friendlyError("Rename canceled — first answer the question about the open note.");
     }
@@ -843,7 +854,7 @@
     if (!root) return;
     pendingHeading = null; // a direct open does not scroll to a heading (cleared before the open)
     // preserve unsaved edits of the previous note before navigating anywhere
-    const left = await save.beforeLeaving();
+    const left = await leaveNote();
     if (left === "asking" || left === "failed") return;
     if (!node.body_path) {
       // A container with no folder note → show only its table; clear any stale open note so an
@@ -934,7 +945,7 @@
   async function startAddChild() {
     if (!root || !selectedNode || selectedNode.kind !== "leaf") return;
     const leaf = selectedNode.path;
-    const left = await save.beforeLeaving(); // preserve current edits before promote
+    const left = await leaveNote(); // preserve current edits before promote
     if (left === "asking") return;
     if (left === "failed" || left === "busy") {
       opError = friendlyError(leaveRefusal("Operation", left));
@@ -965,7 +976,7 @@
   /** Create a new "Untitled" note (no dialog), open it, and focus the header title for renaming. */
   async function createNewNote(parent: string) {
     if (!root) return;
-    const left = await save.beforeLeaving(); // preserve current edits before structure change
+    const left = await leaveNote(); // preserve current edits before structure change
     if (left === "asking") return;
     if (left === "failed" || left === "busy") {
       opError = friendlyError(leaveRefusal("Operation", left));
@@ -994,7 +1005,7 @@
     if (!root) return;
     const name = nameInput.trim();
     if (!name) return;
-    const left = await save.beforeLeaving(); // preserve current edits before structure change
+    const left = await leaveNote(); // preserve current edits before structure change
     if (left === "asking") return;
     if (left === "failed" || left === "busy") {
       opError = friendlyError(leaveRefusal("Operation", left));
@@ -1015,7 +1026,7 @@
     if (!root || !selectedNode) return;
     const target = selectedNode.path;
     const affectsOpen = activePath !== null && pathInside(activePath, target);
-    const left = await save.beforeLeaving();
+    const left = await leaveNote();
     if (left === "asking") return;
     if (left === "failed" || left === "busy") {
       opError = friendlyError(leaveRefusal("Delete", left));
@@ -1044,7 +1055,7 @@
       opError = friendlyError("Cannot move a node into its own subfolder.");
       return;
     }
-    const left = await save.beforeLeaving(); // preserve current edits before move
+    const left = await leaveNote(); // preserve current edits before move
     if (left === "asking") return;
     if (left === "failed" || left === "busy") {
       opError = friendlyError(leaveRefusal("Move", left));
@@ -1075,7 +1086,7 @@
       opError = friendlyError("Cannot move a node into its own descendant.");
       return;
     }
-    const left = await save.beforeLeaving();
+    const left = await leaveNote();
     if (left === "asking") return;
     if (left === "failed" || left === "busy") {
       opError = friendlyError(leaveRefusal("Operation", left));
@@ -1424,7 +1435,7 @@
     if (!root || !activePath || saveState.removed) return; // nothing on disk to record
     versionNotice = null;
     // A version of what is on disk is only the right version once the disk has it.
-    if (saveState.dirty && (await save.beforeLeaving()) !== "saved") return;
+    if (saveState.dirty && (await leaveNote()) !== "saved") return;
     showAddVersion = true;
   }
 
