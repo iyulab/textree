@@ -6,10 +6,11 @@
   import {
     prepareAiModel, prepareGeneration, stopHost, hostStatus, restartAiHost,
     testByoConnection, setByoApiKey, clearByoApiKey, hasByoApiKey, type HostStatus,
+    type ByoConnectionTestResult,
     connectPublish, clearPublishToken, hasPublishToken,
   } from "$lib/ipc";
   import {
-    computeAiSectionState, themeButtons, planEmbeddingToggle,
+    computeAiSectionState, themeButtons, planEmbeddingToggle, byoTestLabel,
     presetDefaults, isValidByoUrlForPreset, isValidByoModel, byoProviderBadge, byoKeyRequired,
   } from "$lib/settings.helpers";
   import { getByoConfig, setByoConfig, clearByoConfig, type ByoConfig, type ByoPreset } from "$lib/byoConfig";
@@ -43,7 +44,7 @@
   let byoModel = $state(initialByo?.model ?? "");
   let byoApiKeyInput = $state("");
   let byoHasStoredKey = $state(false);
-  let byoTestResult = $state<{ ok: boolean; message?: string } | null>(null);
+  let byoTestResult = $state<ByoConnectionTestResult | "checking" | null>(null);
   let byoSaving = $state(false);
   // Sibling to byoTestResult: surfaces Save/Switch-to-local failures inline (near the
   // triggering button) rather than letting a rejected restartAiHost/setByoApiKey promise
@@ -95,10 +96,9 @@
   }
 
   async function onTestConnection(): Promise<void> {
-    byoTestResult = null;
+    byoTestResult = "checking";
     const key = byoApiKeyInput || undefined;
-    const result = await testByoConnection(byoPreset, byoBaseUrl, key);
-    byoTestResult = result.ok ? { ok: true } : { ok: false, message: result.message };
+    byoTestResult = await testByoConnection(byoPreset, byoBaseUrl, key);
   }
 
   async function onSaveByo(): Promise<void> {
@@ -348,14 +348,14 @@
           <button
             type="button"
             class="action"
-            disabled={!isValidByoUrlForPreset(byoPreset, byoBaseUrl)}
+            disabled={!isValidByoUrlForPreset(byoPreset, byoBaseUrl) || byoTestResult === "checking"}
             onclick={onTestConnection}
           >
             Test connection
           </button>
           {#if byoTestResult}
             <p class="badge" role="status">
-              {byoTestResult.ok ? "✓ Connected" : `✗ Connection failed: ${byoTestResult.message}`}
+              {byoTestLabel(byoTestResult)}
             </p>
           {/if}
           <button

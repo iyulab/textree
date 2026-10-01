@@ -631,18 +631,23 @@ export async function restartAiHost(byo?: ByoConfig): Promise<void> {
   });
 }
 
-export type ByoConnectionTestResult = { ok: true } | { ok: false; message: string };
+export type ByoConnectionTestResult = { ok: true; modelCount: number } | { ok: false; message: string };
 
 /** Test-connect to a candidate BYO endpoint (Settings ▸Advanced "Test connection") without
- * spawning/reconfiguring the host. */
+ * touching the running host: the AI helper checks it once — a real, authenticated model-list
+ * request — and reports how many models the server offers. */
 export async function testByoConnection(
   preset: string,
   baseUrl: string,
   apiKey?: string,
 ): Promise<ByoConnectionTestResult> {
   try {
-    await invoke<void>("test_byo_connection", { preset, baseUrl, apiKey: apiKey ?? null });
-    return { ok: true };
+    const found = await invoke<{ modelCount: number }>("test_byo_connection", {
+      preset,
+      baseUrl,
+      apiKey: apiKey ?? null,
+    });
+    return { ok: true, modelCount: found.modelCount };
   } catch (e) {
     return { ok: false, message: String(e) };
   }

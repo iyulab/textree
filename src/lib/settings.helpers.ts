@@ -5,7 +5,7 @@
  * is shown honestly.
  */
 import type { ThemeMode } from "./theme.svelte";
-import type { HostStatus } from "./ipc";
+import type { ByoConnectionTestResult, HostStatus } from "./ipc";
 import type { ByoPreset } from "./byoConfig";
 
 export type AiBadge = "ready" | "preparing" | "unavailable";
@@ -128,4 +128,12 @@ export function byoProviderBadge(activeProvider: string): string {
     anthropic: "Anthropic", gemini: "Gemini", grok: "Grok",
   };
   return `Custom server (${labels[activeProvider] ?? activeProvider})`;
+}
+
+/** The line under Settings ▸ Advanced "Test connection": checking, then what the check found. */
+export function byoTestLabel(result: ByoConnectionTestResult | "checking"): string {
+  if (result === "checking") return "Checking…";
+  if (!result.ok) return `✗ Connection failed: ${result.message}`;
+  const n = result.modelCount;
+  return `✓ Connected — ${n} ${n === 1 ? "model" : "models"} available`;
 }

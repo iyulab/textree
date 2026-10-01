@@ -12,6 +12,17 @@ using TauriKit.Sidecar.Loopback;
 // the unqualified `ChatMessage` reference ambiguous between the two types.
 using IChatClient = Microsoft.Extensions.AI.IChatClient;
 
+// ── One-shot commands ─────────────────────────────────────────────────────────
+// `probe-byo` checks the BYO settings in the environment, prints one JSON line and exits — no
+// server, no token, no models. Settings ▸ Advanced ▸ Test connection runs it.
+if (args is [ByoProbeCommand.Name, ..])
+{
+    var probeEnv = Environment.GetEnvironmentVariables()
+        .Cast<System.Collections.DictionaryEntry>()
+        .ToDictionary(e => (string)e.Key, e => (string?)(e.Value?.ToString()));
+    Environment.Exit(await ByoProbeCommand.RunAsync(probeEnv, Console.Out));
+}
+
 // ── DI / builder ──────────────────────────────────────────────────────────────
 // The embedder loads in the background so the host begins accepting requests
 // immediately. Rust's Plan B lifecycle (poll /health with retry on connection-

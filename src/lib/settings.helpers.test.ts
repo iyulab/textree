@@ -8,6 +8,7 @@ import {
   isValidByoUrlForPreset,
   isValidByoModel,
   byoProviderBadge,
+  byoTestLabel,
   byoKeyRequired,
 } from "./settings.helpers";
 
@@ -164,5 +165,19 @@ describe("byoKeyRequired", () => {
   });
   it("leaves the key optional for local and other OpenAI-compatible servers", () => {
     for (const p of ["ollama", "gpustack", "custom"] as const) expect(byoKeyRequired(p)).toBe(false);
+  });
+});
+
+describe("byoTestLabel", () => {
+  it("says it is checking while the check runs", () => {
+    expect(byoTestLabel("checking")).toBe("Checking…");
+  });
+  it("names how many models the server offers", () => {
+    expect(byoTestLabel({ ok: true, modelCount: 141 })).toBe("✓ Connected — 141 models available");
+    expect(byoTestLabel({ ok: true, modelCount: 1 })).toBe("✓ Connected — 1 model available");
+  });
+  it("carries the reason of a failed check", () => {
+    expect(byoTestLabel({ ok: false, message: "The server didn't accept the API key." }))
+      .toBe("✗ Connection failed: The server didn't accept the API key.");
   });
 });

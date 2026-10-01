@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 use std::path::Path;
 use tauri::{AppHandle, Manager, State};
 use tauri_kit_sidecar::loopback::Token;
-use tauri_kit_sidecar::{free_loopback_port, Output, Sidecar};
+use tauri_kit_sidecar::{free_loopback_port, LineReadiness, Output, Sidecar};
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -571,44 +571,97 @@ fn resolve_test_key(api_key: Option<String>, lookup: impl FnOnce() -> Option<Str
     api_key.filter(|k| !k.is_empty()).or_else(lookup)
 }
 
-/// Preset-aware reachability probe for the Settings ▸Advanced "Test connection" button. Does
-/// NOT touch the running host — a plain outbound GET, so the user gets fast feedback before
-/// committing to a host restart. `/v1/models` is the OpenAI-compatible listing convention
-/// (Ollama, LM Studio, vLLM); GPUStack proxies the same convention under its `/v1-openai/` path.
+/// What a successful connection check found.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ByoConnection {
+    pub model_count: u32,
+}
+
+/// The JSON line `textree-host probe-byo` prints (`ByoProbeCommand.Outcome` on the .NET side).
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ProbeOutcome {
+    ok: bool,
+    model_count: u32,
+    status: Option<u16>,
+    error: Option<String>,
+}
+
+/// The first argument that makes the host check the BYO settings and exit instead of serving.
+const PROBE_BYO_COMMAND: &str = "probe-byo";
+
+/// How long a check may take: the host's own wait for the server (10 s) plus its start-up.
+const PROBE_DEADLINE: Duration = Duration::from_secs(25);
+
+/// Settings ▸ Advanced "Test connection". Runs the host once with the settings being tested —
+/// `textree-host probe-byo` — which asks the server for its model list through the same preset
+/// catalogue the host serves from, so a wrong key, address or server comes back as a failure for
+/// every preset. Does NOT touch the running host: the user gets an answer before committing to a
+/// host restart.
 ///
-/// Off the main thread: an endpoint that does not answer holds the request for the whole timeout,
-/// and on the main thread that is the whole window.
+/// Off the main thread: a server that does not answer holds the check for the whole deadline, and
+/// on the main thread that is the whole window.
 #[tauri::command]
 pub async fn test_byo_connection(
+    app: AppHandle,
     preset: String,
     base_url: String,
     api_key: Option<String>,
-) -> Result<(), String> {
-    crate::commands::off_main(move || probe_byo_connection(preset, base_url, api_key)).await
+) -> Result<ByoConnection, String> {
+    let exe = resolve_host(&app)
+        .ok_or_else(|| "The AI helper isn't installed, so the connection can't be checked.".to_string())?;
+    crate::commands::off_main(move || {
+        let key = resolve_test_key(api_key, crate::byo_secret::get_api_key);
+        probe_byo_connection(&exe, &preset, &base_url, key.as_deref())
+    })
+    .await
 }
 
-/// The probe behind [`test_byo_connection`].
-pub fn probe_byo_connection(preset: String, base_url: String, api_key: Option<String>) -> Result<(), String> {
-    // Frontier providers use versioned base URLs (or a fixed endpoint for anthropic) and their own
-    // auth; the Bearer /v1/models probe below assumes a version-less base, so skip it for them and
-    // let the first real request validate.
-    let p = preset.to_ascii_lowercase();
-    if matches!(p.as_str(), "anthropic" | "openai" | "gemini" | "grok") {
-        return Ok(());
+/// The check behind [`test_byo_connection`]: one run of the host's `probe-byo` command. The key
+/// travels in the environment, never on the command line.
+pub fn probe_byo_connection(
+    exe: &str,
+    preset: &str,
+    base_url: &str,
+    api_key: Option<&str>,
+) -> Result<ByoConnection, String> {
+    let mut cmd = Command::new(exe);
+    cmd.arg(PROBE_BYO_COMMAND)
+        .env_remove("TEXTREE_BYO_API_KEY")
+        .env("TEXTREE_BYO_PRESET", preset)
+        .env("TEXTREE_BYO_BASE_URL", base_url);
+    if let Some(key) = api_key.filter(|k| !k.is_empty()) {
+        cmd.env("TEXTREE_BYO_API_KEY", key);
     }
-    let path = if preset.eq_ignore_ascii_case("gpustack") { "/v1-openai/models" } else { "/v1/models" };
-    let url = format!("{}{}", base_url.trim_end_matches('/'), path);
-    let mut req = ureq::get(&url);
-    let key = resolve_test_key(api_key, crate::byo_secret::get_api_key);
-    if let Some(key) = key {
-        req = req.header("Authorization", &format!("Bearer {key}"));
+    let mut child = Sidecar::spawn(cmd, Output::Lines { stderr: None })
+        .map_err(|e| format!("The AI helper could not be started: {e}"))?;
+    let line = child.wait_line(PROBE_DEADLINE, |l| l.trim_start().starts_with('{'));
+    let _ = child.shutdown(Duration::ZERO);
+    match line.map_err(|e| e.to_string())? {
+        LineReadiness::Line(l) => read_probe_outcome(&l),
+        LineReadiness::Exited(_) => Err("The AI helper stopped before it could check the connection.".to_string()),
+        LineReadiness::TimedOut => Err("The server didn't answer in time.".to_string()),
     }
-    req.config()
-        .timeout_global(Some(Duration::from_secs(5)))
-        .build()
-        .call()
-        .map(|_| ())
-        .map_err(|e| e.to_string())
+}
+
+/// Turns the host's answer into what Settings shows. Pure, so the wording is unit-tested.
+fn read_probe_outcome(line: &str) -> Result<ByoConnection, String> {
+    let o: ProbeOutcome = serde_json::from_str(line)
+        .map_err(|_| "The AI helper gave an answer this version doesn't understand.".to_string())?;
+    if o.ok {
+        return Ok(ByoConnection { model_count: o.model_count });
+    }
+    Err(match o.status {
+        Some(401) | Some(403) => "The server didn't accept the API key.".to_string(),
+        Some(404) => "Nothing answers at this address — check the server URL.".to_string(),
+        Some(code) => match o.error {
+            Some(e) if !e.is_empty() => format!("The server refused the request ({code}): {e}"),
+            _ => format!("The server refused the request ({code})."),
+        },
+        // No status: nothing answered. The helper's own reason is a retry trace, not words for a person.
+        None => "The server couldn't be reached — check the address and that the server is running.".to_string(),
+    })
 }
 
 /// Fire-and-forget: bump ask_generation so any in-flight `ask` stream detects the mismatch,
@@ -1376,35 +1429,40 @@ mod tests {
     }
 
     #[test]
-    fn test_byo_connection_anthropic_is_ok_without_base_url() {
-        // Anthropic uses x-api-key + a fixed endpoint, not the Bearer /v1/models probe.
-        // A blank base URL must not be treated as an unreachable server.
-        let r = probe_byo_connection("anthropic".to_string(), "".to_string(), Some("sk-ant".to_string()));
-        assert!(r.is_ok());
+    fn a_reachable_server_reports_its_model_count() {
+        let r = read_probe_outcome(r#"{"ok":true,"modelCount":141,"status":null,"error":null}"#);
+        assert_eq!(r, Ok(ByoConnection { model_count: 141 }));
     }
 
     #[test]
-    fn test_byo_connection_frontier_presets_short_circuit_without_network_call() {
-        // openai/gemini/grok prefill versioned base URLs (e.g. ".../v1"); appending "/v1/models"
-        // would double-version the path and 404. These must short-circuit exactly like anthropic
-        // and never reach the network — asserted here by using base URLs that would fail DNS/
-        // connect if the probe actually ran (real hosts, but the short-circuit means it doesn't matter).
-        let r = probe_byo_connection(
-            "openai".to_string(),
-            "https://api.openai.com/v1".to_string(),
-            Some("sk-test".to_string()),
-        );
-        assert!(r.is_ok());
+    fn a_refused_key_says_so_in_plain_words() {
+        let r = read_probe_outcome(r#"{"ok":false,"modelCount":0,"status":401,"error":"Unauthorized"}"#);
+        assert_eq!(r, Err("The server didn't accept the API key.".to_string()));
+        let r = read_probe_outcome(r#"{"ok":false,"modelCount":0,"status":404,"error":"Not Found"}"#);
+        assert!(r.unwrap_err().contains("check the server URL"));
+    }
 
-        let r = probe_byo_connection("gemini".to_string(), "".to_string(), Some("sk-test".to_string()));
-        assert!(r.is_ok());
+    #[test]
+    fn other_refusals_carry_the_servers_reason_and_silence_says_unreachable() {
+        let r = read_probe_outcome(r#"{"ok":false,"modelCount":0,"status":500,"error":"boom"}"#);
+        assert_eq!(r, Err("The server refused the request (500): boom".to_string()));
+        let r = read_probe_outcome(r#"{"ok":false,"modelCount":0,"status":null,"error":"Retry failed after 4 tries."}"#);
+        assert!(r.unwrap_err().starts_with("The server couldn't be reached"));
+        let r = read_probe_outcome(r#"{"ok":false,"modelCount":0}"#);
+        assert!(r.unwrap_err().starts_with("The server couldn't be reached"));
+    }
 
-        let r = probe_byo_connection(
-            "grok".to_string(),
-            "https://api.x.ai/v1".to_string(),
-            Some("sk-test".to_string()),
-        );
-        assert!(r.is_ok());
+    #[test]
+    fn an_answer_that_is_not_the_probe_line_is_a_failure_not_a_success() {
+        assert!(read_probe_outcome("Unhandled exception").is_err());
+    }
+
+    #[test]
+    #[ignore = "requires TEXTREE_HOST_EXE pointing at a built host"]
+    fn the_host_checks_a_server_that_is_not_there() {
+        let exe = std::env::var("TEXTREE_HOST_EXE").expect("set TEXTREE_HOST_EXE");
+        let r = probe_byo_connection(&exe, "custom", "http://127.0.0.1:9/v1", None);
+        assert!(r.is_err(), "nothing listens on port 9: {r:?}");
     }
 
     #[test]
