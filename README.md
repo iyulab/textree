@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="static/logo.jpg" alt="Textree" width="320">
+  <img src="app-icon.svg" alt="Textree" width="96">
 </p>
 
 # Textree

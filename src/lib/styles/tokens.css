@@ -89,8 +89,13 @@
   --text-on-accent: #ffffff;
   --text-error: #c0392b;
 
-  /* Brand emerald (matches the logo's green). Deep enough to carry white CTA text and to read as
-     link/active text on the white surface (~4.4:1, on par with the prior accent's contrast tier). */
+  /* The brand mark's own colors (app-icon.svg). Theme-independent: the mark is a filled leaf that
+     reads on both surfaces, so the dark theme does not override these. */
+  --brand-leaf: #2e8b62;
+  --brand-on-leaf: #f5f3ec;
+
+  /* Brand-adjacent emerald, tuned for UI contrast rather than matched to the mark. Deep enough to
+     carry white CTA text and to read as link/active text on the white surface (~4.4:1). */
   --accent: #0a8a57;
   --accent-hover: #097a4b;
 

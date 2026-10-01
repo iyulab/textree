@@ -54,7 +54,16 @@
       title={collapsed ? "Show sidebar" : "Hide sidebar"}
       aria-label={collapsed ? "Show sidebar" : "Hide sidebar"}
     ><Icon name={collapsed ? "panel-left-open" : "panel-left-close"} /></button>
-    <span class="tb-brand">Textree</span>
+    <span class="tb-brand">
+      <svg class="tb-mark" viewBox="8 8 48 48" aria-hidden="true">
+        <path class="tb-mark-leaf" d="M12 52V26Q12 12 26 12H52V38Q52 52 38 52Z" />
+        <path class="tb-mark-branch" d="M19 45L40 24M27 37V28M33 31H42" />
+        <circle class="tb-mark-node" cx="42.5" cy="21.5" r="3" />
+        <circle class="tb-mark-node" cx="27" cy="25" r="3" />
+        <circle class="tb-mark-node" cx="45" cy="31" r="3" />
+      </svg>
+      Textree
+    </span>
   </div>
 
   <button class="tb-center" onclick={onOpenPalette} title="Search or run a command (Ctrl+P)">
@@ -94,10 +103,18 @@
   .tb-left { flex: 1; }
   .tb-right { flex: 1; justify-content: flex-end; }
   .tb-brand {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--sp-1);
     font-size: var(--font-size-small);
     font-weight: 600;
     color: var(--text-normal);
   }
+  /* The app-icon mark (app-icon.svg), drawn from tokens so it stays in step with the icon. */
+  .tb-mark { width: 16px; height: 16px; flex-shrink: 0; }
+  .tb-mark-leaf { fill: var(--brand-leaf); }
+  .tb-mark-branch { fill: none; stroke: var(--brand-on-leaf); stroke-width: 3.5; stroke-linecap: round; }
+  .tb-mark-node { fill: var(--brand-on-leaf); }
   .tb-icon-btn,
   .tb-win-btn {
     display: inline-flex;
