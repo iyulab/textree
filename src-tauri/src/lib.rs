@@ -26,11 +26,9 @@ pub(crate) mod publish;
 pub(crate) mod publish_secret;
 pub(crate) mod search;
 pub(crate) mod secret_store;
-pub(crate) mod self_write;
 mod telemetry;
 pub(crate) mod vault;
 pub(crate) mod watcher;
-pub(crate) mod liveness;
 pub(crate) mod note_locks;
 pub(crate) mod state_dir;
 pub(crate) mod stranded;
@@ -38,7 +36,6 @@ pub(crate) mod tree_commands;
 
 use host::HostHandle;
 use search::IndexHandle;
-use self_write::SelfWrites;
 use std::sync::Arc;
 use watcher::WatcherHandle;
 
@@ -92,8 +89,8 @@ pub fn run() {
             }
             Ok(())
         })
-        // Managed via Arc so the watcher thread and the write_note command share one registry.
-        .manage(Arc::new(SelfWrites::default()))
+        // What the app writes to notes, shared by the watch (which leaves it out) and write_note.
+        .manage(tauri_kit_watch::OwnWrites::new())
         .manage(Arc::new(note_locks::NoteLocks::default()))
         .manage(WatcherHandle::default())
         .manage(Arc::new(IndexHandle::default()))

@@ -40,7 +40,7 @@ libssh2 code is present in this distribution.
 
 ## Rust crates
 
-The 369 crates below are the normal-dependency closure of the binary, resolved for
+The 370 crates below are the normal-dependency closure of the binary, resolved for
 `x86_64-pc-windows-msvc`. Build-time and test-only dependencies are excluded because their code is not
 distributed.
 
@@ -301,9 +301,10 @@ distributed.
 | `tao` | 0.35.3 | Apache-2.0 | https://github.com/tauri-apps/tao |
 | `tauri` | 2.11.6 | Apache-2.0 OR MIT | https://github.com/tauri-apps/tauri |
 | `tauri-codegen` | 2.6.3 | Apache-2.0 OR MIT | https://github.com/tauri-apps/tauri |
-| `tauri-kit-credentials` | 0.2.0 | MIT | https://github.com/iyulab/tauri-kit |
-| `tauri-kit-fs` | 0.2.0 | MIT | https://github.com/iyulab/tauri-kit |
-| `tauri-kit-sidecar` | 0.2.0 | MIT | https://github.com/iyulab/tauri-kit |
+| `tauri-kit-credentials` | 0.6.0 | MIT | https://github.com/iyulab/tauri-kit |
+| `tauri-kit-fs` | 0.6.0 | MIT | https://github.com/iyulab/tauri-kit |
+| `tauri-kit-sidecar` | 0.6.0 | MIT | https://github.com/iyulab/tauri-kit |
+| `tauri-kit-watch` | 0.6.0 | MIT | https://github.com/iyulab/tauri-kit |
 | `tauri-macros` | 2.6.3 | Apache-2.0 OR MIT | https://github.com/tauri-apps/tauri |
 | `tauri-plugin-dialog` | 2.7.3 | Apache-2.0 OR MIT | https://github.com/tauri-apps/plugins-workspace |
 | `tauri-plugin-fs` | 2.5.2 | Apache-2.0 OR MIT | https://github.com/tauri-apps/plugins-workspace |

@@ -4725,9 +4725,9 @@ dependencies = [
 
 [[package]]
 name = "tauri-kit-credentials"
-version = "0.2.0"
+version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f5572695381527f11e8385ca87269c2177c2b9145fc6bac8abe020fc31b18c35"
+checksum = "ca843a6cbee6d2f520add064dca358fcf3b30f9b3f2a759c8ca5314cd1a5a018"
 dependencies = [
  "apple-native-keyring-store",
  "keyring-core",
@@ -4737,21 +4737,32 @@ dependencies = [
 
 [[package]]
 name = "tauri-kit-fs"
-version = "0.2.0"
+version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6161629deb93b9062d2c95add11c61f7572aba079ae0e9a8ce8d5685b3ea5294"
+checksum = "7c5c5c786dd0de284c2a380abcbc3fdd6acfa220f0758ce5282df6194aa3c951"
 dependencies = [
  "tempfile",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
 name = "tauri-kit-sidecar"
-version = "0.2.0"
+version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5f65ac79703126f185d2b45f0d8d894a48345707c874fd5aac59b9db8cc66424"
+checksum = "3df3ec30813a4964517ff31146667b1782863f94067386d13fcca02d12647c78"
 dependencies = [
  "libc",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "tauri-kit-watch"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5c28bccb5360cd1eb02b39da86c87bd63a3f3b5555c3b5c961dbbf8705340366"
+dependencies = [
+ "notify-debouncer-full",
+ "tauri-kit-fs",
 ]
 
 [[package]]
@@ -5042,7 +5053,6 @@ dependencies = [
  "getrandom 0.2.17",
  "git2",
  "log",
- "notify-debouncer-full",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -5052,6 +5062,7 @@ dependencies = [
  "tauri-kit-credentials",
  "tauri-kit-fs",
  "tauri-kit-sidecar",
+ "tauri-kit-watch",
  "tauri-plugin-dialog",
  "tauri-plugin-log",
  "tauri-plugin-opener",

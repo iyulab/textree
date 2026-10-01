@@ -2,7 +2,6 @@ use crate::host;
 use crate::note_locks::NoteLocks;
 use crate::pathsafe::is_within;
 use crate::search::{IndexHandle, IndexState, SearchHit};
-use crate::self_write::SelfWrites;
 use crate::vault::{self, TreeNode};
 use crate::watcher::WatcherHandle;
 use serde::{Deserialize, Serialize};
@@ -643,14 +642,14 @@ pub async fn write_note(
     path: String,
     content: String,
     expected: String,
-    self_writes: State<'_, Arc<SelfWrites>>,
+    own: State<'_, tauri_kit_watch::OwnWrites>,
     locks: State<'_, Arc<NoteLocks>>,
     app: AppHandle,
 ) -> Result<WriteOutcome, String> {
-    let (self_writes, locks) = (self_writes.inner().clone(), locks.inner().clone());
+    let (own, locks) = (own.inner().clone(), locks.inner().clone());
     off_main(move || {
         let (root, path) = (PathBuf::from(root), PathBuf::from(path));
-        let outcome = save_note(&root, &path, &content, &expected, &self_writes, &locks)?;
+        let outcome = save_note(&root, &path, &content, &expected, &own, &locks)?;
         if outcome == WriteOutcome::Written {
             refresh_indexes(&app, root, path);
         }
@@ -666,7 +665,7 @@ pub(crate) fn save_note(
     path: &Path,
     content: &str,
     expected: &str,
-    self_writes: &SelfWrites,
+    own: &tauri_kit_watch::OwnWrites,
     locks: &NoteLocks,
 ) -> Result<WriteOutcome, String> {
     // The whole folder is gone — the note with it. Nothing can be written, nothing is.
@@ -685,18 +684,17 @@ pub(crate) fn save_note(
         log::info!("write_note: {} changed since it was loaded; not written", path.display());
         return Ok(conflict);
     }
-    // Must register "just before" writing: if the watcher receives the event before
-    // record runs right after the write hits disk, an echo loop forms (design §4.1).
-    self_writes.record(path, content);
+    // Recorded before writing: the watch can hear about the write before it returns, and would
+    // otherwise report the app's own save back to it as someone else's change.
+    own.record(path, content.as_bytes());
     match atomic_write(root, path, content) {
         Ok(()) => {
             log::info!("write_note: {} ({} bytes)", path.display(), content.len());
             Ok(WriteOutcome::Written)
         }
         Err(e) => {
-            // On write failure the disk did not change, so remove the stale registration
-            // to keep the registry from diverging from the actual disk state.
-            self_writes.forget(path);
+            // The disk did not change: what was recorded is not what is there.
+            own.forget(path);
             log::error!("write_note failed for {}: {}", path.display(), e);
             Err(e.to_string())
         }
@@ -769,17 +767,27 @@ pub fn open_vault(root: String, app: AppHandle, ticket: u64) -> Result<Vec<TreeN
     let tree = vault::build_tree(&root_path).map_err(|e| e.to_string())?;
     log::info!("open_vault: {} ({} top-level nodes)", root, tree.len());
 
-    let self_writes = app.state::<Arc<SelfWrites>>().inner().clone();
+    let own = app.state::<tauri_kit_watch::OwnWrites>().inner().clone();
     let index = app.state::<Arc<IndexHandle>>().inner().clone();
     let host = app.state::<Arc<host::HostHandle>>().inner().clone();
     let app_data = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    let watchdog =
-        crate::liveness::Watchdog::spawn(app.clone(), &root_path, self_writes, index.clone())?;
+    let emitter = app.clone();
+    use tauri::Emitter as _;
+    let watcher = crate::watcher::watch_vault(&root_path, &own, index.clone(), move |surface| match surface {
+        crate::watcher::Surface::Changed(batch) => {
+            for change in batch {
+                let _ = emitter.emit("fs_changed", change);
+            }
+        }
+        crate::watcher::Surface::Rescan => {
+            let _ = emitter.emit("fs_rescan", ());
+        }
+    })?;
 
     let _installing = INSTALLING.lock().unwrap_or_else(|e| e.into_inner());
     if OPENS.load(std::sync::atomic::Ordering::SeqCst) != ticket {
         log::info!("open_vault: {root} was overtaken by a later opening; not installed");
-        return Err(SUPERSEDED.into()); // the watchdog it started stops as it drops
+        return Err(SUPERSEDED.into()); // the watch it started stops as it drops
     }
 
     // Install the index (app data directory, per-vault hash). On failure only search is disabled —
@@ -814,10 +822,10 @@ pub fn open_vault(root: String, app: AppHandle, ticket: u64) -> Result<Vec<TreeN
         host::reindex_vault(&host, &vault_str);
     });
 
-    // The previous watchdog stops as it is replaced (its thread and debouncer with it), so
-    // leftover events from the old vault don't bleed into the new.
+    // The previous watch stops as it is replaced, so leftover changes from the old vault don't
+    // bleed into the new.
     let watcher_handle = app.state::<WatcherHandle>();
-    let previous = watcher_handle.0.lock().unwrap().replace(watchdog);
+    let previous = watcher_handle.0.lock().unwrap_or_else(|e| e.into_inner()).replace(watcher);
     drop(previous);
 
     Ok(tree)
@@ -2447,14 +2455,14 @@ mod tests {
         path: &Path,
         text: &'static str,
         expected: &'static str,
-        self_writes: &Arc<SelfWrites>,
+        own: &tauri_kit_watch::OwnWrites,
         locks: &Arc<NoteLocks>,
     ) -> (std::sync::mpsc::Sender<()>, std::thread::JoinHandle<Result<WriteOutcome, String>>) {
         use std::sync::mpsc;
         let (reached_tx, reached) = mpsc::channel();
         let (release, release_rx) = mpsc::channel::<()>();
         let (root, path) = (root.to_path_buf(), path.to_path_buf());
-        let (self_writes, locks) = (Arc::clone(self_writes), Arc::clone(locks));
+        let (own, locks) = (own.clone(), Arc::clone(locks));
         let handle = std::thread::spawn(move || {
             let _hook = write_step::install(move |step| {
                 if step == write_step::Step::Rename {
@@ -2463,7 +2471,7 @@ mod tests {
                 }
                 Ok(())
             });
-            save_note(&root, &path, text, expected, &self_writes, &locks)
+            save_note(&root, &path, text, expected, &own, &locks)
         });
         reached.recv_timeout(std::time::Duration::from_secs(5)).expect("the held save starts");
         (release, handle)
@@ -2477,14 +2485,14 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let (root, note) = (tmp.path(), tmp.path().join("a.md"));
         std::fs::write(&note, "0").unwrap();
-        let (self_writes, locks) = (Arc::new(SelfWrites::default()), Arc::new(NoteLocks::default()));
+        let (own, locks) = (tauri_kit_watch::OwnWrites::new(), Arc::new(NoteLocks::default()));
 
-        let (release, older) = save_held_before_rename(root, &note, "older", "0", &self_writes, &locks);
+        let (release, older) = save_held_before_rename(root, &note, "older", "0", &own, &locks);
 
         let newer = {
             let (root, note) = (root.to_path_buf(), note.clone());
-            let (self_writes, locks) = (Arc::clone(&self_writes), Arc::clone(&locks));
-            std::thread::spawn(move || save_note(&root, &note, "newer", "older", &self_writes, &locks))
+            let (own, locks) = (own.clone(), Arc::clone(&locks));
+            std::thread::spawn(move || save_note(&root, &note, "newer", "older", &own, &locks))
         };
         std::thread::sleep(std::time::Duration::from_millis(200));
         assert!(!newer.is_finished(), "the newer save waits while the older one is still writing");
@@ -2515,9 +2523,9 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let (root, note) = (tmp.path(), tmp.path().join("a.md"));
         std::fs::write(&note, "0").unwrap();
-        let (self_writes, locks) = (Arc::new(SelfWrites::default()), Arc::new(NoteLocks::default()));
+        let (own, locks) = (tauri_kit_watch::OwnWrites::new(), Arc::new(NoteLocks::default()));
 
-        let (release, save) = save_held_before_rename(root, &note, "newest", "0", &self_writes, &locks);
+        let (release, save) = save_held_before_rename(root, &note, "newest", "0", &own, &locks);
         let rename = rename_in_turn(root, &locks);
         std::thread::sleep(std::time::Duration::from_millis(200));
         assert!(!rename.is_finished(), "the rename waits while a save to the note is still writing");
@@ -2534,9 +2542,9 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let (root, note) = (tmp.path(), tmp.path().join("a.md"));
         std::fs::write(&note, "0").unwrap();
-        let (self_writes, locks) = (Arc::new(SelfWrites::default()), Arc::new(NoteLocks::default()));
+        let (own, locks) = (tauri_kit_watch::OwnWrites::new(), Arc::new(NoteLocks::default()));
 
-        let (release, save) = save_held_before_rename(root, &note, "newest", "0", &self_writes, &locks);
+        let (release, save) = save_held_before_rename(root, &note, "newest", "0", &own, &locks);
         let root_s = root.to_string_lossy().to_string();
         rename_node(root_s, note.to_string_lossy().into(), "b".into()).unwrap();
         release.send(()).unwrap();
@@ -2553,13 +2561,13 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let (root, note) = (tmp.path(), tmp.path().join("a.md"));
         std::fs::write(&note, "0").unwrap();
-        let (self_writes, locks) = (Arc::new(SelfWrites::default()), Arc::new(NoteLocks::default()));
+        let (own, locks) = (tauri_kit_watch::OwnWrites::new(), Arc::new(NoteLocks::default()));
 
         let turn = locks.subtree(&[note.as_path()]);
         let late = {
             let (root, note) = (root.to_path_buf(), note.clone());
-            let (self_writes, locks) = (Arc::clone(&self_writes), Arc::clone(&locks));
-            std::thread::spawn(move || save_note(&root, &note, "late", "0", &self_writes, &locks))
+            let (own, locks) = (own.clone(), Arc::clone(&locks));
+            std::thread::spawn(move || save_note(&root, &note, "late", "0", &own, &locks))
         };
         std::thread::sleep(std::time::Duration::from_millis(200));
         assert!(!late.is_finished(), "a save to a note being renamed waits for the rename");
@@ -2578,12 +2586,12 @@ mod tests {
         let root = tmp.path();
         std::fs::write(root.join("a.md"), "a").unwrap();
         std::fs::write(root.join("b.md"), "b").unwrap();
-        let (self_writes, locks) = (Arc::new(SelfWrites::default()), Arc::new(NoteLocks::default()));
+        let (own, locks) = (tauri_kit_watch::OwnWrites::new(), Arc::new(NoteLocks::default()));
 
         let (release, stalled) =
-            save_held_before_rename(root, &root.join("a.md"), "a2", "a", &self_writes, &locks);
+            save_held_before_rename(root, &root.join("a.md"), "a2", "a", &own, &locks);
 
-        let other = save_note(root, &root.join("b.md"), "b2", "b", &self_writes, &locks);
+        let other = save_note(root, &root.join("b.md"), "b2", "b", &own, &locks);
         assert_eq!(other, Ok(WriteOutcome::Written));
         assert_eq!(std::fs::read_to_string(root.join("b.md")).unwrap(), "b2");
 
@@ -2599,11 +2607,11 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let (root, note) = (tmp.path(), tmp.path().join("a.md"));
         std::fs::write(&note, "0").unwrap();
-        let self_writes = Arc::new(SelfWrites::default());
+        let own = tauri_kit_watch::OwnWrites::new();
         // A fresh set of locks per save is no locking at all.
         let (release, older) =
-            save_held_before_rename(root, &note, "older", "0", &self_writes, &Arc::new(NoteLocks::default()));
-        let newer = save_note(root, &note, "newer", "older", &self_writes, &NoteLocks::default());
+            save_held_before_rename(root, &note, "older", "0", &own, &Arc::new(NoteLocks::default()));
+        let newer = save_note(root, &note, "newer", "older", &own, &NoteLocks::default());
         assert!(matches!(newer, Ok(WriteOutcome::Conflict { .. })), "{newer:?}");
         release.send(()).unwrap();
         older.join().unwrap().unwrap();
