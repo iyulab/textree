@@ -47,7 +47,7 @@ ureq = { version = "3", features = ["json"] }
 tauri-kit-credentials = "0.10"
 # The local AI helper process: no console window, stopped together with everything it starts
 # (also when this app crashes), and a free loopback port for it to listen on.
-tauri-kit-sidecar = "0.10"
+tauri-kit-sidecar = { version = "0.10", features = ["loopback"] }
 # Structured logging to the OS app log directory (app_log_dir). The `log` facade
 # (log::info!/warn!/error!) is used at call sites; the plugin wires the backend.
 log = "0.4"

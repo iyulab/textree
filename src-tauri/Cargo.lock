@@ -4753,7 +4753,11 @@ version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "82254f320a45bc1e2a85bda6a2d4349d6489f8dc080d0631b0f59024189d1a25"
 dependencies = [
+ "getrandom 0.3.4",
  "libc",
+ "serde",
+ "serde_json",
+ "ureq",
  "windows-sys 0.61.2",
 ]
 

@@ -4,10 +4,10 @@ using Microsoft.Extensions.DependencyInjection;
 using Textree.Host.Telemetry;
 using Xunit;
 
-public class TelemetryWiringTests : IClassFixture<WebApplicationFactory<Program>>
+public class TelemetryWiringTests : IClassFixture<HostFactory>
 {
-    private readonly WebApplicationFactory<Program> _factory;
-    public TelemetryWiringTests(WebApplicationFactory<Program> factory) => _factory = factory;
+    private readonly HostFactory _factory;
+    public TelemetryWiringTests(HostFactory factory) => _factory = factory;
 
     [Fact]
     public void Emitter_is_registered_and_defaults_to_noop_without_connection_string()

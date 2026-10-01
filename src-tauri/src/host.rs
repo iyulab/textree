@@ -6,6 +6,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 use std::path::Path;
 use tauri::{AppHandle, Manager, State};
+use tauri_kit_sidecar::loopback::Token;
 use tauri_kit_sidecar::{free_loopback_port, Output, Sidecar};
 
 #[derive(Debug, Clone, Serialize)]
@@ -63,10 +64,40 @@ impl Default for HostStatusCell {
     }
 }
 
+/// Where the running host listens, and the per-run token it serves only to this app. Every request
+/// to the host goes through [`Endpoint::get`]/[`Endpoint::post`], so none can leave the token out.
+#[derive(Clone)]
+pub struct Endpoint {
+    base: String,
+    bearer: String,
+}
+
+impl Endpoint {
+    fn new(port: u16, token: &Token) -> Self {
+        Endpoint { base: format!("http://127.0.0.1:{port}"), bearer: token.bearer() }
+    }
+    pub fn get(&self, path: &str) -> ureq::RequestBuilder<ureq::typestate::WithoutBody> {
+        ureq::get(format!("{}{path}", self.base)).header("Authorization", &self.bearer)
+    }
+    pub fn post(&self, path: &str) -> ureq::RequestBuilder<ureq::typestate::WithBody> {
+        ureq::post(format!("{}{path}", self.base)).header("Authorization", &self.bearer)
+    }
+}
+
+/// The token never appears in logs or debug output.
+impl std::fmt::Debug for Endpoint {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Endpoint").field("base", &self.base).finish_non_exhaustive()
+    }
+}
+
+/// The environment variable the host reads its token from (`HostToken.Setting` on the .NET side).
+const HOST_TOKEN_ENV: &str = "TEXTREE_HOST_TOKEN";
+
 #[derive(Default)]
 pub struct HostHandle {
     status: Mutex<HostStatusCell>,
-    port: Mutex<Option<u16>>,
+    endpoint: Mutex<Option<Endpoint>>,
     /// The running host and everything it started, stopped together (see [`shutdown_host`]).
     child: Mutex<Option<Sidecar>>,
     generation: AtomicU64,
@@ -122,9 +153,8 @@ impl HostHandle {
         cell.0 = HostStatus::Starting;
         true
     }
-    pub fn base_url(&self) -> Option<String> {
-        let p = *self.port.lock().unwrap_or_else(|e| e.into_inner());
-        p.map(|p| format!("http://127.0.0.1:{p}"))
+    pub fn endpoint(&self) -> Option<Endpoint> {
+        self.endpoint.lock().unwrap_or_else(|e| e.into_inner()).clone()
     }
     pub fn set_current_vault(&self, vault: String) {
         *self.current_vault.lock().unwrap_or_else(|e| e.into_inner()) = Some(vault);
@@ -244,11 +274,22 @@ pub fn spawn_host(
             return;
         }
     };
-    let url = format!("http://127.0.0.1:{port}");
+    // A fresh token per run: the host answers only requests that carry it, so no other program on
+    // this machine can use it to read a folder or spend the AI key.
+    let token = match Token::generate() {
+        Ok(t) => t,
+        Err(e) => {
+            log::error!("[host] token generation failed: {e}");
+            handle.set_status(HostStatus::Unavailable);
+            return;
+        }
+    };
+    let endpoint = Endpoint::new(port, &token);
     let mut cmd = Command::new(&exe);
     cmd.arg("--urls")
-        .arg(&url)
-        .env("ASPNETCORE_URLS", &url);
+        .arg(&endpoint.base)
+        .env("ASPNETCORE_URLS", &endpoint.base)
+        .env(HOST_TOKEN_ENV, token.as_str());
     // Forward the single embedded connection string (if telemetry is compiled in and
     // configured) so the host's own telemetry activates from the same source of truth.
     // Compile-time embedding means this is not already in the process env — it must be
@@ -280,14 +321,14 @@ pub fn spawn_host(
             return;
         }
     };
-    *handle.port.lock().unwrap_or_else(|e| e.into_inner()) = Some(port);
+    *handle.endpoint.lock().unwrap_or_else(|e| e.into_inner()) = Some(endpoint.clone());
     *handle.child.lock().unwrap_or_else(|e| e.into_inner()) = Some(child);
     *handle.active_provider.lock().unwrap_or_else(|e| e.into_inner()) = active_provider;
     // Status was already claimed as Starting by try_begin_spawn at the top.
 
     let my_gen = handle.generation.fetch_add(1, Ordering::SeqCst) + 1;
     let h = handle.clone();
-    std::thread::spawn(move || poll_health(h, url, my_gen));
+    std::thread::spawn(move || poll_health(h, endpoint, my_gen));
 }
 
 /// Per-poll decision for the health loop. Pure (no I/O) so it is unit-tested.
@@ -335,7 +376,7 @@ fn poll_interval(ready: bool, any_download_active: bool) -> Duration {
     if ready && !any_download_active { READY_POLL_INTERVAL } else { POLL_INTERVAL }
 }
 
-fn poll_health(handle: Arc<HostHandle>, base: String, my_gen: u64) {
+fn poll_health(handle: Arc<HostHandle>, host: Endpoint, my_gen: u64) {
     let start = Instant::now();
     let mut announced = false;
     let mut ready = false;
@@ -361,7 +402,7 @@ fn poll_health(handle: Arc<HostHandle>, base: String, my_gen: u64) {
         let health = if exit.is_some() {
             None
         } else {
-            ureq::get(&format!("{base}/health"))
+            host.get("/health")
                 .config()
                 .timeout_global(Some(Duration::from_secs(5)))
                 .build()
@@ -426,8 +467,8 @@ pub fn shutdown_host(handle: &HostHandle) {
     // poll thread whose /health response arrives after we return cannot overwrite
     // the Unavailable status we set at the end of this function.
     handle.generation.fetch_add(1, Ordering::SeqCst);
-    if let Some(base) = handle.base_url() {
-        let _ = ureq::post(&format!("{base}/shutdown"))
+    if let Some(host) = handle.endpoint() {
+        let _ = host.post("/shutdown")
             .config()
             .timeout_global(Some(Duration::from_millis(800)))
             .build()
@@ -584,7 +625,7 @@ pub fn cancel_ask(host: State<'_, Arc<HostHandle>>) {
 /// Graceful: no-op when the host is not up or not Ready.
 #[tauri::command]
 pub async fn prepare_generation(host: State<'_, Arc<HostHandle>>) -> Result<(), String> {
-    let Some(base) = host.base_url() else { return Ok(()) };
+    let Some(endpoint) = host.endpoint() else { return Ok(()) };
     if !matches!(host.status(), HostStatus::Ready) {
         return Ok(());
     }
@@ -593,7 +634,7 @@ pub async fn prepare_generation(host: State<'_, Arc<HostHandle>>) -> Result<(), 
     // READY_POLL_INTERVAL), bouncing the frontend retry loop straight back to 'error'.
     host.set_generator_error(None);
     tauri::async_runtime::spawn_blocking(move || {
-        let _ = ureq::post(&format!("{base}/prepare-generation"))
+        let _ = endpoint.post("/prepare-generation")
             .config()
             .timeout_global(Some(Duration::from_secs(10)))
             .build()
@@ -672,7 +713,7 @@ pub async fn semantic_search(
     host: State<'_, Arc<HostHandle>>,
 ) -> Result<Vec<SemanticHit>, String> {
     // Read cheap mutex fields before entering the blocking closure.
-    let Some(base) = host.base_url() else {
+    let Some(endpoint) = host.endpoint() else {
         return Ok(Vec::new()); // host not up → empty, caller falls back / shows unavailable
     };
     if !matches!(host.status(), HostStatus::Ready) {
@@ -696,7 +737,7 @@ pub async fn semantic_search(
             "scopePath": scope,
             "limit": limit,
         });
-        match ureq::post(&format!("{base}/search"))
+        match endpoint.post("/search")
             .config()
             .timeout_global(Some(Duration::from_secs(10)))
             .build()
@@ -839,7 +880,7 @@ pub async fn ask(
     host: State<'_, Arc<HostHandle>>,
 ) -> Result<(), String> {
     // Graceful degradation: host not up → inform the user, do not hard-error.
-    let Some(base) = host.base_url() else {
+    let Some(endpoint) = host.endpoint() else {
         let _ = on_event.send(AskEvent::Error {
             message: "Local AI is not available".into(),
         });
@@ -868,7 +909,7 @@ pub async fn ask(
 
     let result = tauri::async_runtime::spawn_blocking(move || {
         let payload = serde_json::json!({ "messages": messages });
-        let resp = ureq::post(&format!("{base}/chat"))
+        let resp = endpoint.post("/chat")
             .config()
             .timeout_global(Some(Duration::from_secs(120)))
             .build()
@@ -918,12 +959,12 @@ pub async fn ask(
 /// Fire-and-forget single-note index. Silent on any error (degrade, don't block).
 /// Runs without asking because it only reads: nothing a person wrote is altered.
 pub fn index_note(handle: &HostHandle, vault: &str, path: &str) {
-    let Some(base) = handle.base_url() else { return };
+    let Some(host) = handle.endpoint() else { return };
     if !matches!(handle.status(), HostStatus::Ready) {
         return;
     }
     let payload = serde_json::json!({ "vaultPath": vault, "path": path });
-    let _ = ureq::post(&format!("{base}/index"))
+    let _ = host.post("/index")
         .config()
         .timeout_global(Some(Duration::from_secs(10)))
         .build()
@@ -933,12 +974,12 @@ pub fn index_note(handle: &HostHandle, vault: &str, path: &str) {
 /// Fire-and-forget full vault reindex. Silent on any error (degrade, don't block).
 /// Runs without asking because it only reads: nothing a person wrote is altered.
 pub fn reindex_vault(handle: &HostHandle, vault: &str) {
-    let Some(base) = handle.base_url() else { return };
+    let Some(host) = handle.endpoint() else { return };
     if !matches!(handle.status(), HostStatus::Ready) {
         return;
     }
     let payload = serde_json::json!({ "vaultPath": vault });
-    let _ = ureq::post(&format!("{base}/reindex"))
+    let _ = host.post("/reindex")
         .config()
         .timeout_global(Some(Duration::from_secs(10)))
         .build()
@@ -1119,7 +1160,7 @@ mod tests {
         let started = Instant::now();
         let poller = {
             let handle = handle.clone();
-            std::thread::spawn(move || poll_health(handle, "http://127.0.0.1:9".into(), 0))
+            std::thread::spawn(move || poll_health(handle, Endpoint::new(9, &Token::generate().unwrap()), 0))
         };
         poller.join().unwrap();
         assert!(matches!(handle.status(), HostStatus::Unavailable));

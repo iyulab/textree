@@ -1,7 +1,7 @@
 Third-party licenses
 ====================
 
-This program includes the following 637 third-party packages.
+This program includes the following 638 third-party packages.
 
 ------------------------------------------------------------------------------
 adler2 2.0.1
@@ -17521,6 +17521,13 @@ Upstream: https://github.com/dotnet/dotnet
 System.Numerics.Tensors 10.0.8
 License: MIT
 Upstream: https://github.com/dotnet/dotnet
+
+------------------------------------------------------------------------------
+TauriKit.Sidecar.Loopback 0.10.0
+License: MIT
+Upstream: https://github.com/iyulab/tauri-kit
+
+Same license text as tauri-kit-credentials 0.10.0.
 
 ------------------------------------------------------------------------------
 Tiktoken.Core 3.1.5
