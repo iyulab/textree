@@ -9,36 +9,12 @@ use std::io;
 use std::path::{Component, Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-/// How long a refusal that passes on its own is waited out before it is reported.
-const PATIENCE: std::time::Duration = std::time::Duration::from_millis(1_000);
-
 /// Runs `op` again for a moment while Windows refuses it because another program has a file it
 /// touches open — a virus scanner, a search indexer or a sync tool looking at what was just
 /// written. That refusal passes on its own; reporting it would say a rename or a save failed when
 /// a moment later it would have gone through. Any other failure is reported at once, and so is
-/// this one when it lasts: then something really does hold the file.
-pub(crate) fn patiently<T>(mut op: impl FnMut() -> io::Result<T>) -> io::Result<T> {
-    let started = std::time::Instant::now();
-    let mut pause = std::time::Duration::from_millis(10);
-    loop {
-        match op() {
-            Err(e) if passes_on_its_own(&e) && started.elapsed() < PATIENCE => {
-                std::thread::sleep(pause);
-                pause = (pause * 2).min(std::time::Duration::from_millis(200));
-            }
-            done => return done,
-        }
-    }
-}
-
-/// Windows refuses a rename with "access denied" or "sharing violation" while another process has
-/// a file it moves open without allowing it to be deleted — for a folder, any file inside it.
-/// Elsewhere a rename is not refused that way.
-pub(crate) fn passes_on_its_own(e: &io::Error) -> bool {
-    const ERROR_ACCESS_DENIED: i32 = 5;
-    const ERROR_SHARING_VIOLATION: i32 = 32;
-    cfg!(windows) && matches!(e.raw_os_error(), Some(ERROR_ACCESS_DENIED | ERROR_SHARING_VIOLATION))
-}
+/// this one when it lasts (a second): then something really does hold the file.
+pub(crate) use tauri_kit_fs::patiently;
 
 /// Renames a file or folder, waiting out a refusal that passes on its own ([`patiently`]).
 /// Every move in this module goes through here — the ones that undo a half-done change most of
