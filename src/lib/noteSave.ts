@@ -557,12 +557,12 @@ export class NoteSave {
       // Said even over another warning — the copy is news — and the other warning is carried along.
       const others = this.#stranded.length > 0 ? " Other edits are still waiting to be saved." : "";
       s.saveError = friendlyError(
-        `"${name}" changed on disk before your earlier edits to it could be saved, so they were kept as "${noteStem(copy)}".${others}`,
+        `"${name}" also changed elsewhere before your earlier edits to it could be saved, so they were kept as "${noteStem(copy)}".${others}`,
       );
     } catch (e) {
       this.#strand(root, job);
       s.saveError = friendlyError(
-        `Your last edits to "${name}" are not saved yet — it changed on disk, and keeping them as a copy failed (${friendlyError(e).summary}). They are kept and tried again with every save.`,
+        `Your last edits to "${name}" are not saved yet — it also changed elsewhere, and keeping them as a copy failed (${friendlyError(e).summary}). They are kept and tried again with every save.`,
       );
     }
   }

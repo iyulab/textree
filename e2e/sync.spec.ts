@@ -300,7 +300,7 @@ test("external modify during unsaved edit → conflict banner + resolution butto
   const vault = createTempVault({ "clash.md": "initial\n" });
   try {
     await triggerConflict(vault);
-    await expect(page.locator(".banner")).toContainText("changed on disk");
+    await expect(page.locator(".banner")).toContainText("This note also changed elsewhere");
     await expect(page.getByRole("button", { name: "Load the copy on disk" })).toBeVisible();
     await expect(page.getByRole("button", { name: "Keep my edits" })).toBeVisible();
     // Answer it: the app will not leave this note while the question is open.

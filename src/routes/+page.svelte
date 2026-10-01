@@ -2016,7 +2016,7 @@
           data-testid="conflict-banner"
           bind:this={conflictBanner}
         >
-          <span>This note changed on disk while you have unsaved edits.</span>
+          <span>This note also changed elsewhere while you have unsaved edits.</span>
           <span class="banner-actions">
             <button onclick={resolveTakeDisk}>Load the copy on disk</button>
             <button onclick={resolveKeepMine}>Keep my edits</button>
