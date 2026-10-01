@@ -63,15 +63,18 @@ const WINDOWS_RESERVED: &[&str] = &[
 ];
 
 /// Whether the string is safe as a new name for a node (note/folder). Rejects path separators,
-/// parent references, reserved dot names, and Windows reserved device names.
+/// parent references, reserved dot names, Windows reserved device names, the characters Windows
+/// does not allow in a name, and a trailing dot or space — which Windows drops without a word, so
+/// the name on disk would not be the one asked for. Held on every platform: a folder of notes
+/// moves between machines, and a name one system took that another cannot open strands the note.
 pub fn is_valid_name(name: &str) -> bool {
     if name.is_empty()
         || name == "."
         || name == ".."
         || name.starts_with('.') // avoid collision with reserved/hidden names like .textree
-        || name.contains('/')
-        || name.contains('\\')
-        || name.contains('\0')
+        || name.ends_with('.')
+        || name.ends_with(' ')
+        || name.chars().any(|c| matches!(c, '/' | '\\' | '<' | '>' | ':' | '"' | '|' | '?' | '*') || c.is_control())
     {
         return false;
     }
@@ -110,6 +113,19 @@ mod tests {
         assert!(!is_valid_name(".textree"));
         assert!(!is_valid_name("a/b"));
         assert!(!is_valid_name("a\\b"));
+        assert!(!is_valid_name("a\0b"));
+    }
+
+    #[test]
+    fn valid_name_rejects_what_windows_cannot_hold_or_silently_changes() {
+        for name in ["What?", "a:b", "a*b", "a<b", "a>b", "a|b", "say \"hi\"", "tab\there"] {
+            assert!(!is_valid_name(name), "{name:?} cannot be a name on Windows");
+        }
+        // Windows drops a trailing dot or space, so the note would land under another name.
+        assert!(!is_valid_name("draft."));
+        assert!(!is_valid_name("draft "));
+        assert!(is_valid_name("draft.md"));
+        assert!(is_valid_name("a b"));
     }
 
     #[test]

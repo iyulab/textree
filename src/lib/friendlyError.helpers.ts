@@ -72,7 +72,7 @@ const RULES: Rule[] = [
   {
     match: ["invalid name"],
     summary:
-      "That name can't be used. Avoid / and \\ and a leading dot, and Windows reserved names (CON, PRN, AUX, NUL, COM1-9, LPT1-9).",
+      "That name can't be used. Avoid the characters / \\ : * ? \" < > |, a leading dot, a dot or space at the end, and Windows reserved names (CON, PRN, AUX, NUL, COM1-9, LPT1-9).",
   },
   {
     match: ["canopy failed", "failed to start canopy"],
