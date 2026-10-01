@@ -550,6 +550,44 @@ fn commit_paths_once(
         .find_reference(reference)
         .ok()
         .and_then(|r| r.peel_to_commit().ok());
+    commit_on(repo, reference, parent, entries, message, author, committer, unchanged)
+}
+
+/// Adds a revision to `reference` on top of `tip` — only while the reference still points there.
+///
+/// Never creates the reference. A reference that something else removed since `tip` was read
+/// (an alternative that ended, say) stays removed: writing it again would bring back a name its
+/// owner let go, holding a revision with nothing before it. Run inside [`advancing`], together
+/// with whatever read `tip`, so the read and the write are one turn.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn extend_once(
+    repo: &Repository,
+    reference: &str,
+    tip: Oid,
+    entries: &[(PathBuf, Vec<u8>)],
+    message: &str,
+    author: &Signature<'_>,
+    committer: &Signature<'_>,
+    unchanged: WhenUnchanged,
+) -> Result<Option<Oid>, git2::Error> {
+    if entries.is_empty() {
+        return Err(git2::Error::from_str("nothing to commit"));
+    }
+    let parent = repo.find_commit(tip)?;
+    commit_on(repo, reference, Some(parent), entries, message, author, committer, unchanged)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn commit_on(
+    repo: &Repository,
+    reference: &str,
+    parent: Option<git2::Commit<'_>>,
+    entries: &[(PathBuf, Vec<u8>)],
+    message: &str,
+    author: &Signature<'_>,
+    committer: &Signature<'_>,
+    unchanged: WhenUnchanged,
+) -> Result<Option<Oid>, git2::Error> {
     let mut tree = match parent.as_ref() {
         Some(commit) => Some(commit.tree()?),
         None => None,

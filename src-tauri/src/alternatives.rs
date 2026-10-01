@@ -18,7 +18,7 @@
 //! the note's file.
 
 use crate::git_engine::{
-    advancing, blob_in_tree, commit_paths, slashed, tip_tree, WhenUnchanged, NOTES_REF,
+    advancing, blob_in_tree, commit_paths, extend_once, slashed, tip_tree, WhenUnchanged, NOTES_REF,
 };
 use git2::{Oid, Repository, Signature};
 use std::path::{Path, PathBuf};
@@ -266,9 +266,13 @@ pub fn record(
     author: &Signature<'_>,
     committer: &Signature<'_>,
 ) -> Result<Option<Oid>, git2::Error> {
-    let alternative = get(repo, id)?;
-    let entries = [(PathBuf::from(&alternative.path), content.to_vec())];
-    commit_paths(repo, &open_ref(id), &entries, message, author, committer, WhenUnchanged::Skip)
+    // Read and written in one turn, on top of the revision read: an alternative that ends in
+    // between is not opened again under its old name.
+    advancing(|| {
+        let alternative = get(repo, id)?;
+        let entries = [(PathBuf::from(&alternative.path), content.to_vec())];
+        extend_once(repo, &open_ref(id), alternative.tip, &entries, message, author, committer, WhenUnchanged::Skip)
+    })
 }
 
 /// Ends the alternative: it moves, unchanged, to where ended ones are kept.
@@ -451,6 +455,45 @@ mod tests {
         assert!(picked(&repo).unwrap().is_empty());
         // Nothing more can be added to one that ended.
         assert!(record(&repo, &id, b"three", "late", &sig(), &sig()).is_err());
+    }
+
+    #[test]
+    fn a_version_written_on_top_of_a_name_that_ended_meanwhile_does_not_bring_it_back() {
+        // The step a version takes after reading the alternative: the open name is gone by the
+        // time it writes (the alternative ended in between).
+        let (_dir, repo) = repo_with(&[("a.md", "one")]);
+        let id = start(&repo, Path::new("a.md"), &sig(), &sig()).unwrap();
+        let read = get(&repo, &id).unwrap();
+        end(&repo, &id).unwrap();
+
+        let entries = [(PathBuf::from("a.md"), b"late".to_vec())];
+        let late = extend_once(&repo, &open_ref(&id), read.tip, &entries, "late", &sig(), &sig(), WhenUnchanged::Skip);
+        assert!(late.is_err());
+        assert_eq!(target(&repo, &open_ref(&id)), None, "the open name stays gone");
+        assert_eq!(target(&repo, &ended_ref(&id)), Some(read.tip));
+    }
+
+    #[test]
+    fn versions_and_ends_racing_never_leave_an_ended_alternative_open() {
+        let (dir, repo) = repo_with(&[("a.md", "one")]);
+        for round in 0..40 {
+            let id = start(&repo, Path::new("a.md"), &sig(), &sig()).unwrap();
+            let at = dir.path().to_path_buf();
+            let (writer, ender) = (id.clone(), id.clone());
+            let (w_at, e_at) = (at.clone(), at.clone());
+            let w = std::thread::spawn(move || {
+                let repo = Repository::open(&w_at).unwrap();
+                let _ = record(&repo, &writer, format!("take {round}").as_bytes(), "try", &sig(), &sig());
+            });
+            let e = std::thread::spawn(move || {
+                let repo = Repository::open(&e_at).unwrap();
+                end(&repo, &ender).unwrap();
+            });
+            w.join().unwrap();
+            e.join().unwrap();
+            assert_eq!(target(&repo, &open_ref(&id)), None, "round {round}: ended, so not open");
+            assert!(target(&repo, &ended_ref(&id)).is_some());
+        }
     }
 
     #[test]
