@@ -34,3 +34,6 @@ CLAUDE.md
 
 # Subagent-driven development scratch (briefs, reports, diffs, ledger)
 /.superpowers/
+
+# Planning and design scratch written by development tooling (kept outside this repository)
+/docs/superpowers/
