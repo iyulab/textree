@@ -4725,9 +4725,9 @@ dependencies = [
 
 [[package]]
 name = "tauri-kit-credentials"
-version = "0.7.0"
+version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "436a29953c3d00d93a779c031abea1ff05b4e2cf03d736bc1b8ba62a5fca79aa"
+checksum = "d426a40bfc596d42055309844c68707600f56c3747786ff0b69a46d4ee46cb94"
 dependencies = [
  "apple-native-keyring-store",
  "keyring-core",
@@ -4737,9 +4737,9 @@ dependencies = [
 
 [[package]]
 name = "tauri-kit-fs"
-version = "0.7.0"
+version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9f77c3903cf27ebbb6f5f4ded880d11069f45e78a978d2db9c148c3eef686a97"
+checksum = "dfdb898c4372c60b14fef0b6a021c52b2704efa51724a77634bb6d4f473abbc2"
 dependencies = [
  "dunce",
  "libc",
@@ -4749,9 +4749,9 @@ dependencies = [
 
 [[package]]
 name = "tauri-kit-sidecar"
-version = "0.7.0"
+version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "13972c97c4bf99c9fa1c109ec16062ca81d1813aea6133e5baeea8ebdcf81ff7"
+checksum = "82254f320a45bc1e2a85bda6a2d4349d6489f8dc080d0631b0f59024189d1a25"
 dependencies = [
  "libc",
  "windows-sys 0.61.2",
@@ -4759,9 +4759,9 @@ dependencies = [
 
 [[package]]
 name = "tauri-kit-watch"
-version = "0.7.0"
+version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9c49e6e892c99c2a4fd9884926b476f0e477eeffc1361e6d73cab71959679997"
+checksum = "f4af3aa54a4b134ed8aa64eace20b6bf6b7547005b4ccd2744527f86fd33274b"
 dependencies = [
  "notify-debouncer-full",
  "tauri-kit-fs",
