@@ -9,6 +9,8 @@ import {
   expectOpenNote,
   listVaultDir,
   sidecarDir,
+  addVersion,
+  refsUnder,
 } from "./helpers";
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -36,13 +38,6 @@ async function command(p: Page, query: string): Promise<void> {
   await expect(p.getByTestId("palette-item").first()).toBeVisible();
   await p.keyboard.press("Enter");
   await expect(p.getByTestId("palette-overlay")).toHaveCount(0);
-}
-
-async function addVersion(p: Page): Promise<void> {
-  await p.keyboard.press("Control+Shift+S");
-  await expect(p.getByTestId("add-version")).toBeVisible();
-  await p.getByTestId("add-version-confirm").click();
-  await expect(p.getByTestId("add-version")).toHaveCount(0);
 }
 
 /** Replaces what the editor shows with `text`. */
@@ -75,12 +70,6 @@ function draftsKept(vault: string): string[] {
   const dir = join(sidecarDir(vault), "drafts");
   if (!existsSync(dir)) return [];
   return readdirSync(dir).flatMap((id) => readdirSync(join(dir, id)));
-}
-
-function refsUnder(vault: string, prefix: string): string[] {
-  return execFileSync("git", ["-C", vault, "for-each-ref", "--format=%(refname)", prefix], { encoding: "utf8" })
-    .split("\n")
-    .filter(Boolean);
 }
 
 test("alternatives: start one, compare word by word, use it", async () => {

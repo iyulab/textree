@@ -19,27 +19,13 @@ import {
   removeTempVault,
   readVaultFile,
   expectOpenNote,
+  tauriInvoke,
 } from "./helpers";
 
 // ── Profile detection ────────────────────────────────────────────────────────
 const PROFILE = process.env["TEXTREE_SEMANTIC_E2E"] ?? "";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
-
-/**
- * Invoke a Tauri command through the live IPC bridge (__TAURI_INTERNALS__).
- * Works only when the test bridge (__textreeTest) is up, i.e. after connectToApp.
- */
-async function tauriInvoke<T>(page: Page, cmd: string, args: Record<string, unknown> = {}): Promise<T> {
-  return page.evaluate(
-    ([c, a]) =>
-      (
-        (window as unknown as { __TAURI_INTERNALS__?: { invoke: (cmd: string, args?: unknown) => Promise<unknown> } })
-          .__TAURI_INTERNALS__
-      )?.invoke(c, a) as Promise<T>,
-    [cmd, args] as const,
-  ) as Promise<T>;
-}
 
 /**
  * Poll host_status via Tauri IPC until status === "ready" (max timeoutMs).

@@ -2,6 +2,7 @@ import { chromium, expect, type Browser, type Page, type Locator } from "@playwr
 import { resolve, join } from "node:path";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, readdirSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { execFileSync } from "node:child_process";
 
 /**
  * Handshake file scripts/dev-e2e.mjs writes with the CDP endpoint it launched the app on.
@@ -290,3 +291,35 @@ export async function dragNodeOnto(page: Page, src: Locator, dst: Locator): Prom
 }
 
 export { DRAG_MIME };
+
+/** Calls a command of the running app over its IPC bridge, as the page itself would. */
+export async function tauriInvoke<T = unknown>(page: Page, cmd: string, args: Record<string, unknown> = {}): Promise<T> {
+  return page.evaluate(
+    ([c, a]) =>
+      (
+        window as unknown as {
+          __TAURI_INTERNALS__: { invoke: (cmd: string, args?: unknown) => Promise<unknown> };
+        }
+      ).__TAURI_INTERNALS__.invoke(c, a),
+    [cmd, args] as const,
+  ) as Promise<T>;
+}
+
+/** Adds a version of the open note through the dialog, as it opens (no name). */
+export async function addVersion(page: Page): Promise<void> {
+  await page.keyboard.press("Control+Shift+S");
+  await expect(page.getByTestId("add-version")).toBeVisible();
+  await page.getByTestId("add-version-confirm").click();
+  await expect(page.getByTestId("add-version")).toHaveCount(0);
+  await expect(page.getByTestId("add-version-error")).toHaveCount(0);
+}
+
+/** Runs git in `repo`, line endings as stored. */
+export function git(repo: string, ...args: string[]): string {
+  return execFileSync("git", ["-c", "core.autocrlf=false", "-C", repo, ...args], { encoding: "utf8" }).trim();
+}
+
+/** The full names of the refs under `prefix` in `repo`. */
+export function refsUnder(repo: string, prefix: string): string[] {
+  return git(repo, "for-each-ref", "--format=%(refname)", prefix).split("\n").filter(Boolean);
+}

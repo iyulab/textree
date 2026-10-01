@@ -32,36 +32,13 @@ import {
   createTempVault,
   removeTempVault,
   readVaultFile,
+  tauriInvoke,
 } from "./helpers";
 
 // ── Profile detection ────────────────────────────────────────────────────────
 const PROFILE = process.env["TEXTREE_ASK_E2E"] ?? "";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
-
-/**
- * Invoke a Tauri command through the live IPC bridge (__TAURI_INTERNALS__).
- * Works only after connectToApp (guarantees the test bridge is up).
- */
-async function tauriInvoke<T>(
-  page: Page,
-  cmd: string,
-  args: Record<string, unknown> = {},
-): Promise<T> {
-  return page.evaluate(
-    ([c, a]) =>
-      (
-        (
-          window as unknown as {
-            __TAURI_INTERNALS__?: {
-              invoke: (cmd: string, args?: unknown) => Promise<unknown>;
-            };
-          }
-        ).__TAURI_INTERNALS__
-      )?.invoke(c, a) as Promise<T>,
-    [cmd, args] as const,
-  ) as Promise<T>;
-}
 
 /**
  * Poll host_status via Tauri IPC until status === "ready" AND generatorReady (max timeoutMs).

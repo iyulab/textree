@@ -1,5 +1,4 @@
 import { test, expect, type Browser, type Page } from "@playwright/test";
-import { execFileSync } from "node:child_process";
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
 import {
@@ -10,6 +9,7 @@ import {
   readVaultFile,
   writeVaultFile,
   E2E_WATCHDOG_INTERVAL_MS,
+  git,
 } from "./helpers";
 
 /**
@@ -40,10 +40,6 @@ test.afterAll(async () => {
 
 /** Several probe cycles, plus the debounce, with room to spare. */
 const SEVERAL_PROBES = E2E_WATCHDOG_INTERVAL_MS * 3 + 1500;
-
-function git(repo: string, ...args: string[]): string {
-  return execFileSync("git", ["-c", "core.autocrlf=false", "-C", repo, ...args], { encoding: "utf8" }).trim();
-}
 
 function someonesRepository(files: Record<string, string>): string {
   const repo = createTempVault(files);

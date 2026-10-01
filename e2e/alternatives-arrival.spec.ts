@@ -1,5 +1,4 @@
 import { test, expect, type Browser, type Page } from "@playwright/test";
-import { execFileSync } from "node:child_process";
 import {
   connectToApp,
   loadVault,
@@ -8,6 +7,9 @@ import {
   readVaultFile,
   expectOpenNote,
   writeVaultFile,
+  tauriInvoke,
+  addVersion,
+  refsUnder,
 } from "./helpers";
 import { join } from "node:path";
 import { gitAvailable, startTestRemote, type TestRemote } from "./git-remote";
@@ -33,26 +35,6 @@ test.beforeAll(async () => {
 test.afterAll(async () => {
   await browser?.close();
 });
-
-async function tauriInvoke(p: Page, cmd: string, args: Record<string, unknown>): Promise<unknown> {
-  return p.evaluate(
-    ([c, a]) =>
-      (
-        window as unknown as {
-          __TAURI_INTERNALS__: { invoke: (cmd: string, args?: unknown) => Promise<unknown> };
-        }
-      ).__TAURI_INTERNALS__.invoke(c, a),
-    [cmd, args] as const,
-  );
-}
-
-async function addVersion(p: Page): Promise<void> {
-  await p.keyboard.press("Control+Shift+S");
-  await expect(p.getByTestId("add-version")).toBeVisible();
-  await p.getByTestId("add-version-confirm").click();
-  await expect(p.getByTestId("add-version")).toHaveCount(0);
-  await expect(p.getByTestId("add-version-error")).toHaveCount(0);
-}
 
 /** Connects the open folder to `remote` and waits for the first exchange to finish. */
 async function connect(p: Page, remote: TestRemote): Promise<void> {
@@ -90,12 +72,6 @@ function readIfThere(vault: string, rel: string): string {
   } catch {
     return "";
   }
-}
-
-function refsUnder(vault: string, prefix: string): string[] {
-  return execFileSync("git", ["-C", vault, "for-each-ref", "--format=%(refname)", prefix], { encoding: "utf8" })
-    .split("\n")
-    .filter(Boolean);
 }
 
 test("alternatives: a note changed in two folders arrives as an alternative, and the decision travels", async () => {

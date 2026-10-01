@@ -1,7 +1,14 @@
 import { test, expect, type Browser, type Page } from "@playwright/test";
-import { execFileSync } from "node:child_process";
 import { readdirSync } from "node:fs";
-import { connectToApp, loadVault, createTempVault, removeTempVault, readVaultFile, writeVaultFile } from "./helpers";
+import {
+  connectToApp,
+  loadVault,
+  createTempVault,
+  removeTempVault,
+  readVaultFile,
+  writeVaultFile,
+  git,
+} from "./helpers";
 
 /**
  * Opening a folder that is already someone's git repository, and adding a version in it.
@@ -25,10 +32,6 @@ test.beforeAll(async () => {
 test.afterAll(async () => {
   await browser?.close();
 });
-
-function git(repo: string, ...args: string[]): string {
-  return execFileSync("git", ["-c", "core.autocrlf=false", "-C", repo, ...args], { encoding: "utf8" }).trim();
-}
 
 /** Everything about the repository its owner would notice changing. */
 function ownerView(repo: string) {

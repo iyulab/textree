@@ -4,7 +4,6 @@ import {
   loadVault,
   createTempVault,
   removeTempVault,
-  readVaultFile,
   readSidecar,
   listVaultDir,
 } from "./helpers";

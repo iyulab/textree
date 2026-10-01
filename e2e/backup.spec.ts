@@ -6,6 +6,8 @@ import {
   removeTempVault,
   readVaultFile,
   expectOpenNote,
+  tauriInvoke,
+  addVersion,
 } from "./helpers";
 import { gitAvailable, startTestRemote, type TestRemote } from "./git-remote";
 
@@ -29,27 +31,6 @@ test.beforeAll(async () => {
 test.afterAll(async () => {
   await browser?.close();
 });
-
-async function tauriInvoke(p: Page, cmd: string, args: Record<string, unknown>): Promise<unknown> {
-  return p.evaluate(
-    ([c, a]) =>
-      (
-        window as unknown as {
-          __TAURI_INTERNALS__: { invoke: (cmd: string, args?: unknown) => Promise<unknown> };
-        }
-      ).__TAURI_INTERNALS__.invoke(c, a),
-    [cmd, args] as const,
-  );
-}
-
-/** Add a version of the open note through the dialog. */
-async function addVersion(p: Page): Promise<void> {
-  await p.keyboard.press("Control+Shift+S");
-  await expect(p.getByTestId("add-version")).toBeVisible();
-  await p.getByTestId("add-version-confirm").click();
-  await expect(p.getByTestId("add-version")).toHaveCount(0);
-  await expect(p.getByTestId("add-version-error")).toHaveCount(0);
-}
 
 /** From the indicator, connect the open folder to `remote` with `token`. */
 async function connectFromIndicator(p: Page, remote: TestRemote, token: string): Promise<void> {
