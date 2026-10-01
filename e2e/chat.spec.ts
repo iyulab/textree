@@ -473,10 +473,9 @@ test.describe("host-present: chat streams answers, keeps multi-turn history", ()
       const overflows = await turns.evaluate((el) => el.scrollHeight - el.clientHeight > 48);
       const scrollBtn = panel.locator(".chat-scrollbtn");
       if (overflows) {
-        await turns.evaluate((el) => {
-          el.scrollTop = 0;
-          el.dispatchEvent(new Event("scroll"));
-        });
+        // The reader scrolls up with the wheel — their own hand, which is what unpins.
+        await turns.hover();
+        await page.mouse.wheel(0, -5000);
         await expect(scrollBtn).toBeVisible({ timeout: 3_000 });
         await scrollBtn.click();
         await expect(scrollBtn).toBeHidden({ timeout: 3_000 });

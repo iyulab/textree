@@ -147,10 +147,23 @@
   let atBottom = $state(true);
   const NEAR_BOTTOM_PX = 48; // treat "within 48px of the end" as pinned (tolerates sub-pixel rounding)
 
+  // Only the reader's own hand unpins — a wheel or key moving up, or a drag/touch that ends away
+  // from the end. Scroll events alone can't tell: they arrive after the scroll that caused them,
+  // and layout changes (an answer re-rendered as markdown when it ends, the lines that land with
+  // it) move the scroll position too. Measured then, our own jump to the end looked like the
+  // reader leaving it, and following stopped short of the last lines.
+  let handOnTranscript = false;
+  const UP_KEYS = new Set(["ArrowUp", "PageUp", "Home"]);
+
   function updateAtBottom() {
     const el = turnsEl;
     if (!el) return;
-    atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < NEAR_BOTTOM_PX;
+    if (el.scrollHeight - el.scrollTop - el.clientHeight < NEAR_BOTTOM_PX) atBottom = true;
+    else if (handOnTranscript) atBottom = false;
+  }
+
+  function unpinIfMovingUp(up: boolean) {
+    if (up && turnsEl && turnsEl.scrollTop > 0) atBottom = false;
   }
 
   function scrollToBottom() {
@@ -160,16 +173,27 @@
     atBottom = true;
   }
 
-  // Re-runs as turns are pushed and as tokens append to the streaming bubble (deep runes
-  // reactivity on turns.length + the last bubble's text). Effects flush after the DOM updates,
-  // so scrollHeight already reflects the new content. Follow only while pinned.
+  // Follow the content's height, not the data that feeds it: a pushed turn and each streamed
+  // token grow it, and so does everything that lands when an answer ends — the bubble re-rendered
+  // as markdown, the citations, the end notice, Regenerate. Watching only the text left the
+  // transcript short of the end by whatever arrived last. Follow only while pinned.
+  let contentEl = $state<HTMLDivElement | null>(null);
   $effect(() => {
-    const turns = chatStore.turns;
-    void turns.length;
-    void turns.at(-1)?.text;
-    if (atBottom) scrollToBottom();
+    const content = contentEl;
+    if (!content) return;
+    const follow = new ResizeObserver(() => {
+      if (atBottom) scrollToBottom();
+    });
+    follow.observe(content);
+    return () => follow.disconnect();
   });
 </script>
+
+<svelte:window
+  onpointerup={() => (handOnTranscript = false)}
+  ontouchend={() => (handOnTranscript = false)}
+  ontouchcancel={() => (handOnTranscript = false)}
+/>
 
 <section class="chat-view" aria-label="Chat about your notes">
   {#if !consented}
@@ -194,7 +218,22 @@
     </div>
 
     <div class="chat-scroll-wrap">
-    <div class="chat-turns" bind:this={turnsEl} onscroll={updateAtBottom}>
+    <!-- A scrollable region takes focus so the keyboard can scroll it (WCAG 2.1.1); its key,
+         wheel and pointer listeners only watch the reader scroll, they are not controls. -->
+    <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
+    <div
+      class="chat-turns"
+      role="region"
+      aria-label="Conversation"
+      tabindex="0"
+      bind:this={turnsEl}
+      onscroll={updateAtBottom}
+      onwheel={(e) => unpinIfMovingUp(e.deltaY < 0)}
+      onkeydown={(e) => unpinIfMovingUp(UP_KEYS.has(e.key))}
+      onpointerdown={() => (handOnTranscript = true)}
+      ontouchstart={() => (handOnTranscript = true)}
+    >
+      <div class="chat-turns-content" bind:this={contentEl}>
       {#each chatStore.turns as turn, i (i)}
         <!-- The last assistant turn is "streaming" while busy: keep it raw text inside a polite
              live region so tokens are announced naturally and partial markdown does not flicker.
@@ -240,6 +279,7 @@
           {/if}
         </div>
       {/each}
+      </div>
     </div>
       {#if !atBottom}
         <button
@@ -425,6 +465,8 @@
     flex: 1;
     min-height: 0;
     overflow-y: auto;
+  }
+  .chat-turns-content {
     display: flex;
     flex-direction: column;
     gap: var(--sp-3);
@@ -448,6 +490,7 @@
     cursor: pointer;
   }
   .chat-scrollbtn:hover { background: var(--bg-secondary-alt); }
+  .chat-turns:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
   .chat-scrollbtn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   .chat-turn { display: flex; flex-direction: column; gap: var(--sp-1); }
   .chat-turn.user { align-items: flex-end; }
