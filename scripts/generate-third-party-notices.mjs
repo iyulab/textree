@@ -32,6 +32,7 @@ import { basename, join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   PERMISSIVE,
+  applyPinned,
   cargoPackages,
   needsReview as unaccepted,
   noticesTable as table,
@@ -49,6 +50,11 @@ const TARGET = "x86_64-pc-windows-msvc";
 const OUTPUT = join(ROOT, "THIRD-PARTY-NOTICES.md");
 const LICENSES_OUTPUT = join(ROOT, "THIRD-PARTY-LICENSES.txt");
 const MISSING_TEXTS = join(ROOT, "scripts", "notices-missing-texts.json");
+// License texts of packages that publish without one, taken from their source at the published
+// version and checked against a SHA-256. Refresh with
+// `npx tauri-kit-dev notice-pins --pins scripts/notice-pins.json --dir scripts/notice-texts`.
+const PINS = join(ROOT, "scripts", "notice-pins.json");
+const PINNED_TEXTS = join(ROOT, "scripts", "notice-texts");
 const PRELUDE = join(ROOT, "scripts", "third-party-notices-prelude.md");
 const RENDERER_LOCK = join(ROOT, "canopy-sidecar", "package-lock.json");
 const RENDERER_ASSEMBLY = join(ROOT, "scripts", "assemble-canopy-sidecar.ps1");
@@ -152,7 +158,8 @@ const body = [
   table(host),
   "",
   "The license texts these components carry are reproduced in THIRD-PARTY-LICENSES.txt, next to this",
-  "file. A few publish without one; for those the text is at the upstream location listed above.",
+  "file. For a component that publishes without one, the text is taken from its source at the same",
+  "version and its origin is named there; the few whose source has none either are listed by name.",
   "",
 ].join("\n");
 
@@ -175,7 +182,8 @@ function missingTexts(packages) {
   };
 }
 
-const all = [...rust, ...npm, ...renderer, ...host];
+const pinned = applyPinned([...rust, ...npm, ...renderer, ...host], { pins: PINS, dir: PINNED_TEXTS });
+const all = pinned.packages;
 const licenses = noticesText(all, { title: "Third-party licenses" });
 const gaps = missingTexts(all);
 
@@ -207,6 +215,20 @@ if (gaps.stale.length) {
   console.error(
     "scripts/notices-missing-texts.json lists packages that now carry their text, or are gone — remove them:\n" +
       gaps.stale.map((n) => `  ${n}`).join("\n"),
+  );
+  process.exitCode = 1;
+}
+if (pinned.problems.length) {
+  console.error(
+    "Pinned license texts that could not be used:\n" +
+      pinned.problems.map((x) => `  ${x.key}: ${x.problem}`).join("\n"),
+  );
+  process.exitCode = 1;
+}
+if (pinned.unused.length) {
+  console.error(
+    "scripts/notice-pins.json pins packages that are gone, moved to another version, or now carry their text — update or remove them:\n" +
+      pinned.unused.map((k) => `  ${k}`).join("\n"),
   );
   process.exitCode = 1;
 }

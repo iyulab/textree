@@ -720,4 +720,5 @@ The 72 NuGet packages below put code into the helper (runtime or native assets).
 | `Unpdf` | 0.22.0 | MIT | https://github.com/iyulab/unpdf |
 
 The license texts these components carry are reproduced in THIRD-PARTY-LICENSES.txt, next to this
-file. A few publish without one; for those the text is at the upstream location listed above.
+file. For a component that publishes without one, the text is taken from its source at the same
+version and its origin is named there; the few whose source has none either are listed by name.

@@ -1,0 +1,334 @@
+{
+  "alloc-stdlib@0.2.4": [
+    {
+      "source": "https://raw.githubusercontent.com/dropbox/rust-alloc-no-stdlib/ae42d22078b98549e987d2f03d12df7b984fde47/LICENSE",
+      "sha256": "c0c56f26d9c051cac4d200c34c84e7ae9aaa853e01a982a1df08b09931e518ae"
+    }
+  ],
+  "Anthropic@12.53.0": [
+    {
+      "source": "https://raw.githubusercontent.com/anthropics/anthropic-sdk-csharp/d84902e4ac1a50503f39e06b34ab398ea2e4be16/LICENSE",
+      "sha256": "8bf96984ff8bcfae7e48cae76a529e8a25317ba9e02abf7fd3cc64fdf95657a6"
+    }
+  ],
+  "CsvHelper@33.1.0": [
+    {
+      "source": "https://raw.githubusercontent.com/JoshClose/CsvHelper/5dad8b8b1d8b074f8353cfd482e939db788a8927/LICENSE.txt",
+      "sha256": "58d0d21c221a085b56fc3a5bdcc62a612149413df288d98d536ccbb221f249ac"
+    }
+  ],
+  "datasketches@0.2.0": [
+    {
+      "source": "https://raw.githubusercontent.com/apache/datasketches-rust/fdb38b85d22e6549ab283bf3b9b133659267d19f/LICENSE",
+      "sha256": "2a93522cc3e0d15510a70e0e7aaf33dc6a1588c39ca4a5c60c4b0121ed25eaf4"
+    },
+    {
+      "source": "https://raw.githubusercontent.com/apache/datasketches-rust/fdb38b85d22e6549ab283bf3b9b133659267d19f/NOTICE",
+      "sha256": "624b424b930d7ce49f8856323c6aa5ffbcaa71a474d60bf8f60852f8aa20bcfa"
+    }
+  ],
+  "defmt-parser@1.0.0": [
+    {
+      "source": "https://raw.githubusercontent.com/knurling-rs/defmt/4a8cdb44891ed57b8ff5a023b6bec7137c48708f/LICENSE-APACHE",
+      "sha256": "8173d5c29b4f956d532781d2b86e4e30f83e6b7878dce18c919451d6ba707c90"
+    },
+    {
+      "source": "https://raw.githubusercontent.com/knurling-rs/defmt/4a8cdb44891ed57b8ff5a023b6bec7137c48708f/LICENSE-MIT",
+      "sha256": "2710a622a896bba67356913d4d0492cab5465f61b2ecce6d880aeb483834fb50"
+    }
+  ],
+  "ExcelDataReader@3.7.0": [
+    {
+      "source": "https://raw.githubusercontent.com/ExcelDataReader/ExcelDataReader/840007736467bb66be083764021a3a6b9afad5c2/LICENSE",
+      "sha256": "52ba99951f976c3c89ac69d9b3bed7ca264f7aac0253c61c163dc3b658fd0f04"
+    }
+  ],
+  "Google.GenAI@1.21.0": [
+    {
+      "source": "https://raw.githubusercontent.com/googleapis/dotnet-genai/189f46b705b9061b3d95638cb0ef623a919d4632/LICENSE",
+      "sha256": "58d1e17ffe5109a7ae296caafcadfdbe6a7d176f0bc4ab01e12a689b0499d8bd"
+    }
+  ],
+  "Google.Protobuf@3.30.2": [
+    {
+      "source": "https://raw.githubusercontent.com/protocolbuffers/protobuf/43e1626812c1b543e56a7bec59dc09eb18248bd2/LICENSE",
+      "sha256": "6e5e117324afd944dcf67f36cf329843bc1a92229a8cd9bb573d7a83130fea7d"
+    }
+  ],
+  "HtmlAgilityPack@1.12.4": [
+    {
+      "source": "https://raw.githubusercontent.com/zzzprojects/html-agility-pack/64a718a815a6a25e03a73d6c53dfc58a7ed692d3/LICENSE",
+      "sha256": "601b80e87b30b47c7b5389d3077fda67a37e7cb6b200405e4524217989c1fe92"
+    }
+  ],
+  "Markdig@1.3.2": [
+    {
+      "source": "https://raw.githubusercontent.com/xoofx/markdig/fc705234fa211d179ee1d5e7656b51ab99f70ca9/license.txt",
+      "sha256": "ae543293657b6782e3d4a76257dc4157210ce88a352ef8392065d3f04dcd88d1"
+    }
+  ],
+  "Microsoft.Data.Sqlite.Core@10.0.12": [
+    {
+      "source": "https://raw.githubusercontent.com/dotnet/dotnet/95017c711e6afc1085133d440e42b4bd78155701/LICENSE.TXT",
+      "sha256": "ae48df11a335dc1a615f4f938b69cba73bcf4485c4f97af49b38efb0f216353b"
+    }
+  ],
+  "Microsoft.EntityFrameworkCore.Abstractions@10.0.12": [
+    {
+      "source": "https://raw.githubusercontent.com/dotnet/dotnet/95017c711e6afc1085133d440e42b4bd78155701/LICENSE.TXT",
+      "sha256": "ae48df11a335dc1a615f4f938b69cba73bcf4485c4f97af49b38efb0f216353b"
+    }
+  ],
+  "Microsoft.EntityFrameworkCore.Relational@10.0.12": [
+    {
+      "source": "https://raw.githubusercontent.com/dotnet/dotnet/95017c711e6afc1085133d440e42b4bd78155701/LICENSE.TXT",
+      "sha256": "ae48df11a335dc1a615f4f938b69cba73bcf4485c4f97af49b38efb0f216353b"
+    }
+  ],
+  "Microsoft.EntityFrameworkCore.Sqlite.Core@10.0.12": [
+    {
+      "source": "https://raw.githubusercontent.com/dotnet/dotnet/95017c711e6afc1085133d440e42b4bd78155701/LICENSE.TXT",
+      "sha256": "ae48df11a335dc1a615f4f938b69cba73bcf4485c4f97af49b38efb0f216353b"
+    }
+  ],
+  "Microsoft.EntityFrameworkCore@10.0.12": [
+    {
+      "source": "https://raw.githubusercontent.com/dotnet/dotnet/95017c711e6afc1085133d440e42b4bd78155701/LICENSE.TXT",
+      "sha256": "ae48df11a335dc1a615f4f938b69cba73bcf4485c4f97af49b38efb0f216353b"
+    }
+  ],
+  "Microsoft.Extensions.AI.Abstractions@10.9.0": [
+    {
+      "source": "https://raw.githubusercontent.com/dotnet/extensions/b10f9c0a081b5dbb7755b8f5592e1d3c3f550a3a/LICENSE",
+      "sha256": "47f0ad8ba753eae5de6178291cd8f38bbb42d2368b177f8e11714ad17c701275"
+    }
+  ],
+  "Microsoft.Extensions.DependencyModel@10.0.12": [
+    {
+      "source": "https://raw.githubusercontent.com/dotnet/dotnet/95017c711e6afc1085133d440e42b4bd78155701/LICENSE.TXT",
+      "sha256": "ae48df11a335dc1a615f4f938b69cba73bcf4485c4f97af49b38efb0f216353b"
+    }
+  ],
+  "NTextCat@0.3.65": [
+    {
+      "source": "https://raw.githubusercontent.com/ivanakcheurov/ntextcat/1eb333ee76690a79a2eac1ecb45ff1377b1e2735/license.MIT",
+      "sha256": "7c32af9d750f53c3d00051c2a3ebd87dbc1970c9cf7b3c4587f7e3a508add425"
+    }
+  ],
+  "OpenAI@2.12.0": [
+    {
+      "source": "https://raw.githubusercontent.com/openai/openai-dotnet/6450c84ae936944613b1844d725466c9b450fa77/LICENSE",
+      "sha256": "5b1ac9960dc46756e316a2962c77fb8cbdee8fa87c9ab1825671235fac6a1f96"
+    }
+  ],
+  "ownedbytes@0.9.0": [
+    {
+      "source": "https://raw.githubusercontent.com/quickwit-oss/tantivy/c6e77d27c605cb3cea1a933fa7d68632aeb7865e/LICENSE",
+      "sha256": "acacd14bebbffdb30d62443c282fb4da3e81915a9f69c63d5d745a029f44de8a"
+    }
+  ],
+  "rehype-katex@7.0.1": [
+    {
+      "source": "https://raw.githubusercontent.com/remarkjs/remark-math/88a9497e1ede93b958237c85edbf5651faeca7af/license",
+      "sha256": "cb992262f361a5359e6771c28740d33c7041e15332ae8537fae40538992591a9"
+    }
+  ],
+  "remark-math@6.0.0": [
+    {
+      "source": "https://raw.githubusercontent.com/remarkjs/remark-math/d5d0660b150810a535bbb07eac6cc96a4510aa24/license",
+      "sha256": "cb992262f361a5359e6771c28740d33c7041e15332ae8537fae40538992591a9"
+    }
+  ],
+  "selectors@0.36.1": [
+    {
+      "source": "https://raw.githubusercontent.com/spdx/license-list-data/v3.29.0/text/MPL-2.0.txt",
+      "sha256": "66a3107d5ad6a058aab753eaac2047ccb2ed0e39465dd0fe5844da3e300d5172"
+    }
+  ],
+  "sqlite-vec@0.1.7-alpha.2.1": [
+    {
+      "source": "https://raw.githubusercontent.com/asg017/sqlite-vec/bdc336d1cf2a2222b6227784bd30c6631603279b/LICENSE-APACHE",
+      "sha256": "a38070a94d4afd9cd710e3ce67bd1de78097cfe1784c1f0109ac95d3c196bfdc"
+    },
+    {
+      "source": "https://raw.githubusercontent.com/asg017/sqlite-vec/bdc336d1cf2a2222b6227784bd30c6631603279b/LICENSE-MIT",
+      "sha256": "6ce72bbe12d975bd5286e5ab0a064c069693300c47bccbc57bec18485f1621ea"
+    }
+  ],
+  "SQLitePCLRaw.config.e_sqlite3@3.0.5": [
+    {
+      "source": "https://raw.githubusercontent.com/ericsink/SQLitePCL.raw/96043b8cff323f21919df86a431c136655d81b4a/LICENSE.TXT",
+      "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+    },
+    {
+      "source": "https://raw.githubusercontent.com/ericsink/SQLitePCL.raw/96043b8cff323f21919df86a431c136655d81b4a/NOTICE.TXT",
+      "sha256": "5a1ab2f670f86dd2f8d42e40a8459cc278ca6d5225a7e2a5fa3ea0184396a6d9"
+    }
+  ],
+  "SQLitePCLRaw.core@3.0.5": [
+    {
+      "source": "https://raw.githubusercontent.com/ericsink/SQLitePCL.raw/ed046114d5a30534e13294d94d78eb73de896ad4/LICENSE.TXT",
+      "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+    },
+    {
+      "source": "https://raw.githubusercontent.com/ericsink/SQLitePCL.raw/ed046114d5a30534e13294d94d78eb73de896ad4/NOTICE.TXT",
+      "sha256": "5a1ab2f670f86dd2f8d42e40a8459cc278ca6d5225a7e2a5fa3ea0184396a6d9"
+    }
+  ],
+  "SQLitePCLRaw.provider.e_sqlite3@3.0.5": [
+    {
+      "source": "https://raw.githubusercontent.com/ericsink/SQLitePCL.raw/ed046114d5a30534e13294d94d78eb73de896ad4/LICENSE.TXT",
+      "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+    },
+    {
+      "source": "https://raw.githubusercontent.com/ericsink/SQLitePCL.raw/ed046114d5a30534e13294d94d78eb73de896ad4/NOTICE.TXT",
+      "sha256": "5a1ab2f670f86dd2f8d42e40a8459cc278ca6d5225a7e2a5fa3ea0184396a6d9"
+    }
+  ],
+  "System.ClientModel@1.14.0": [
+    {
+      "source": "https://raw.githubusercontent.com/Azure/azure-sdk-for-net/3a58372182875061915cffce64f9b9d978a4ed6f/LICENSE.txt",
+      "sha256": "9b45236978bb5cd5de992021769e1eeaa79f0116d3b02cf8ba065a1ed603d5fa"
+    }
+  ],
+  "System.Memory.Data@10.0.3": [
+    {
+      "source": "https://raw.githubusercontent.com/dotnet/dotnet/c2435c3e0f46de784341ac3ed62863ce77e117b4/LICENSE.TXT",
+      "sha256": "ae48df11a335dc1a615f4f938b69cba73bcf4485c4f97af49b38efb0f216353b"
+    }
+  ],
+  "System.Numerics.Tensors@10.0.8": [
+    {
+      "source": "https://raw.githubusercontent.com/dotnet/dotnet/94ea82652cdd4e0f8046b5bd5becbd11461482ca/LICENSE.TXT",
+      "sha256": "ae48df11a335dc1a615f4f938b69cba73bcf4485c4f97af49b38efb0f216353b"
+    }
+  ],
+  "tantivy-bitpacker@0.10.0": [
+    {
+      "source": "https://raw.githubusercontent.com/quickwit-oss/tantivy/9e63fc508153ef770f9ff980c8fa2f11e8e2e6db/LICENSE",
+      "sha256": "acacd14bebbffdb30d62443c282fb4da3e81915a9f69c63d5d745a029f44de8a"
+    }
+  ],
+  "tantivy-columnar@0.7.0": [
+    {
+      "source": "https://raw.githubusercontent.com/quickwit-oss/tantivy/9e63fc508153ef770f9ff980c8fa2f11e8e2e6db/LICENSE",
+      "sha256": "acacd14bebbffdb30d62443c282fb4da3e81915a9f69c63d5d745a029f44de8a"
+    }
+  ],
+  "tantivy-common@0.11.0": [
+    {
+      "source": "https://raw.githubusercontent.com/quickwit-oss/tantivy/9e63fc508153ef770f9ff980c8fa2f11e8e2e6db/LICENSE",
+      "sha256": "acacd14bebbffdb30d62443c282fb4da3e81915a9f69c63d5d745a029f44de8a"
+    }
+  ],
+  "tantivy-query-grammar@0.26.0": [
+    {
+      "source": "https://raw.githubusercontent.com/quickwit-oss/tantivy/9e63fc508153ef770f9ff980c8fa2f11e8e2e6db/LICENSE",
+      "sha256": "acacd14bebbffdb30d62443c282fb4da3e81915a9f69c63d5d745a029f44de8a"
+    }
+  ],
+  "tantivy-sstable@0.7.0": [
+    {
+      "source": "https://raw.githubusercontent.com/quickwit-oss/tantivy/9e63fc508153ef770f9ff980c8fa2f11e8e2e6db/LICENSE",
+      "sha256": "acacd14bebbffdb30d62443c282fb4da3e81915a9f69c63d5d745a029f44de8a"
+    }
+  ],
+  "tantivy-stacker@0.7.0": [
+    {
+      "source": "https://raw.githubusercontent.com/quickwit-oss/tantivy/9e63fc508153ef770f9ff980c8fa2f11e8e2e6db/LICENSE",
+      "sha256": "acacd14bebbffdb30d62443c282fb4da3e81915a9f69c63d5d745a029f44de8a"
+    }
+  ],
+  "tantivy-tokenizer-api@0.7.0": [
+    {
+      "source": "https://raw.githubusercontent.com/quickwit-oss/tantivy/9e63fc508153ef770f9ff980c8fa2f11e8e2e6db/LICENSE",
+      "sha256": "acacd14bebbffdb30d62443c282fb4da3e81915a9f69c63d5d745a029f44de8a"
+    }
+  ],
+  "Tiktoken.Core@3.1.5": [
+    {
+      "source": "https://raw.githubusercontent.com/tryAGI/Tiktoken/871d38c16d8478faeb6d53f4fdf8a5e76c382854/LICENSE.txt",
+      "sha256": "0789f2ac922216b2f1e8b4b16135b32449771d512909a492f383c54aa477f3a0"
+    }
+  ],
+  "Tiktoken.Encodings.Abstractions@3.1.5": [
+    {
+      "source": "https://raw.githubusercontent.com/tryAGI/Tiktoken/871d38c16d8478faeb6d53f4fdf8a5e76c382854/LICENSE.txt",
+      "sha256": "0789f2ac922216b2f1e8b4b16135b32449771d512909a492f383c54aa477f3a0"
+    }
+  ],
+  "Tiktoken.Encodings.cl100k@3.1.5": [
+    {
+      "source": "https://raw.githubusercontent.com/tryAGI/Tiktoken/871d38c16d8478faeb6d53f4fdf8a5e76c382854/LICENSE.txt",
+      "sha256": "0789f2ac922216b2f1e8b4b16135b32449771d512909a492f383c54aa477f3a0"
+    }
+  ],
+  "unic-char-property@0.9.0": [
+    {
+      "source": "https://raw.githubusercontent.com/open-i18n/rust-unic/5878605364af97a3358368a6eaef02104af2e016/LICENSE-APACHE",
+      "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2"
+    },
+    {
+      "source": "https://raw.githubusercontent.com/open-i18n/rust-unic/5878605364af97a3358368a6eaef02104af2e016/LICENSE-MIT",
+      "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3"
+    }
+  ],
+  "unic-char-range@0.9.0": [
+    {
+      "source": "https://raw.githubusercontent.com/open-i18n/rust-unic/5878605364af97a3358368a6eaef02104af2e016/LICENSE-APACHE",
+      "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2"
+    },
+    {
+      "source": "https://raw.githubusercontent.com/open-i18n/rust-unic/5878605364af97a3358368a6eaef02104af2e016/LICENSE-MIT",
+      "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3"
+    }
+  ],
+  "unic-common@0.9.0": [
+    {
+      "source": "https://raw.githubusercontent.com/open-i18n/rust-unic/5878605364af97a3358368a6eaef02104af2e016/LICENSE-APACHE",
+      "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2"
+    },
+    {
+      "source": "https://raw.githubusercontent.com/open-i18n/rust-unic/5878605364af97a3358368a6eaef02104af2e016/LICENSE-MIT",
+      "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3"
+    }
+  ],
+  "unic-ucd-ident@0.9.0": [
+    {
+      "source": "https://raw.githubusercontent.com/open-i18n/rust-unic/8a6ce83063d90b91ae2ce59eddb803edd393fca9/LICENSE-APACHE",
+      "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2"
+    },
+    {
+      "source": "https://raw.githubusercontent.com/open-i18n/rust-unic/8a6ce83063d90b91ae2ce59eddb803edd393fca9/LICENSE-MIT",
+      "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3"
+    }
+  ],
+  "unic-ucd-version@0.9.0": [
+    {
+      "source": "https://raw.githubusercontent.com/open-i18n/rust-unic/5878605364af97a3358368a6eaef02104af2e016/LICENSE-APACHE",
+      "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2"
+    },
+    {
+      "source": "https://raw.githubusercontent.com/open-i18n/rust-unic/5878605364af97a3358368a6eaef02104af2e016/LICENSE-MIT",
+      "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3"
+    }
+  ],
+  "webview2-com-macros@0.8.1": [
+    {
+      "source": "https://raw.githubusercontent.com/wravery/webview2-rs/dffa41a8a46d3f5565eefbff2de57d38d399f158/LICENSE",
+      "sha256": "0dcf41516e608bbcb6cdc5229feb7b86fe4a643b85e7df251133c93408fdac73"
+    }
+  ],
+  "webview2-com-sys@0.38.2": [
+    {
+      "source": "https://raw.githubusercontent.com/wravery/webview2-rs/b74dc5e2b394044bea5191052868ce7a106c202c/LICENSE",
+      "sha256": "0dcf41516e608bbcb6cdc5229feb7b86fe4a643b85e7df251133c93408fdac73"
+    }
+  ],
+  "webview2-com@0.38.2": [
+    {
+      "source": "https://raw.githubusercontent.com/wravery/webview2-rs/b74dc5e2b394044bea5191052868ce7a106c202c/LICENSE",
+      "sha256": "0dcf41516e608bbcb6cdc5229feb7b86fe4a643b85e7df251133c93408fdac73"
+    }
+  ]
+}
