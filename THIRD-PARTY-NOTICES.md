@@ -497,7 +497,7 @@ The 137 packages below are the renderer's production-dependency closure.
 
 | Component | Version | License | Upstream |
 | --- | --- | --- | --- |
-| `@iyulab/canopy` | 0.14.0 | MIT | https://www.npmjs.com/package/@iyulab/canopy |
+| `@iyulab/canopy` | 0.16.0 | MIT | https://www.npmjs.com/package/@iyulab/canopy |
 | `@shikijs/core` | 4.4.3 | MIT | https://www.npmjs.com/package/@shikijs/core |
 | `@shikijs/engine-javascript` | 4.4.3 | MIT | https://www.npmjs.com/package/@shikijs/engine-javascript |
 | `@shikijs/engine-oniguruma` | 4.4.3 | MIT | https://www.npmjs.com/package/@shikijs/engine-oniguruma |

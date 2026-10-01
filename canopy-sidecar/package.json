@@ -3,7 +3,7 @@
   "private": true,
   "description": "The publishing renderer bundled with the app: one exact canopy release, installed as-is.",
   "dependencies": {
-    "@iyulab/canopy": "0.14.0"
+    "@iyulab/canopy": "0.16.0"
   },
   "overrides": {
     "katex": "0.18.9"
