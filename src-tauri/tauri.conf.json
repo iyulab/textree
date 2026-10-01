@@ -31,7 +31,8 @@
     "resources": {
       "resources/canopy/": "canopy/",
       "resources/host/": "host/",
-      "../THIRD-PARTY-NOTICES.md": "THIRD-PARTY-NOTICES.md"
+      "../THIRD-PARTY-NOTICES.md": "THIRD-PARTY-NOTICES.md",
+      "../THIRD-PARTY-LICENSES.txt": "THIRD-PARTY-LICENSES.txt"
     },
     "createUpdaterArtifacts": true,
     "icon": [
