@@ -33,13 +33,13 @@ jobs:
       # The canopy release lives in canopy-sidecar/ (package.json + package-lock.json), read by
       # both CI and release through the same script, so the canopy CI tests is the canopy that ships.
       # Installs the pinned canopy release into src-tauri/resources/canopy/
-      # so tauri-action bundles it in the installer (Task 3 resources map).
+      # so tauri-action bundles it in the installer (the `resources` map in tauri.conf.json).
       - name: Assemble canopy sidecar
         shell: pwsh
         run: pwsh -NoProfile -File scripts/assemble-canopy-sidecar.ps1
 
       # Publish the .NET host self-contained and stage it under src-tauri/resources/host/
-      # so tauri-action bundles it (Task 4 resources map). Must run BEFORE any cargo build:
+      # so tauri-action bundles it (the `resources` map in tauri.conf.json). Must run BEFORE any cargo build:
       # tauri.conf.json bundle.resources requires both resources/canopy AND resources/host to
       # exist, so the verify-publish build below fails on a missing resource path otherwise.
       - name: Setup .NET

@@ -60,6 +60,7 @@ public class TelemetryPayloadTests
     public void BuildErrorProperties_sanitizes_freetext_exception_type()
     {
         var props = TelemetryPayload.BuildErrorProperties(
+            // forbidden-tokens: allow absolute-path — the test is that a home folder never leaves the machine
             "embedder", ModelPhase.Error, "No such file: /Users/alice/café.md", Env);
         Assert.DoesNotContain(' ', props["exception_type"]);
         Assert.DoesNotContain("alice", props["exception_type"]);

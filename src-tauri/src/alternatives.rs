@@ -336,7 +336,7 @@ pub fn decided(repo: &Repository, path: &str, blob: Oid) -> Result<bool, git2::E
 }
 
 /// The ids of alternatives whose version was picked, from the notes reference's history.
-#[allow(dead_code)] // read by the north-star count (slice 3 task 5)
+#[allow(dead_code)] // read by the count of alternatives brought to an end
 pub fn picked(repo: &Repository) -> Result<Vec<String>, git2::Error> {
     let Some(tip) = target(repo, NOTES_REF) else {
         return Ok(Vec::new());

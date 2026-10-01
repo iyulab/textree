@@ -14,7 +14,7 @@ using MeaiChatMessage = Microsoft.Extensions.AI.ChatMessage;
 
 namespace Textree.Host.Rag;
 
-// ── Generator backend decision (Task 1, P3 /ask) ───────────────────────────────
+// ── Generator backend decision ────────────────────────────────────────────────────────────────────
 // Path taken: DOGFOOD — LMSupply.Generator 0.34.28 (LocalGenerator.LoadAsync +
 // IGeneratorModel.GenerateChatAsync), the streaming text-generation sibling of the
 // existing LMSupply.Embedder we already ship. Chosen directly over the brief's
@@ -125,7 +125,7 @@ public sealed class LocalTextGenerator : ITextGenerator, IAsyncDisposable
         await PrepareAsync(ct);
         var model = Volatile.Read(ref _model)!;
 
-        // Borrow the iron-prow D12 bridge: the lightweight 2-decorator path (NOT AddLMSupplyLocal,
+        // Borrow iron-prow's local bridge: the lightweight 2-decorator path (NOT AddLMSupplyLocal,
         // whose selection/registry/resilience gateway is inert for a single local provider).
         // GeneratorChatClient wraps our already-loaded IGeneratorModel (IGeneratorModel : ITextGenerator,
         // compile-proven) as an IChatClient; LocalSafetyChatClient adds length-bounding + a readiness gate,

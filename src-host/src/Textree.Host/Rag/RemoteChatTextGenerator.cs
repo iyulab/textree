@@ -6,11 +6,11 @@ using MeaiChatMessage = Microsoft.Extensions.AI.ChatMessage;
 
 namespace Textree.Host.Rag;
 
-// ── BYO generator backend (Phase D, 2026-07-06; re-wired onto iron-prow's bridge) ──────────────
-// Provider construction is no longer this class's job. Program.cs registers exactly one iron-prow
-// provider via ByoProviderRegistration.Register (Task 5), which resolves to a DI-singleton
-// IChatClient (iron-prow's SelectingChatClient — inert selection over a single candidate, same
-// reasoning D12 used for the local path's lightweight wiring). This class only adapts that
+// ── BYO generator backend (a custom AI server, served through iron-prow's bridge) ─────────────
+// Provider construction is not this class's job. Program.cs registers exactly one iron-prow
+// provider via ByoProviderRegistration.Register, which resolves to a DI-singleton IChatClient
+// (iron-prow's SelectingChatClient — inert selection over a single candidate, the same reason the
+// local path uses the lightweight wiring). This class only adapts that
 // injected client into textree's ITextGenerator, keeping the streaming loop, the degeneration stop,
 // and the LocalSafetyChatClient safety wrap that LocalTextGenerator already uses.
 

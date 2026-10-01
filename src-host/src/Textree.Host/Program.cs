@@ -48,7 +48,7 @@ builder.Services.AddSingleton<ITelemetryEmitter>(sp =>
 builder.Services.AddSingleton<IEmbedderLoader, DefaultEmbedderLoader>();
 builder.Services.AddSingleton<VaultManager>();
 // Local CPU text generator for /chat, OR a user-configured BYO OpenAI-compatible server
-// (Phase D, 2026-07-06) when TEXTREE_BYO_PRESET is set. Singleton either way: the local path
+// when TEXTREE_BYO_PRESET is set. Singleton either way: the local path
 // loads its model once and reuses it; the remote path is stateless per-request but a singleton
 // keeps construction cheap and consistent with the local path's lifetime. Tests replace this
 // with a stub via ConfigureTestServices.
