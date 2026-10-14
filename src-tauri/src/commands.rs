@@ -793,7 +793,7 @@ pub fn open_vault(root: String, app: AppHandle, ticket: u64) -> Result<Vec<TreeN
     // Install the index (app data directory, per-vault hash). On failure only search is disabled —
     // graceful degradation (editing, tree, and file search remain intact without the index).
     let dir = crate::search::index_dir(&app_data, &root_path);
-    match IndexState::open_or_create(&dir) {
+    match IndexState::open_or_create(&dir, &root_path) {
         Ok(state) => {
             let was_empty = state.is_empty().unwrap_or(true);
             *index.0.lock().unwrap_or_else(|e| e.into_inner()) = Some(state);
@@ -1203,6 +1203,7 @@ pub fn rebuild_index(root: String, index: &IndexHandle) -> Result<(), String> {
     let root_path = PathBuf::from(root);
     let mut guard = index.0.lock().unwrap_or_else(|e| e.into_inner());
     match guard.as_mut() {
+        Some(state) if !state.serves(&root_path) => Err("the index is for another folder".into()),
         Some(state) => state.rebuild(&root_path).map_err(|e| e.to_string()),
         None => Err("index is not installed".into()),
     }

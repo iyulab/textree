@@ -158,10 +158,16 @@ pub fn apply_changes_to_index(handle: &IndexHandle, root: &Path, changes: &[FsCh
 }
 
 /// Rebuilds the whole index from disk (delete-all + re-index). Used after a rescan, when
-/// incremental per-path updates can no longer be trusted. No-op when no index is installed.
+/// incremental per-path updates can no longer be trusted. No-op when no index is installed, or
+/// when the one installed is another folder's (a watch outlives its folder's index for a moment
+/// when the next folder is opened).
 pub fn rebuild_index(handle: &IndexHandle, root: &Path) {
     let mut guard = handle.0.lock().unwrap_or_else(|e| e.into_inner());
     let Some(state) = guard.as_mut() else { return };
+    if !state.serves(root) {
+        log::debug!("watcher: rescan of {} is for an index no longer installed; skipped", root.display());
+        return;
+    }
     if let Err(e) = state.rebuild(root) {
         log::warn!("watcher: index rebuild after rescan failed: {e}");
     }
@@ -221,7 +227,7 @@ mod tests {
         std::fs::write(vault.path().join("a.md"), "stale note").unwrap();
 
         let handle: Arc<IndexHandle> = Arc::new(IndexHandle::default());
-        *handle.0.lock().unwrap() = Some(IndexState::open_or_create(idx.path()).unwrap());
+        *handle.0.lock().unwrap() = Some(IndexState::open_or_create(idx.path(), vault.path()).unwrap());
         apply_changes_to_index(
             &handle,
             vault.path(),
@@ -250,7 +256,7 @@ mod tests {
         std::fs::write(vault.path().join("a.md"), "initial body").unwrap();
 
         let handle: Arc<IndexHandle> = Arc::new(IndexHandle::default());
-        *handle.0.lock().unwrap() = Some(IndexState::open_or_create(idx.path()).unwrap());
+        *handle.0.lock().unwrap() = Some(IndexState::open_or_create(idx.path(), vault.path()).unwrap());
         let at = vault.path().join("a.md").display().to_string();
 
         apply_changes_to_index(&handle, vault.path(), &[FsChange { kind: ChangeKind::Modified, path: at.clone() }]);

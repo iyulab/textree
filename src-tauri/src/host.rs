@@ -162,6 +162,12 @@ impl HostHandle {
     pub fn current_vault(&self) -> Option<String> {
         self.current_vault.lock().unwrap_or_else(|e| e.into_inner()).clone()
     }
+    /// Whether `vault` is the folder open now, however its path is spelled.
+    pub fn is_current_vault(&self, vault: &str) -> bool {
+        use crate::search::vault_identity;
+        self.current_vault()
+            .is_some_and(|open| vault_identity(Path::new(&open)) == vault_identity(Path::new(vault)))
+    }
     /// Bump the ask-stream generation and return the new value.
     /// Used by `ask` for single-flight cancellation (independent of health-poll `generation`).
     pub fn bump_ask_generation(&self) -> u64 {
@@ -1011,7 +1017,16 @@ pub async fn ask(
 
 /// Fire-and-forget single-note index. Silent on any error (degrade, don't block).
 /// Runs without asking because it only reads: nothing a person wrote is altered.
+///
+/// Only for a note of the folder open now. A save can finish after the person has opened another
+/// folder; the host keeps one folder's index active at a time, and a request for another folder
+/// makes it switch — dropping the one in use, a reindex of it included. The note reaches its own
+/// folder's index when that folder is opened again and reindexed.
 pub fn index_note(handle: &HostHandle, vault: &str, path: &str) {
+    if !handle.is_current_vault(vault) {
+        log::debug!("[host] {path} is a note of a folder that is not open; not indexed");
+        return;
+    }
     let Some(host) = handle.endpoint() else { return };
     if !matches!(handle.status(), HostStatus::Ready) {
         return;
@@ -1159,6 +1174,23 @@ mod tests {
         assert!(handle.current_vault().is_none());
         handle.set_current_vault("D:/vault".into());
         assert_eq!(handle.current_vault().as_deref(), Some("D:/vault"));
+    }
+
+    #[test]
+    fn only_the_current_vault_is_indexed() {
+        let a = tempfile::TempDir::new().unwrap();
+        let b = tempfile::TempDir::new().unwrap();
+        let (a_str, b_str) = (a.path().to_string_lossy(), b.path().to_string_lossy());
+        let handle = HostHandle::default();
+        assert!(!handle.is_current_vault(&a_str), "no vault is open yet");
+
+        handle.set_current_vault(b_str.to_string());
+        assert!(!handle.is_current_vault(&a_str), "a note of the folder open before is not indexed");
+        assert!(handle.is_current_vault(&b_str));
+        // The same folder spelled another way is still the same folder.
+        let detour = b.path().join("sub").join("..");
+        std::fs::create_dir(b.path().join("sub")).unwrap();
+        assert!(handle.is_current_vault(&detour.to_string_lossy()));
     }
 
     #[test]

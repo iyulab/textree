@@ -67,11 +67,17 @@ pub fn register_tokenizer(index: &Index) {
     index.tokenizers().register(TOKENIZER, analyzer);
 }
 
+/// What a vault root is known by: its canonical path where it resolves, the path as given where it
+/// does not (a folder that is gone). Two spellings of one folder — a trailing separator, other
+/// letter case on Windows, a link — come out the same, so this is what roots are compared by.
+pub fn vault_identity(vault_root: &Path) -> PathBuf {
+    std::fs::canonicalize(vault_root).unwrap_or_else(|_| vault_root.to_path_buf())
+}
+
 /// Vault root (canonical) → index directory under app data.
 pub fn index_dir(app_data: &Path, vault_root: &Path) -> PathBuf {
-    let canon = std::fs::canonicalize(vault_root).unwrap_or_else(|_| vault_root.to_path_buf());
     let mut hasher = Sha256::new();
-    hasher.update(canon.to_string_lossy().as_bytes());
+    hasher.update(vault_identity(vault_root).to_string_lossy().as_bytes());
     let hex = format!("{:x}", hasher.finalize());
     app_data.join("index").join(&hex[..16])
 }
@@ -198,26 +204,48 @@ pub struct IndexState {
     pub index: Index,
     pub writer: IndexWriter,
     pub fields: Fields,
+    /// The vault this index is for (its [`vault_identity`]). Documents are keyed by paths relative
+    /// to a vault root, so a note of one vault written into another's index would show up there
+    /// as a note that does not exist, or replace what a same-named note of that vault says.
+    vault: PathBuf,
 }
 
 impl IndexState {
-    /// Opens the index in the directory or (if absent) creates it. Registers the tokenizer.
-    pub fn open_or_create(dir: &Path) -> tantivy::Result<Self> {
+    /// Opens the index of the vault at `vault_root` in the directory or (if absent) creates it.
+    /// Registers the tokenizer.
+    pub fn open_or_create(dir: &Path, vault_root: &Path) -> tantivy::Result<Self> {
         std::fs::create_dir_all(dir).ok();
         let (schema, fields) = build_schema();
         let mmap = MmapDirectory::open(dir)?;
         let index = Index::open_or_create(mmap, schema)?;
         register_tokenizer(&index);
         let writer = index.writer(WRITER_HEAP)?;
-        Ok(Self { index, writer, fields })
+        Ok(Self { index, writer, fields, vault: vault_identity(vault_root) })
+    }
+
+    /// Whether this is the index of the vault at `vault_root`.
+    ///
+    /// A note can finish saving after the person has opened another folder (the save belongs to
+    /// the folder it was typed in), and a watch or a first build of the folder opened before can
+    /// still be running for a moment after the next one's index is in place. What they bring is
+    /// for an index that is no longer installed; it is left out, not written into this one.
+    pub fn serves(&self, vault_root: &Path) -> bool {
+        vault_root == self.vault || vault_identity(vault_root) == self.vault
     }
 
     pub fn is_empty(&self) -> tantivy::Result<bool> {
         Ok(self.index.reader()?.searcher().num_docs() == 0)
     }
 
-    /// Full rebuild: delete all existing documents, then re-index the vault.
+    /// Full rebuild: delete all existing documents, then re-index the vault. Refused for any vault
+    /// but the one this index is for — its files would replace everything this index holds.
     pub fn rebuild(&mut self, vault_root: &Path) -> tantivy::Result<()> {
+        if !self.serves(vault_root) {
+            return Err(tantivy::TantivyError::InvalidArgument(format!(
+                "the index is not for {}",
+                vault_root.display()
+            )));
+        }
         self.writer.delete_all_documents()?;
         build_all(&mut self.writer, &self.fields, vault_root)?;
         self.writer.commit()?;
@@ -225,7 +253,12 @@ impl IndexState {
     }
 
     /// Stages a single-file upsert/delete to the writer (commit is the batch caller's responsibility).
+    /// Skipped when the change is in another vault (see [`IndexState::serves`]).
     pub fn apply_change(&mut self, vault_root: &Path, abs_path: &Path, removed: bool) {
+        if !self.serves(vault_root) {
+            log::debug!("index: change in {} is for another vault; skipped", abs_path.display());
+            return;
+        }
         if let Some(rel) = rel_posix(vault_root, abs_path) {
             if removed {
                 delete(&self.writer, &self.fields, &rel);
@@ -238,7 +271,14 @@ impl IndexState {
 
     /// Indexes a single note from in-memory body and commits (in-app edit path — the watcher
     /// suppresses self-writes, so the index is updated deterministically at the write site).
+    /// Skipped when the note is in another vault (see [`IndexState::serves`]): the index is a
+    /// derived cache, and that vault's own index, like for any change made while it is not open,
+    /// takes the note in when it is rebuilt.
     pub fn index_note(&mut self, vault_root: &Path, abs_path: &Path, body: &str) -> tantivy::Result<()> {
+        if !self.serves(vault_root) {
+            log::debug!("index: {} is a note of another vault; skipped", abs_path.display());
+            return Ok(());
+        }
         if let Some(rel) = rel_posix(vault_root, abs_path) {
             upsert(&self.writer, &self.fields, &rel, &title_of(abs_path), body)?;
             self.commit()?;
@@ -357,7 +397,7 @@ mod tests {
         std::fs::write(vault.path().join("memo.md"), "全文検索の統合テスト").unwrap();
         let idx = TempDir::new().unwrap(); // index directory (simulates app data)
 
-        let mut state = IndexState::open_or_create(idx.path()).unwrap();
+        let mut state = IndexState::open_or_create(idx.path(), vault.path()).unwrap();
         // A new index is empty → full build.
         state.rebuild(vault.path()).unwrap();
 
@@ -368,8 +408,9 @@ mod tests {
 
     #[test]
     fn is_empty_reports_doc_presence() {
+        let vault = TempDir::new().unwrap();
         let idx = TempDir::new().unwrap();
-        let state = IndexState::open_or_create(idx.path()).unwrap();
+        let state = IndexState::open_or_create(idx.path(), vault.path()).unwrap();
         assert!(state.is_empty().unwrap(), "a new index is empty");
     }
 
@@ -380,12 +421,73 @@ mod tests {
         let idx = TempDir::new().unwrap();
         let abs = vault.path().join("journal/today.md");
 
-        let mut state = IndexState::open_or_create(idx.path()).unwrap();
+        let mut state = IndexState::open_or_create(idx.path(), vault.path()).unwrap();
         state.index_note(vault.path(), &abs, "本文のトークン").unwrap();
 
         let hits = state.search("トークン", 10).unwrap();
         assert_eq!(hits.len(), 1, "in-memory body is found by search");
         assert_eq!(hits[0].path, "journal/today.md", "relative path (POSIX) identifier matches");
+    }
+
+    /// The index of vault A, holding A's `same.md`, with vault B beside it holding its own
+    /// `same.md` and `only-b.md`.
+    fn two_vaults() -> (TempDir, TempDir, TempDir, IndexState) {
+        let a = TempDir::new().unwrap();
+        let b = TempDir::new().unwrap();
+        std::fs::write(a.path().join("same.md"), "alpha body").unwrap();
+        std::fs::write(b.path().join("same.md"), "bravo body").unwrap();
+        std::fs::write(b.path().join("only-b.md"), "bravo only").unwrap();
+        let idx = TempDir::new().unwrap();
+        let mut state = IndexState::open_or_create(idx.path(), a.path()).unwrap();
+        state.rebuild(a.path()).unwrap();
+        (a, b, idx, state)
+    }
+
+    #[test]
+    fn index_note_from_another_vault_leaves_the_index_alone() {
+        let (_a, b, _idx, mut state) = two_vaults();
+
+        state.index_note(b.path(), &b.path().join("only-b.md"), "bravo only").unwrap();
+        state.index_note(b.path(), &b.path().join("same.md"), "bravo body").unwrap();
+
+        assert_eq!(num_docs(&state.index), 1, "no note of another vault shows up here");
+        assert!(state.search("bravo", 10).unwrap().is_empty(), "nor replaces a same-named note");
+        assert_eq!(state.search("alpha", 10).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn changes_from_another_vault_leave_the_index_alone() {
+        let (_a, b, _idx, mut state) = two_vaults();
+
+        state.apply_change(b.path(), &b.path().join("only-b.md"), false);
+        state.apply_change(b.path(), &b.path().join("same.md"), true);
+        state.commit().unwrap();
+
+        assert_eq!(num_docs(&state.index), 1);
+        assert_eq!(state.search("alpha", 10).unwrap().len(), 1, "a same-named note is not removed");
+    }
+
+    #[test]
+    fn rebuild_from_another_vault_is_refused() {
+        let (_a, b, _idx, mut state) = two_vaults();
+
+        assert!(state.rebuild(b.path()).is_err(), "another vault's files do not fill this index");
+
+        assert_eq!(num_docs(&state.index), 1, "what the index held is kept");
+        assert_eq!(state.search("alpha", 10).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn same_vault_spelled_differently_is_still_served() {
+        let (a, _b, _idx, mut state) = two_vaults();
+        // The same folder through a `..` detour: not the same string, the same folder.
+        let detour = a.path().join("sub").join("..");
+        std::fs::create_dir(a.path().join("sub")).unwrap();
+        std::fs::write(a.path().join("more.md"), "alpha again").unwrap();
+
+        assert!(state.serves(&detour));
+        state.rebuild(&detour).unwrap();
+        assert_eq!(num_docs(&state.index), 2);
     }
 
     #[test]
