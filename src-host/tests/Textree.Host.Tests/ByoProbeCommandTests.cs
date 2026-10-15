@@ -73,6 +73,33 @@ public class ByoProbeCommandTests
 
         code.Should().Be(2);
         called.Should().BeFalse();
-        JsonDocument.Parse(output.ToString()).RootElement.GetProperty("ok").GetBoolean().Should().BeFalse();
+        var line = JsonDocument.Parse(output.ToString()).RootElement;
+        line.GetProperty("ok").GetBoolean().Should().BeFalse();
+        line.GetProperty("failure").GetString().Should().Be("invalid");
+    }
+
+    [Theory]
+    [InlineData(ByoProbeFailure.Refused, "refused")]
+    [InlineData(ByoProbeFailure.HostNotFound, "hostNotFound")]
+    [InlineData(ByoProbeFailure.Timeout, "timeout")]
+    public async Task A_connection_failure_prints_its_kind_for_the_app_to_word(ByoProbeFailure failure, string kind)
+    {
+        var (code, line, _) = await Run(
+            new() { ["TEXTREE_BYO_PRESET"] = "ollama" },
+            new ByoProbeResult(false, [], null, "(localized text from the system)") { Failure = failure });
+
+        code.Should().Be(0);
+        line.GetProperty("status").ValueKind.Should().Be(JsonValueKind.Null);
+        line.GetProperty("failure").GetString().Should().Be(kind);
+    }
+
+    [Fact]
+    public async Task A_success_has_no_failure_kind()
+    {
+        var (_, line, _) = await Run(
+            new() { ["TEXTREE_BYO_PRESET"] = "openai", ["TEXTREE_BYO_API_KEY"] = "sk-x" },
+            new ByoProbeResult(true, ["model-0"], null, null));
+
+        line.GetProperty("failure").ValueKind.Should().Be(JsonValueKind.Null);
     }
 }

@@ -561,6 +561,10 @@ struct ProbeOutcome {
     model_count: u32,
     status: Option<u16>,
     error: Option<String>,
+    /// Why it failed, as a kind (`ByoProbeFailure`, camel-cased) — `error` is the system's or the
+    /// provider's own text, which may be in another language, so the words shown are chosen from this.
+    #[serde(default)]
+    failure: Option<String>,
 }
 
 /// The first argument that makes the host check the BYO settings and exit instead of serving.
@@ -627,15 +631,27 @@ fn read_probe_outcome(line: &str) -> Result<ByoConnection, String> {
     if o.ok {
         return Ok(ByoConnection { model_count: o.model_count });
     }
-    Err(match o.status {
-        Some(401) | Some(403) => "The server didn't accept the API key.".to_string(),
-        Some(404) => "Nothing answers at this address — check the server URL.".to_string(),
-        Some(code) => match o.error {
+    Err(match (o.status, o.failure.as_deref()) {
+        (Some(401) | Some(403), _) | (None, Some("unauthorized")) => "The server didn't accept the API key.".to_string(),
+        (Some(404), _) => "Nothing answers at this address — check the server URL.".to_string(),
+        (Some(code), _) => match o.error {
             Some(e) if !e.is_empty() => format!("The server refused the request ({code}): {e}"),
             _ => format!("The server refused the request ({code})."),
         },
-        // No status: nothing answered. The helper's own reason is a retry trace, not words for a person.
-        None => "The server couldn't be reached — check the address and that the server is running.".to_string(),
+        // No status: nothing answered. The kind says why; the helper's own text may be in the
+        // system's language, so it is not shown.
+        (None, Some("refused")) => {
+            "Nothing is listening at this address — check the port and that the server is running.".to_string()
+        }
+        (None, Some("hostNotFound")) => "No server goes by that name — check the address.".to_string(),
+        (None, Some("timeout")) => {
+            "The server didn't answer in time — check the address and that the server is running.".to_string()
+        }
+        (None, Some("invalid")) => "That isn't a server address — check what you entered.".to_string(),
+        (None, Some("transport")) => {
+            "The connection to the server broke off — check whether the address starts with http or https.".to_string()
+        }
+        _ => "The server couldn't be reached — check the address and that the server is running.".to_string(),
     })
 }
 
@@ -1444,6 +1460,23 @@ mod tests {
     }
 
     #[test]
+    fn a_connection_failure_is_worded_by_its_kind_not_the_systems_text() {
+        let line = |kind: &str| {
+            format!(r#"{{"ok":false,"modelCount":0,"status":null,"error":"(localized)","failure":"{kind}"}}"#)
+        };
+        assert!(read_probe_outcome(&line("refused")).unwrap_err().starts_with("Nothing is listening"));
+        assert!(read_probe_outcome(&line("hostNotFound")).unwrap_err().starts_with("No server goes by that name"));
+        assert!(read_probe_outcome(&line("timeout")).unwrap_err().starts_with("The server didn't answer in time"));
+        assert!(read_probe_outcome(&line("invalid")).unwrap_err().starts_with("That isn't a server address"));
+        assert!(read_probe_outcome(&line("transport")).unwrap_err().starts_with("The connection to the server broke off"));
+        assert_eq!(read_probe_outcome(&line("unauthorized")), Err("The server didn't accept the API key.".to_string()));
+        for kind in ["unreachable", "somethingNew"] {
+            assert!(read_probe_outcome(&line(kind)).unwrap_err().starts_with("The server couldn't be reached"));
+        }
+        assert!(!read_probe_outcome(&line("refused")).unwrap_err().contains("localized"));
+    }
+
+    #[test]
     fn an_answer_that_is_not_the_probe_line_is_a_failure_not_a_success() {
         assert!(read_probe_outcome("Unhandled exception").is_err());
     }
@@ -1453,7 +1486,8 @@ mod tests {
     fn the_host_checks_a_server_that_is_not_there() {
         let exe = std::env::var("TEXTREE_HOST_EXE").expect("set TEXTREE_HOST_EXE");
         let r = probe_byo_connection(&exe, "custom", "http://127.0.0.1:9/v1", None);
-        assert!(r.is_err(), "nothing listens on port 9: {r:?}");
+        let e = r.expect_err("nothing listens on port 9");
+        assert!(e.starts_with("Nothing is listening"), "{e}");
     }
 
     #[test]

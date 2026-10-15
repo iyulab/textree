@@ -21,8 +21,12 @@ public static class ByoProbeCommand
 
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 
-    /// <summary>The line printed for each check.</summary>
-    public sealed record Outcome(bool Ok, int ModelCount, int? Status, string? Error);
+    /// <summary>
+    /// The line printed for each check. <paramref name="Failure"/> is why it failed as a kind the app words
+    /// itself (<see cref="ByoProbeFailure"/>, camel-cased — <c>refused</c>, <c>hostNotFound</c>, …); <c>Error</c> is
+    /// the operating system's or the provider's own text, which may be localized.
+    /// </summary>
+    public sealed record Outcome(bool Ok, int ModelCount, int? Status, string? Error, string? Failure = null);
 
     /// <summary>Runs the check on <paramref name="env"/> and writes the outcome to <paramref name="output"/>.</summary>
     public static async Task<int> RunAsync(
@@ -34,7 +38,7 @@ public static class ByoProbeCommand
         var preset = TextGeneratorSelection.SelectedPreset(env);
         if (preset is null)
         {
-            await output.WriteLineAsync(Serialize(new Outcome(false, 0, null, "No AI server is selected.")));
+            await output.WriteLineAsync(Serialize(new Outcome(false, 0, null, "No AI server is selected.", Kind(ByoProbeFailure.Invalid))));
             return 2;
         }
 
@@ -43,9 +47,12 @@ public static class ByoProbeCommand
         var endpoint = ByoProviderRegistration.EndpointFor(preset, baseUrl, apiKey);
         probe ??= (e, ct) => ByoPresets.ProbeAsync(e, null, ct);
         var result = await probe(endpoint, cancellationToken);
-        await output.WriteLineAsync(Serialize(new Outcome(result.Ok, result.ModelCount, result.StatusCode, result.Error)));
+        await output.WriteLineAsync(Serialize(new Outcome(
+            result.Ok, result.ModelCount, result.StatusCode, result.Error, result.Failure is { } f ? Kind(f) : null)));
         return 0;
     }
+
+    private static string Kind(ByoProbeFailure failure) => JsonNamingPolicy.CamelCase.ConvertName(failure.ToString());
 
     private static string Serialize(Outcome outcome) => JsonSerializer.Serialize(outcome, Json);
 }
