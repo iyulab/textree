@@ -10,6 +10,7 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use tauri::{AppHandle, Manager, State};
+use tauri_kit_state::folder_key;
 use tempfile::NamedTempFile;
 
 /// Name of the staging directory for atomic writes, inside the repository's own storage.
@@ -331,35 +332,9 @@ pub fn ensure_default_vault(app: AppHandle) -> Result<DefaultVault, String> {
             Ok(DefaultVault { path: vault.display().to_string(), fell_back })
         }
         Err((msg, os_error_code)) => {
-            crate::telemetry::emit(crate::telemetry::event::TelemetryEvent::VaultOpenFailed { os_error_code });
+            crate::telemetry::record(crate::telemetry::vault_open_failed_report(os_error_code));
             Err(msg)
         }
-    }
-}
-
-/// A short, stable label for a folder, used to give each one its own place to keep settings.
-///
-/// The readable part is there so the directory can be recognised by eye; the digest is what
-/// makes it unambiguous when two folders end with the same name.
-fn folder_key(root: &Path) -> String {
-    let resolved = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
-    let mut digest: u64 = 0xcbf2_9ce4_8422_2325;
-    for byte in resolved.to_string_lossy().to_lowercase().bytes() {
-        digest ^= u64::from(byte);
-        digest = digest.wrapping_mul(0x0000_0100_0000_01b3);
-    }
-    let readable: String = resolved
-        .file_name()
-        .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_default()
-        .chars()
-        .filter(|c| c.is_alphanumeric() || *c == '-' || *c == '_')
-        .take(24)
-        .collect();
-    if readable.is_empty() {
-        format!("{digest:016x}")
-    } else {
-        format!("{readable}-{digest:016x}")
     }
 }
 
@@ -2391,16 +2366,15 @@ pub fn restore_deleted(root: String, rel: String) -> Result<RestoredNote, String
 
     // Found free, then taken before it is written (a sync client, another program): the next free
     // place instead — bringing something back never costs what is there.
-    let mut tries = 0;
-    let dest = loop {
-        let dest = crate::fs_ops::place_restored(root_p, &rel).map_err(|e| e.to_string())?;
-        match atomic_create_bytes(root_p, &dest, &content) {
-            Err(e) if e.kind() == io::ErrorKind::AlreadyExists && tries < crate::fs_ops::NAME_TRIES => {
-                tries += 1;
-            }
-            written => break written.map(|()| dest).map_err(|e| e.to_string())?,
-        }
-    };
+    let first = crate::fs_ops::place_restored(root_p, &rel).map_err(|e| e.to_string())?;
+    let (dir, name) = (
+        first.parent().ok_or("no parent directory")?,
+        Path::new(&rel).file_name().and_then(|n| n.to_str()).ok_or("cannot read name")?,
+    );
+    let (dest, ()) = tauri_kit_fs::claim_free_path(dir, name, tauri_kit_fs::NameKind::File, |dest| {
+        atomic_create_bytes(root_p, dest, &content)
+    })
+    .map_err(|e| e.to_string())?;
     log::info!("restore_deleted: {} (as deleted: {as_deleted})", dest.display());
     Ok(RestoredNote { rel: rel_to_root(root_p, &dest)?, as_deleted })
 }

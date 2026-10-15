@@ -40,6 +40,12 @@ var embedder = new EmbedderSlot();
 LMSupply.Generator.Onnx.OnnxGeneratorBackend.Register();
 
 var builder = WebApplication.CreateBuilder(args);
+// 127.0.0.1 only, on a port the system picks; the readiness line at the end says which.
+builder.WebHost.ConfigureKestrel(k => k.Listen(System.Net.IPAddress.Loopback, 0));
+// Every route requires the app's token (registered below, once the settings are read); a route
+// added later is closed until it is marked open.
+var credentials = new LoopbackCredentials();
+builder.Services.AddLoopbackAuthentication(credentials);
 builder.Services.AddSingleton(opts);
 builder.Services.AddSingleton(status);
 builder.Services.AddSingleton(embedder);
@@ -109,7 +115,12 @@ if (string.IsNullOrEmpty(hostToken) || hostToken.Length < HostToken.MinimumLengt
     throw new InvalidOperationException(
         $"{HostToken.Setting} is missing or shorter than {HostToken.MinimumLength} characters; the host serves only the app that started it.");
 }
-app.UseBearerToken(hostToken);
+credentials.Register(hostToken, HostToken.Caller);
+// A web page whose own name was pointed at 127.0.0.1 reaches the port but names itself, not a
+// loopback address: refused before anything else runs.
+app.UseLoopbackHostCheck();
+app.UseAuthentication();
+app.UseAuthorization();
 
 // Background embedder load — host starts listening immediately.
 // The background task resolves IEmbedderLoader from the DI container so that
@@ -327,7 +338,7 @@ app.MapPost("/shutdown", (IHostApplicationLifetime life) =>
     return Results.Accepted();
 });
 
-app.Run();
+await app.RunAnnouncingAsync(HostToken.ReadyPrefix);
 
 // Exposes the implicit Program class for WebApplicationFactory<Program> in tests
 // (top-level statements compile to an internal Program; the partial makes it addressable).

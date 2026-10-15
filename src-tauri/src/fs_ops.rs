@@ -8,6 +8,7 @@ use crate::pathsafe::{is_valid_name, is_within};
 use std::io;
 use std::path::{Component, Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
+use tauri_kit_fs::{claim_free_path, free_path, NameKind};
 
 /// Runs `op` again for a moment while Windows refuses it because another program has a file it
 /// touches open — a virus scanner, a search indexer or a sync tool looking at what was just
@@ -59,7 +60,7 @@ pub fn create_note(root: &Path, parent: &Path, stem: &str) -> io::Result<PathBuf
 }
 
 /// Creates an empty `Untitled.md` leaf in `parent`, auto-numbering on collision
-/// (`Untitled`, `Untitled (1)`, …) via `unique_in`. The name is generated and always
+/// (`Untitled`, `Untitled (1)`, …). The name is generated and always
 /// valid, so unlike `create_note` there is no explicit name to validate.
 pub fn create_untitled_note(root: &Path, parent: &Path) -> io::Result<PathBuf> {
     if !parent.is_dir() {
@@ -71,7 +72,7 @@ pub fn create_untitled_note(root: &Path, parent: &Path) -> io::Result<PathBuf> {
     write_unique(parent, "Untitled.md", b"")
 }
 
-/// Creates `parent/<stem>.md` with `content`, auto-numbering on collision via `unique_in`
+/// Creates `parent/<stem>.md` with `content`, auto-numbering on collision
 /// (`Summary of X`, `Summary of X (1)`, …). Like the other `create_*` fns it only ever creates a
 /// file ([`write_new`]), so no existing data is at risk and no atomic_write / self_write is needed
 /// (the watcher reflects the new file into the tree).
@@ -130,50 +131,10 @@ fn write_new(path: &Path, bytes: &[u8]) -> io::Result<()> {
     std::fs::File::create_new(path)?.write_all(bytes)
 }
 
-/// Creates a new file for `file_name` in `dir` under the first free name ([`unique_in`]), moving on
+/// Creates a new file for `file_name` in `dir` under the first free name (`name (1)`, …), moving on
 /// to the next if that one is taken before it is created. Returns where it went.
 fn write_unique(dir: &Path, file_name: &str, bytes: &[u8]) -> io::Result<PathBuf> {
-    let mut tries = 0;
-    loop {
-        let path = unique_in(dir, file_name, false);
-        match write_new(&path, bytes) {
-            Err(e) if e.kind() == io::ErrorKind::AlreadyExists && tries < NAME_TRIES => tries += 1,
-            written => return written.map(|()| path),
-        }
-    }
-}
-
-/// How many times a free name is looked for again after it was taken before it could be used.
-/// Each retry means something else took the name in a moment; past this, something is refusing
-/// every name (a disagreement about what "taken" means), and looping would hold the folder's turn
-/// for good.
-pub(crate) const NAME_TRIES: u32 = 16;
-
-/// Whether anything at all is at `path` — a link that points nowhere included. `Path::exists`
-/// follows links and calls a dangling one absent, but creating or moving onto it is still refused.
-fn taken(path: &Path) -> bool {
-    path.symlink_metadata().is_ok()
-}
-
-/// Finds a non-colliding path for `file_name` inside `dir` (`name`, `name (1)`, …).
-/// Directories are not split on extension (so names like `journal.backup` are not altered).
-pub(crate) fn unique_in(dir: &Path, file_name: &str, is_dir: bool) -> PathBuf {
-    let candidate = dir.join(file_name);
-    if !taken(&candidate) {
-        return candidate;
-    }
-    let (stem, ext) = match (is_dir, file_name.rsplit_once('.')) {
-        (false, Some((s, e))) => (s.to_string(), format!(".{e}")),
-        _ => (file_name.to_string(), String::new()),
-    };
-    let mut n = 1;
-    loop {
-        let c = dir.join(format!("{stem} ({n}){ext}"));
-        if !taken(&c) {
-            return c;
-        }
-        n += 1;
-    }
+    claim_free_path(dir, file_name, NameKind::File, |path| write_new(path, bytes)).map(|(path, ())| path)
 }
 
 /// Renames a node. A leaf `.md` renames the file; a container renames the directory and its
@@ -231,7 +192,7 @@ pub fn rename_node(root: &Path, target: &Path, new_name: &str) -> io::Result<Pat
 }
 
 /// Renames a leaf `.md` note to `desired_name`, auto-numbering on collision (`name`, `name (1)`,
-/// …) via `unique_in`. Used by the T4 H1→filename sync of *unnamed* notes — distinct from
+/// …). Used by the T4 H1→filename sync of *unnamed* notes — distinct from
 /// `rename_node`, whose explicit-rename collision is a hard error (never auto-numbered). Never
 /// overwrites an existing file. Returns the new path.
 pub fn rename_note_unique(root: &Path, target: &Path, desired_name: &str) -> io::Result<PathBuf> {
@@ -245,9 +206,9 @@ pub fn rename_note_unique(root: &Path, target: &Path, desired_name: &str) -> io:
         return Err(err("rename target is not a leaf note"));
     }
     let parent = target.parent().ok_or_else(|| err("no parent directory"))?;
-    let dest = unique_in(parent, &format!("{desired_name}.md"), false);
-    rename(target, &dest)?;
-    Ok(dest)
+    // A name found free can be taken before the move lands (a sync client): the next one instead.
+    claim_free_path(parent, &format!("{desired_name}.md"), NameKind::File, |dest| rename(target, dest))
+        .map(|(dest, ())| dest)
 }
 
 /// Moves a node to a different folder (changes its parent). Returns the new path.
@@ -345,7 +306,7 @@ pub fn save_attachment(
         .ok_or_else(|| err("the note has no parent directory"))?;
     let assets = parent.join("assets");
     std::fs::create_dir_all(&assets)?;
-    // Ensure uniqueness without dependencies: an epoch-millis-based name + the unique_in counter on collision.
+    // Ensure uniqueness without dependencies: an epoch-millis-based name, numbered on collision.
     let millis = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis())
@@ -398,7 +359,7 @@ pub(crate) fn place_restored(root: &Path, rel: &str) -> io::Result<PathBuf> {
         .file_name()
         .and_then(|s| s.to_str())
         .ok_or_else(|| err("cannot read name"))?;
-    Ok(unique_in(parent, file_name, false))
+    Ok(free_path(parent, file_name, NameKind::File))
 }
 
 /// Answers "is this file there?" for many files by listing each folder once, instead of asking

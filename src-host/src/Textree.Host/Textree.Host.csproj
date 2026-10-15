@@ -16,6 +16,7 @@
     <PackageReference Include="IronProw.LMSupply" />
     <PackageReference Include="IronProw.IronHive" />
     <PackageReference Include="TauriKit.Sidecar.Loopback" />
+    <PackageReference Include="TauriKit.Sidecar.Loopback.AspNetCore" />
     <PackageReference Include="sqlite-vec" />
     <PackageReference Include="Microsoft.Data.Sqlite" />
   </ItemGroup>

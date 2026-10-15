@@ -9,10 +9,12 @@
 //! gone.
 
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::Path;
+use tauri_kit_state::{Step, Versioned};
 
-/// The file holding the format number, beside the settings it describes.
-pub const FORMAT_FILE: &str = "format";
+pub use tauri_kit_state::set_aside;
+#[cfg(test)]
+pub use tauri_kit_state::FORMAT_FILE;
 
 /// The format this release keeps settings in.
 pub const CURRENT: u32 = 1;
@@ -20,35 +22,17 @@ pub const CURRENT: u32 = 1;
 /// Steps from each format to the next, in order: step `i` brings format `i` to `i + 1`. The format
 /// is written only after the last one, so a step cut short runs again on the next open — every step
 /// must be safe to run twice, and must write what it makes before removing what it replaces.
-type Step = fn(&Path) -> io::Result<()>;
 const STEPS: [Step; CURRENT as usize] = [
     // 0 → 1: the files do not change. Format 1 is where the folder starts saying what it holds.
     |_| Ok(()),
 ];
 
-#[derive(Debug, PartialEq, Eq)]
-pub enum Format {
-    Known(u32),
-    /// Newer than this release, or not a number at all. Either way, not ours to rewrite.
-    Unknown,
-}
+const FORMATS: Versioned<'static> = Versioned::new(&STEPS);
 
-/// The format of the settings in `dir`. A folder that never said is in format 0 — the files as they
-/// were before the marker existed — and so is one that does not exist yet.
-pub fn read(dir: &Path) -> io::Result<Format> {
-    match std::fs::read_to_string(dir.join(FORMAT_FILE)) {
-        Ok(s) => Ok(match s.trim().parse::<u32>() {
-            Ok(n) if n <= CURRENT => Format::Known(n),
-            _ => Format::Unknown,
-        }),
-        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(Format::Known(0)),
-        Err(e) => Err(e),
-    }
-}
-
-/// Whether settings may be written into `dir`.
+/// Whether settings may be written into `dir` — not when they are in a format this release does
+/// not know.
 pub fn writable(dir: &Path) -> io::Result<bool> {
-    Ok(read(dir)? != Format::Unknown)
+    FORMATS.writable(dir)
 }
 
 /// Brings the settings in `dir` to the current format. `false`: they are in one this release does
@@ -57,35 +41,7 @@ pub fn bring_up_to_date(
     dir: &Path,
     write: impl Fn(&Path, &[u8]) -> io::Result<()>,
 ) -> io::Result<bool> {
-    let from = match read(dir)? {
-        Format::Unknown => return Ok(false),
-        Format::Known(n) if n == CURRENT => return Ok(true),
-        Format::Known(n) => n,
-    };
-    for step in &STEPS[from as usize..] {
-        step(dir)?;
-    }
-    write(&dir.join(FORMAT_FILE), CURRENT.to_string().as_bytes())?;
-    Ok(true)
-}
-
-/// Moves a settings file that cannot be read out of the way, keeping it: the application goes on
-/// with defaults instead of writing them over it, and the file is still there for someone to look
-/// at. Returns where it went.
-pub fn set_aside(dir: &Path, rel: &str, now_secs: u64) -> io::Result<PathBuf> {
-    let from = dir.join(rel);
-    let mut to = dir.join(format!("{rel}.unreadable-{now_secs}"));
-    let mut n = 1;
-    loop {
-        // Never over an earlier set-aside copy: it is the only one of what it holds.
-        match crate::fs_ops::rename(&from, &to) {
-            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
-                n += 1;
-                to = dir.join(format!("{rel}.unreadable-{now_secs}-{n}"));
-            }
-            moved => return moved.map(|()| to),
-        }
-    }
+    FORMATS.bring_up_to_date(dir, write)
 }
 
 #[cfg(test)]
@@ -102,63 +58,15 @@ mod tests {
     fn a_folder_that_never_said_is_brought_to_the_current_format() {
         let tmp = TempDir::new().unwrap();
         let dir = tmp.path().join("settings");
-        assert_eq!(read(&dir).unwrap(), Format::Known(0));
         assert!(bring_up_to_date(&dir, plain_write).unwrap());
         assert_eq!(std::fs::read_to_string(dir.join(FORMAT_FILE)).unwrap(), CURRENT.to_string());
-        assert_eq!(read(&dir).unwrap(), Format::Known(CURRENT));
     }
 
     #[test]
-    fn bringing_up_to_date_again_does_nothing() {
+    fn a_newer_format_is_not_writable() {
         let tmp = TempDir::new().unwrap();
-        let dir = tmp.path();
-        bring_up_to_date(dir, plain_write).unwrap();
-        let wrote = std::cell::Cell::new(false);
-        assert!(bring_up_to_date(dir, |_, _| {
-            wrote.set(true);
-            Ok(())
-        })
-        .unwrap());
-        assert!(!wrote.get());
-    }
-
-    #[test]
-    fn a_newer_format_is_left_exactly_as_it_is_and_not_writable() {
-        let tmp = TempDir::new().unwrap();
-        let dir = tmp.path();
-        std::fs::write(dir.join(FORMAT_FILE), (CURRENT + 1).to_string()).unwrap();
-        std::fs::write(dir.join("order.json"), b"{\"shape\":\"from a newer release\"}").unwrap();
-
-        assert!(!bring_up_to_date(dir, plain_write).unwrap());
-        assert_eq!(std::fs::read_to_string(dir.join(FORMAT_FILE)).unwrap(), (CURRENT + 1).to_string());
-        assert_eq!(
-            std::fs::read(dir.join("order.json")).unwrap(),
-            b"{\"shape\":\"from a newer release\"}"
-        );
-        assert!(!writable(dir).unwrap());
-    }
-
-    #[test]
-    fn a_marker_that_is_not_a_number_is_treated_as_unknown_not_as_old() {
-        // Taking it for format 0 would "upgrade" whatever is there, and rewrite it.
-        let tmp = TempDir::new().unwrap();
-        std::fs::write(tmp.path().join(FORMAT_FILE), "two").unwrap();
-        assert_eq!(read(tmp.path()).unwrap(), Format::Unknown);
+        std::fs::write(tmp.path().join(FORMAT_FILE), (CURRENT + 1).to_string()).unwrap();
+        assert!(!bring_up_to_date(tmp.path(), plain_write).unwrap());
         assert!(!writable(tmp.path()).unwrap());
-    }
-
-    #[test]
-    fn an_unreadable_file_is_set_aside_with_its_bytes() {
-        let tmp = TempDir::new().unwrap();
-        let dir = tmp.path();
-        std::fs::write(dir.join("favorites.json"), b"{half written").unwrap();
-        let first = set_aside(dir, "favorites.json", 1_700_000_000).unwrap();
-        assert_eq!(std::fs::read(&first).unwrap(), b"{half written");
-        assert!(!dir.join("favorites.json").exists());
-
-        std::fs::write(dir.join("favorites.json"), b"again").unwrap();
-        let second = set_aside(dir, "favorites.json", 1_700_000_000).unwrap();
-        assert_ne!(first, second, "a second one in the same second does not replace the first");
-        assert_eq!(std::fs::read(&first).unwrap(), b"{half written");
     }
 }

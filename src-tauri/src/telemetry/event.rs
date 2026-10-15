@@ -1,5 +1,5 @@
-//! By-construction telemetry events. Every variant carries only structured, content-free
-//! fields — never a raw error message, path, or panic payload. The type system is the guard.
+//! The one usage event, `app.launch`, and the facts every event carries. Failures are not events:
+//! they are diagnostics reports (see the module above).
 
 /// Structured environment facts. All values are compile-time/runtime constants, never user input.
 #[derive(Clone, Debug)]
@@ -19,37 +19,12 @@ impl EnvFacts {
     }
 }
 
-/// The telemetry allowlist's event dimension. Adding a variant is the only way to send a new event.
-#[derive(Clone, Debug)]
-pub enum TelemetryEvent {
-    AppLaunch,
-    /// `os_error_code` is `std::io::Error::raw_os_error()` — an integer, never the message string.
-    VaultOpenFailed { os_error_code: Option<i32> },
-    /// `location` is our own source `file:line` (a code identifier, not a user path). The panic
-    /// payload/message is never captured.
-    AppPanic { location: String },
-}
+/// `app.launch`: the app started. It carries the environment facts and nothing else.
+#[derive(Clone, Copy, Debug)]
+pub struct LaunchEvent;
 
-impl TelemetryEvent {
-    pub fn name(&self) -> &'static str {
-        match self {
-            TelemetryEvent::AppLaunch => "app.launch",
-            TelemetryEvent::VaultOpenFailed { .. } => "vault.open.failed",
-            TelemetryEvent::AppPanic { .. } => "app.panic",
-        }
-    }
-
-    /// Event-specific properties, all content-free. Keys are fixed; values are integers/identifiers.
-    pub fn properties(&self) -> Vec<(&'static str, String)> {
-        match self {
-            TelemetryEvent::AppLaunch => vec![],
-            TelemetryEvent::VaultOpenFailed { os_error_code } => vec![(
-                "osErrorCode",
-                os_error_code.map(|c| c.to_string()).unwrap_or_else(|| "unknown".to_string()),
-            )],
-            TelemetryEvent::AppPanic { location } => vec![("location", location.clone())],
-        }
-    }
+impl LaunchEvent {
+    pub const NAME: &'static str = "app.launch";
 }
 
 #[cfg(test)]
@@ -57,29 +32,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn event_names_are_stable() {
-        assert_eq!(TelemetryEvent::AppLaunch.name(), "app.launch");
-        assert_eq!(TelemetryEvent::VaultOpenFailed { os_error_code: Some(3) }.name(), "vault.open.failed");
-        assert_eq!(TelemetryEvent::AppPanic { location: "x".into() }.name(), "app.panic");
-    }
-
-    #[test]
-    fn app_launch_has_no_extra_properties() {
-        assert!(TelemetryEvent::AppLaunch.properties().is_empty());
-    }
-
-    #[test]
-    fn vault_failure_carries_only_an_integer_code() {
-        let p = TelemetryEvent::VaultOpenFailed { os_error_code: Some(3) }.properties();
-        assert_eq!(p, vec![("osErrorCode", "3".to_string())]);
-        let unknown = TelemetryEvent::VaultOpenFailed { os_error_code: None }.properties();
-        assert_eq!(unknown, vec![("osErrorCode", "unknown".to_string())]);
-    }
-
-    #[test]
-    fn panic_carries_only_location_never_message() {
-        let p = TelemetryEvent::AppPanic { location: "src-tauri/src/lib.rs:42".into() }.properties();
-        assert_eq!(p, vec![("location", "src-tauri/src/lib.rs:42".to_string())]);
+    fn the_event_name_is_stable() {
+        assert_eq!(LaunchEvent::NAME, "app.launch");
     }
 
     #[test]

@@ -12,7 +12,8 @@
 
 use serde::{Deserialize, Serialize};
 use std::io;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Component, Path};
+use tauri_kit_state::Outbox;
 
 /// The directory, inside a folder's settings directory.
 pub const DIR: &str = "stranded";
@@ -42,6 +43,11 @@ pub fn relative(root: &Path, path: &Path) -> Option<String> {
     (!parts.is_empty()).then(|| parts.join("/"))
 }
 
+/// Where kept edits are, as files `<when>-<n>.json`.
+fn outbox(dir: &Path) -> Outbox {
+    Outbox::new(dir, "json")
+}
+
 /// Keeps `kept` in `dir`, under a name that orders by when it was kept. Returns the name.
 ///
 /// `write` must create the file and refuse with [`io::ErrorKind::AlreadyExists`] when one is
@@ -54,58 +60,28 @@ pub fn keep(
     write: impl Fn(&Path, &[u8]) -> io::Result<()>,
 ) -> io::Result<String> {
     let body = serde_json::to_vec(kept).map_err(io::Error::other)?;
-    let mut n = 0u32;
-    loop {
-        let id = format!("{:013}-{n}", kept.at);
-        match write(&dir.join(format!("{id}.json")), &body) {
-            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => n += 1,
-            written => return written.map(|()| id),
-        }
-    }
+    outbox(dir).keep(kept.at, &body, write)
 }
 
 /// Every kept edit in `dir`, oldest first. A file that cannot be read is left where it is — it may be
 /// the only copy of what someone typed — and skipped.
 pub fn list(dir: &Path) -> Vec<(String, Kept)> {
-    let Ok(entries) = std::fs::read_dir(dir) else { return Vec::new() };
-    let mut out: Vec<(String, Kept)> = entries
-        .flatten()
-        .filter_map(|entry| {
-            let name = entry.file_name().to_str()?.to_string();
-            let id = name.strip_suffix(".json")?.to_string();
-            valid_id(&id).then_some(())?;
-            let bytes = std::fs::read(entry.path()).ok()?;
-            match serde_json::from_slice::<Kept>(&bytes) {
-                Ok(kept) => Some((id, kept)),
-                Err(e) => {
-                    log::warn!("stranded: {name} could not be read, left in place: {e}");
-                    None
-                }
+    outbox(dir)
+        .list()
+        .into_iter()
+        .filter_map(|(id, bytes)| match serde_json::from_slice::<Kept>(&bytes) {
+            Ok(kept) => Some((id, kept)),
+            Err(e) => {
+                log::warn!("stranded: {id} could not be read, left in place: {e}");
+                None
             }
         })
-        .collect();
-    out.sort_by(|a, b| a.0.cmp(&b.0));
-    out
+        .collect()
 }
 
 /// Removes a kept edit once it has landed.
 pub fn forget(dir: &Path, id: &str) -> io::Result<()> {
-    if !valid_id(id) {
-        return Err(io::Error::other("not a kept edit"));
-    }
-    match std::fs::remove_file(file_of(dir, id)) {
-        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
-        other => other,
-    }
-}
-
-fn file_of(dir: &Path, id: &str) -> PathBuf {
-    dir.join(format!("{id}.json"))
-}
-
-/// Ids are digits and one dash — nothing that could name a file anywhere else.
-fn valid_id(id: &str) -> bool {
-    !id.is_empty() && id.chars().all(|c| c.is_ascii_digit() || c == '-')
+    outbox(dir).forget(id)
 }
 
 #[cfg(test)]

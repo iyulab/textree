@@ -1,13 +1,16 @@
 use serde::{Deserialize, Serialize};
-use std::io::{BufRead, BufReader};
+use std::io::BufRead;
 use std::process::Command;
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 use std::path::Path;
 use tauri::{AppHandle, Manager, State};
-use tauri_kit_sidecar::loopback::Token;
-use tauri_kit_sidecar::{free_loopback_port, LineReadiness, Output, Sidecar};
+use tauri_kit_sidecar::loopback::{Client, Loopback, LoopbackOptions};
+
+// Every request to the host goes through a `Client`: it carries the per-run token the host serves
+// only to this app, so none can leave the token out.
+use tauri_kit_sidecar::{LineReadiness, Output, Sidecar};
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -64,40 +67,30 @@ impl Default for HostStatusCell {
     }
 }
 
-/// Where the running host listens, and the per-run token it serves only to this app. Every request
-/// to the host goes through [`Endpoint::get`]/[`Endpoint::post`], so none can leave the token out.
-#[derive(Clone)]
-pub struct Endpoint {
-    base: String,
-    bearer: String,
-}
-
-impl Endpoint {
-    fn new(port: u16, token: &Token) -> Self {
-        Endpoint { base: format!("http://127.0.0.1:{port}"), bearer: token.bearer() }
-    }
-    pub fn get(&self, path: &str) -> ureq::RequestBuilder<ureq::typestate::WithoutBody> {
-        ureq::get(format!("{}{path}", self.base)).header("Authorization", &self.bearer)
-    }
-    pub fn post(&self, path: &str) -> ureq::RequestBuilder<ureq::typestate::WithBody> {
-        ureq::post(format!("{}{path}", self.base)).header("Authorization", &self.bearer)
-    }
-}
-
-/// The token never appears in logs or debug output.
-impl std::fmt::Debug for Endpoint {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Endpoint").field("base", &self.base).finish_non_exhaustive()
-    }
-}
-
 /// The environment variable the host reads its token from (`HostToken.Setting` on the .NET side).
 const HOST_TOKEN_ENV: &str = "TEXTREE_HOST_TOKEN";
+
+/// What the host prints, followed by its port, once it listens (`HostToken.ReadyPrefix`).
+const HOST_READY_PREFIX: &str = "textree-host ready port=";
+
+/// How long a starting host may take to say it listens. Models load afterwards, in the background;
+/// this covers the runtime starting — the first run of a single-file build unpacks itself first.
+const HOST_READY_TIMEOUT: Duration = Duration::from_secs(60);
+
+fn host_options(log_dir: &Path) -> LoopbackOptions {
+    let mut options = LoopbackOptions::new(HOST_TOKEN_ENV, HOST_READY_PREFIX);
+    options.ready_timeout = HOST_READY_TIMEOUT;
+    // host-out.log / host-err.log land in app_log_dir so they sit next to textree.log and the
+    // "Open log folder" palette command exposes them in one place.
+    options.stdout = Some(log_dir.join("host-out.log"));
+    options.stderr = Some(log_dir.join("host-err.log"));
+    options
+}
 
 #[derive(Default)]
 pub struct HostHandle {
     status: Mutex<HostStatusCell>,
-    endpoint: Mutex<Option<Endpoint>>,
+    endpoint: Mutex<Option<Client>>,
     /// The running host and everything it started, stopped together (see [`shutdown_host`]).
     child: Mutex<Option<Sidecar>>,
     generation: AtomicU64,
@@ -153,7 +146,7 @@ impl HostHandle {
         cell.0 = HostStatus::Starting;
         true
     }
-    pub fn endpoint(&self) -> Option<Endpoint> {
+    pub fn endpoint(&self) -> Option<Client> {
         self.endpoint.lock().unwrap_or_else(|e| e.into_inner()).clone()
     }
     pub fn set_current_vault(&self, vault: String) {
@@ -272,69 +265,52 @@ pub fn spawn_host(
     if !handle.try_begin_spawn() {
         return;
     }
-    let port = match free_loopback_port() {
-        Ok(p) => p,
-        Err(e) => {
-            log::error!("[host] port alloc failed: {e}");
-            handle.set_status(HostStatus::Unavailable);
-            return;
-        }
-    };
-    // A fresh token per run: the host answers only requests that carry it, so no other program on
-    // this machine can use it to read a folder or spend the AI key.
-    let token = match Token::generate() {
-        Ok(t) => t,
-        Err(e) => {
-            log::error!("[host] token generation failed: {e}");
-            handle.set_status(HostStatus::Unavailable);
-            return;
-        }
-    };
-    let endpoint = Endpoint::new(port, &token);
     let mut cmd = Command::new(&exe);
-    cmd.arg("--urls")
-        .arg(&endpoint.base)
-        .env("ASPNETCORE_URLS", &endpoint.base)
-        .env(HOST_TOKEN_ENV, token.as_str());
     // Forward the single embedded connection string (if telemetry is compiled in and
     // configured) so the host's own telemetry activates from the same source of truth.
     // Compile-time embedding means this is not already in the process env — it must be
     // passed explicitly. Absent => no env set => host telemetry stays off (unchanged).
     if let Some(conn) = crate::telemetry::host_connection() {
-        cmd.env(crate::telemetry::config::ENV_VAR, conn);
+        cmd.env(crate::telemetry::ENV_VAR, conn);
     }
     for (k, v) in &extra_env {
         cmd.env(k, v);
     }
-    // host-out.log / host-err.log land in app_log_dir so they sit next to textree.log and the
-    // "Open log folder" palette command exposes them in one place. Both streams are drained on
-    // background threads, so a chatty host never blocks on a full pipe.
-    let _ = std::fs::create_dir_all(&log_dir);
-    let output = Output::Files {
-        stdout: log_dir.join("host-out.log"),
-        stderr: log_dir.join("host-err.log"),
-    };
-    // No console window on Windows, and the host joins a job object (a process group elsewhere),
-    // so whatever it starts is stopped with it — also when this app crashes.
-    // The bundled host is published self-contained single-file (assemble-host-sidecar.ps1),
-    // so it carries its own runtime — no DOTNET_ROOT needed. In dev, TEXTREE_HOST_EXE may point
-    // at a framework-dependent build, which then relies on the ambient .NET runtime.
-    let child = match Sidecar::spawn(cmd, output) {
-        Ok(c) => c,
-        Err(e) => {
-            log::error!("[host] spawn failed: {e}");
-            handle.set_status(HostStatus::Unavailable);
-            return;
-        }
-    };
-    *handle.endpoint.lock().unwrap_or_else(|e| e.into_inner()) = Some(endpoint.clone());
-    *handle.child.lock().unwrap_or_else(|e| e.into_inner()) = Some(child);
+    let options = host_options(&log_dir);
     *handle.active_provider.lock().unwrap_or_else(|e| e.into_inner()) = active_provider;
     // Status was already claimed as Starting by try_begin_spawn at the top.
-
     let my_gen = handle.generation.fetch_add(1, Ordering::SeqCst) + 1;
     let h = handle.clone();
-    std::thread::spawn(move || poll_health(h, endpoint, my_gen));
+    // Starting waits for the host to say which port it took, so it runs off the caller's thread.
+    std::thread::spawn(move || {
+        // A fresh token per run, handed over in the environment; the host picks a free port itself
+        // and says which, so no other program can take the port between choosing and binding it.
+        // No console window on Windows, and the host joins a job object (a process group
+        // elsewhere), so whatever it starts is stopped with it — also when this app crashes. The
+        // bundled host is published self-contained single-file (assemble-host-sidecar.ps1); in dev,
+        // TEXTREE_HOST_EXE may point at a framework-dependent build using the ambient runtime.
+        let (child, endpoint) = match Loopback::start(cmd, &options) {
+            Ok(started) => {
+                let client = started.client().clone();
+                (started.into_parts().0, client)
+            }
+            Err(e) => {
+                log::error!("[host] start failed: {e}");
+                if h.generation.load(Ordering::SeqCst) == my_gen {
+                    h.set_status(HostStatus::Unavailable);
+                }
+                return;
+            }
+        };
+        // Stopped while it was starting: what the stop could not see yet goes now.
+        if h.generation.load(Ordering::SeqCst) != my_gen {
+            let _ = child.shutdown(SHUTDOWN_GRACE);
+            return;
+        }
+        *h.endpoint.lock().unwrap_or_else(|e| e.into_inner()) = Some(endpoint.clone());
+        *h.child.lock().unwrap_or_else(|e| e.into_inner()) = Some(child);
+        poll_health(h, endpoint, my_gen);
+    });
 }
 
 /// Per-poll decision for the health loop. Pure (no I/O) so it is unit-tested.
@@ -382,7 +358,7 @@ fn poll_interval(ready: bool, any_download_active: bool) -> Duration {
     if ready && !any_download_active { READY_POLL_INTERVAL } else { POLL_INTERVAL }
 }
 
-fn poll_health(handle: Arc<HostHandle>, host: Endpoint, my_gen: u64) {
+fn poll_health(handle: Arc<HostHandle>, host: Client, my_gen: u64) {
     let start = Instant::now();
     let mut announced = false;
     let mut ready = false;
@@ -408,14 +384,11 @@ fn poll_health(handle: Arc<HostHandle>, host: Endpoint, my_gen: u64) {
         let health = if exit.is_some() {
             None
         } else {
-            host.get("/health")
-                .config()
-                .timeout_global(Some(Duration::from_secs(5)))
-                .build()
-                .call()
+            host.within(Duration::from_secs(5))
+                .get("/health")
                 .ok()
-                .and_then(|mut resp| resp.body_mut().read_to_string().ok())
-                .and_then(|body| parse_health(&body))
+                .filter(|resp| resp.is_success())
+                .and_then(|resp| parse_health(&resp.body))
         };
         // The request can outlast a restart (up to its timeout): what the old host said must not
         // overwrite what the new one's poller reports.
@@ -474,11 +447,7 @@ pub fn shutdown_host(handle: &HostHandle) {
     // the Unavailable status we set at the end of this function.
     handle.generation.fetch_add(1, Ordering::SeqCst);
     if let Some(host) = handle.endpoint() {
-        let _ = host.post("/shutdown")
-            .config()
-            .timeout_global(Some(Duration::from_millis(800)))
-            .build()
-            .send_empty();
+        let _ = host.within(Duration::from_millis(800)).post("/shutdown");
     }
     let mut guard = handle.child.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(child) = guard.take() {
@@ -640,7 +609,7 @@ pub fn probe_byo_connection(
     if let Some(key) = api_key.filter(|k| !k.is_empty()) {
         cmd.env("TEXTREE_BYO_API_KEY", key);
     }
-    let mut child = Sidecar::spawn(cmd, Output::Lines { stderr: None })
+    let mut child = Sidecar::spawn(cmd, Output::Lines { stdout: None, stderr: None })
         .map_err(|e| format!("The AI helper could not be started: {e}"))?;
     let line = child.wait_line(PROBE_DEADLINE, |l| l.trim_start().starts_with('{'));
     let _ = child.shutdown(Duration::ZERO);
@@ -693,11 +662,7 @@ pub async fn prepare_generation(host: State<'_, Arc<HostHandle>>) -> Result<(), 
     // READY_POLL_INTERVAL), bouncing the frontend retry loop straight back to 'error'.
     host.set_generator_error(None);
     tauri::async_runtime::spawn_blocking(move || {
-        let _ = endpoint.post("/prepare-generation")
-            .config()
-            .timeout_global(Some(Duration::from_secs(10)))
-            .build()
-            .send_empty();
+        let _ = endpoint.within(Duration::from_secs(10)).post("/prepare-generation");
     })
     .await
     .map_err(|e| e.to_string())?;
@@ -796,16 +761,9 @@ pub async fn semantic_search(
             "scopePath": scope,
             "limit": limit,
         });
-        match endpoint.post("/search")
-            .config()
-            .timeout_global(Some(Duration::from_secs(10)))
-            .build()
-            .send_json(payload)
-        {
-            Ok(mut resp) => {
-                let body = resp.body_mut().read_to_string().map_err(|e| e.to_string())?;
-                Ok(parse_search_response(&body).unwrap_or_default())
-            }
+        match endpoint.within(Duration::from_secs(10)).post_json("/search", &payload.to_string()) {
+            Ok(resp) if resp.is_success() => Ok(parse_search_response(&resp.body).unwrap_or_default()),
+            Ok(resp) => Err(format!("http status: {}", resp.status)),
             Err(e) => Err(e.to_string()),
         }
     })
@@ -968,13 +926,13 @@ pub async fn ask(
 
     let result = tauri::async_runtime::spawn_blocking(move || {
         let payload = serde_json::json!({ "messages": messages });
-        let resp = endpoint.post("/chat")
-            .config()
-            .timeout_global(Some(Duration::from_secs(120)))
-            .build()
-            .send_json(payload)
+        let reader = endpoint
+            .within(Duration::from_secs(120))
+            .post_json_stream("/chat", &payload.to_string())
             .map_err(|e| e.to_string())?;
-        let reader = BufReader::new(resp.into_body().into_reader());
+        if !reader.is_success() {
+            return Err(format!("http status: {}", reader.status));
+        }
         let mut end = None;
         for line in reader.lines() {
             // A newer `ask` has started — abandon this stream.
@@ -1032,11 +990,7 @@ pub fn index_note(handle: &HostHandle, vault: &str, path: &str) {
         return;
     }
     let payload = serde_json::json!({ "vaultPath": vault, "path": path });
-    let _ = host.post("/index")
-        .config()
-        .timeout_global(Some(Duration::from_secs(10)))
-        .build()
-        .send_json(payload);
+    let _ = host.within(Duration::from_secs(10)).post_json("/index", &payload.to_string());
 }
 
 /// Fire-and-forget full vault reindex. Silent on any error (degrade, don't block).
@@ -1047,11 +1001,7 @@ pub fn reindex_vault(handle: &HostHandle, vault: &str) {
         return;
     }
     let payload = serde_json::json!({ "vaultPath": vault });
-    let _ = host.post("/reindex")
-        .config()
-        .timeout_global(Some(Duration::from_secs(10)))
-        .build()
-        .send_json(payload);
+    let _ = host.within(Duration::from_secs(10)).post_json("/reindex", &payload.to_string());
 }
 
 // ---------------------------------------------------------------------------
@@ -1061,6 +1011,15 @@ pub fn reindex_vault(handle: &HostHandle, vault: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A client for a port nothing listens on.
+    fn unreachable_endpoint() -> Client {
+        let token = tauri_kit_sidecar::loopback::Token::generate().unwrap();
+        Client::new(
+            &tauri_kit_sidecar::loopback::Endpoint::new(9, token),
+            &tauri_kit_sidecar::loopback::ClientOptions::default(),
+        )
+    }
 
     #[test]
     fn parse_health_reads_embedder_ready() {
@@ -1245,7 +1204,7 @@ mod tests {
         let started = Instant::now();
         let poller = {
             let handle = handle.clone();
-            std::thread::spawn(move || poll_health(handle, Endpoint::new(9, &Token::generate().unwrap()), 0))
+            std::thread::spawn(move || poll_health(handle, unreachable_endpoint(), 0))
         };
         poller.join().unwrap();
         assert!(matches!(handle.status(), HostStatus::Unavailable));

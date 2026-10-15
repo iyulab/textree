@@ -36,4 +36,14 @@ public sealed class HostTokenTests : IClassFixture<HostFactory>
     {
         Assert.Equal(HttpStatusCode.OK, (await _factory.CreateClient().GetAsync("/health")).StatusCode);
     }
+
+    // A web page whose own name was pointed at 127.0.0.1 reaches the port but names itself.
+    [Fact]
+    public async Task A_request_naming_another_host_is_refused_even_with_the_token()
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get, "/health");
+        request.Headers.Host = "attacker.example";
+        var response = await _factory.CreateClient().SendAsync(request);
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
 }

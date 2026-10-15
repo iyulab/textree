@@ -48,9 +48,10 @@ pub fn run() {
     std::panic::set_hook(Box::new(move |info| {
         let location = info
             .location()
-            .map(|l| format!("{}:{}", l.file(), l.line()))
+            .map(|l| format!("{}:{}:{}", l.file(), l.line(), l.column()))
             .unwrap_or_default();
-        telemetry::emit(telemetry::event::TelemetryEvent::AppPanic { location });
+        // Appends one line to a file; sent on a later launch, since this process is ending.
+        telemetry::record(telemetry::panic_report(&location));
         prev_hook(info);
     }));
 
@@ -72,7 +73,12 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_process::init())
         .setup(|app| {
-            telemetry::emit(telemetry::event::TelemetryEvent::AppLaunch);
+            {
+                use tauri::Manager;
+                if let Ok(log_dir) = app.path().app_log_dir() {
+                    telemetry::start(&log_dir);
+                }
+            }
             // Log startup here (after plugin init) so the logger is already wired.
             log::info!("textree starting (v{})", env!("CARGO_PKG_VERSION"));
             #[cfg(windows)]

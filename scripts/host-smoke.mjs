@@ -23,7 +23,6 @@
 import { spawn, spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -48,15 +47,6 @@ if (provenance) {
   console.log(line);
 }
 
-const freePort = () =>
-  new Promise((ok, fail) => {
-    const s = createServer();
-    s.once("error", fail);
-    s.listen(0, "127.0.0.1", () => {
-      const { port } = s.address();
-      s.close(() => ok(port));
-    });
-  });
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -70,8 +60,6 @@ ${output.slice(-3000)}`);
   throw new Error(message);
 }
 
-const port = await freePort();
-const base = `http://127.0.0.1:${port}`;
 // The host serves only whoever started it: a fresh token, as the app hands one to each run.
 const token = randomBytes(32).toString("base64url");
 const auth = { authorization: `Bearer ${token}` };
@@ -81,16 +69,20 @@ writeFileSync(join(vault, "garden.md"), "# Garden\nTomatoes need full sun and re
 writeFileSync(join(vault, "taxes.md"), "# Taxes\nFile the quarterly estimate before the deadline.\n");
 const slashed = vault.replace(/\\/g, "/");
 
-console.log(`[host:smoke] starting ${EXE ?? "the host project"} on ${base}`);
+console.log(`[host:smoke] starting ${EXE ?? "the host project"}`);
 const host = EXE
-  ? spawn(EXE, ["--urls", base], { stdio: ["ignore", "pipe", "pipe"], env: hostEnv })
-  : spawn("dotnet", ["run", "--project", PROJECT, "--", "--urls", base], {
+  ? spawn(EXE, [], { stdio: ["ignore", "pipe", "pipe"], env: hostEnv })
+  : spawn("dotnet", ["run", "--project", PROJECT], {
       stdio: ["ignore", "pipe", "pipe"],
       env: hostEnv,
       shell: process.platform === "win32",
     });
 host.stdout.on("data", (d) => (output += d));
 host.stderr.on("data", (d) => (output += d));
+
+// The host picks its own port and says which on a line of its own, as the app reads it.
+const READY_PREFIX = "textree-host ready port=";
+let base = "";
 
 const post = (path, body) =>
   fetch(base + path, {
@@ -110,6 +102,17 @@ async function health() {
 
 try {
   const deadline = Date.now() + READY_TIMEOUT_MS;
+  for (;;) {
+    const line = output.split(/\r?\n/).find((l) => l.startsWith(READY_PREFIX));
+    if (line) {
+      base = `http://127.0.0.1:${Number(line.slice(READY_PREFIX.length))}`;
+      break;
+    }
+    if (Date.now() > deadline) fail("the host never said which port it listens on");
+    if (host.exitCode !== null) fail(`the host exited (${host.exitCode}) before listening`);
+    await sleep(200);
+  }
+  console.log(`[host:smoke] listening on ${base}`);
   while (!(await health())) {
     if (Date.now() > deadline) fail("the host never answered /health");
     if (host.exitCode !== null) fail(`the host exited (${host.exitCode}):\n${output.slice(-2000)}`);
