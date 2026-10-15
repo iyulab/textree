@@ -1,7 +1,10 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { publishPreview, setPublishChoice, type PublishPreview } from "./ipc";
+  import { commitNotes, publishPreview, type PublishPreview } from "./ipc";
   import { friendlyError, type FriendlyError } from "./friendlyError.helpers";
+  import { publishScope } from "./publishScope.svelte";
+  import { versionName } from "./addVersion.helpers";
+  import { joinPath } from "./vaultPaths.helpers";
   import {
     canPublish,
     missingLine,
@@ -25,8 +28,15 @@
     onpublish: () => void;
     /** The person chose not to. Nothing is published. */
     oncancel: () => void;
+    /**
+     * Gets the open note's edits onto disk before a version is added from here; false when they
+     * could not be (the reason is on screen).
+     */
+    settleOpenNote: () => Promise<boolean>;
+    /** Versions were added from the dialog. */
+    onadded: () => void;
   }
-  let { root, destination, onpublish, oncancel }: Props = $props();
+  let { root, destination, onpublish, oncancel, settleOpenNote, onadded }: Props = $props();
 
   let preview = $state<PublishPreview | null>(null);
   let failure = $state<FriendlyError | null>(null);
@@ -46,16 +56,39 @@
     );
   }
 
-  /** The person chose to publish everything: recorded as a choice, then shown again. */
+  /** The person chose to publish everything: recorded as a choice (the sidebar learns of it too), then shown again. */
   async function chooseWholeFolder() {
     choosing = true;
     try {
-      await setPublishChoice(root, "", true);
+      await publishScope.choose(root, true);
       load();
     } catch (e) {
       failure = friendlyError(e);
     } finally {
       choosing = false;
+    }
+  }
+
+  let adding = $state(false);
+
+  /** Adds one version of the chosen notes that have none yet, then shows what goes out again. */
+  async function addVersions() {
+    if (!preview || adding) return;
+    const paths = preview.neverRecorded.map((rel) => joinPath(root, rel));
+    adding = true;
+    try {
+      // A version of what is on disk is only the right one once the open note's edits are there.
+      if (!(await settleOpenNote())) {
+        failure = friendlyError("The open note's changes are not saved yet, so no version was added.");
+        return;
+      }
+      await commitNotes(root, paths, versionName("", paths));
+      onadded();
+      load();
+    } catch (e) {
+      failure = friendlyError(e);
+    } finally {
+      adding = false;
     }
   }
 
@@ -115,7 +148,18 @@
           <p class="names">{unrecordedNames(preview.unrecorded)}</p>
         </div>
       {/if}
-      {#each [[neverRecordedLine(preview.neverRecorded), "never-recorded"], [missingLine(preview.missing), "missing"], [tooLargeLine(preview.tooLarge), "too-large"], [unpublishedLinksLine(preview.unpublishedLinks), "unpublished-links"], [withheldLine(preview.withheld), "withheld"]] as [line, id] (id)}
+      {#if neverRecordedLine(preview.neverRecorded)}
+        <div class="with-action">
+          <p class="muted" data-testid="publish-confirm-never-recorded">{neverRecordedLine(preview.neverRecorded)}</p>
+          <button
+            class="btn small"
+            onclick={addVersions}
+            disabled={adding}
+            data-testid="publish-confirm-add-versions">Add a version of these notes</button
+          >
+        </div>
+      {/if}
+      {#each [[missingLine(preview.missing), "missing"], [tooLargeLine(preview.tooLarge), "too-large"], [unpublishedLinksLine(preview.unpublishedLinks), "unpublished-links"], [withheldLine(preview.withheld), "withheld"]] as [line, id] (id)}
         {#if line}<p class="muted" data-testid={`publish-confirm-${id}`}>{line}</p>{/if}
       {/each}
     {/if}
@@ -192,6 +236,16 @@
     font-size: var(--font-size-smaller);
     color: var(--text-muted);
     overflow-wrap: anywhere;
+  }
+  .with-action {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--sp-1);
+  }
+  .btn.small {
+    padding: var(--sp-1) var(--sp-3);
+    font-size: var(--font-size-smaller);
   }
   .failure {
     margin: 0;

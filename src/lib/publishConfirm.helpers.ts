@@ -69,7 +69,9 @@ export function neverRecordedLine(names: string[]): string | null {
 
 /** Files linked from published notes that are not in the last added versions. */
 export function missingLine(names: string[]): string | null {
-  return names.length === 0 ? null : `Linked but not in the last added versions, so left out: ${shortList(names)}`;
+  return names.length === 0
+    ? null
+    : `Linked but not in the last added versions, so left out — add a version of the note that shows them to include them: ${shortList(names)}`;
 }
 
 /** Notes linked from published notes that do not go out. */

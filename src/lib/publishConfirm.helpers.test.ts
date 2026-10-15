@@ -86,7 +86,7 @@ describe("the dialog under chosen publishing", () => {
   });
   it("names linked files that are left out", () => {
     expect(missingLine(["blog/gone.png"])).toBe(
-      "Linked but not in the last added versions, so left out: blog/gone.png",
+      "Linked but not in the last added versions, so left out — add a version of the note that shows them to include them: blog/gone.png",
     );
     expect(missingLine([])).toBeNull();
   });

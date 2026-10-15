@@ -140,9 +140,12 @@
     // Like putting a note back: never overwrites, and when its folder is gone the copy goes to the
     // top of the vault — the edits matter more than the place.
     keepCopy: (vault, path, text) =>
-      createNoteWithContent(vault, parentDir(path), noteStem(path), text).catch(() =>
-        createNoteWithContent(vault, vault, noteStem(path), text),
-      ),
+      createNoteWithContent(vault, parentDir(path), noteStem(path), text)
+        .catch(() => createNoteWithContent(vault, vault, noteStem(path), text))
+        .then((created) => {
+          reloadPublishChoices();
+          return created;
+        }),
     landedOnOpen: (text) => applyReload(text),
     // Edits to a note left that could not be written yet outlast the app: kept with its settings.
     keepStranded: (vault, e) => keepStranded(vault, e.path, e.text, e.base),
@@ -364,13 +367,9 @@
       if (folder !== root) return;
       void refreshBackup();
       void refreshAlternatives();
-      if (exchange.received.length > 0 || exchange.removed.length > 0) {
-        void refreshTree();
-        // Choices may have arrived from another device.
-        void publishScope.load(folder).catch((e) => {
-          if (folder === root) opError = friendlyError(e);
-        });
-      }
+      if (exchange.received.length > 0 || exchange.removed.length > 0) void refreshTree();
+      // Choices travel on their own: they may have arrived from another device with no note.
+      reloadPublishChoices();
       const said = exchangeMessages(exchange);
       if (said.length > 0) {
         backupNotice = { kind: needsAttention(exchange) ? "error" : "ok", text: said.join(" ") };
@@ -753,6 +752,7 @@
           remapRenamed(node.path, await renameNode(vault, node.path, name), node.kind !== "leaf"),
         node.path,
       );
+      reloadPublishChoices();
       await refreshTree();
       selectedNode = null;
       opError = null;
@@ -794,6 +794,7 @@
         newPath = await renameNoteUnique(vault, pathToRename, candidate);
         return remapRenamed(pathToRename, newPath, false);
       }, pathToRename);
+      reloadPublishChoices();
       await refreshTree();
       if (activePath === newPath) selectedNode = null; // still on the renamed note
       opError = null;
@@ -842,6 +843,7 @@
           remapRenamed(node.path, await renameNode(vault, node.path, name), node.kind !== "leaf"),
         node.path,
       );
+      reloadPublishChoices();
       await refreshTree();
       selectedNode = null;
       renamingPath = null; // success → exit edit mode
@@ -908,6 +910,19 @@
     if (root) tree = await listTree(root);
   }
 
+  /**
+   * Publish choices are carried along by a move and cleared where something is deleted or made,
+   * where the file watcher does not look — so the sidebar reads them again after each such change
+   * (and after each exchange), not when the tree happens to refresh.
+   */
+  function reloadPublishChoices() {
+    const folder = root;
+    if (!folder) return;
+    void publishScope.load(folder).catch((e) => {
+      if (folder === root) opError = friendlyError(e);
+    });
+  }
+
   /** Reverse-lookup a node in the tree by body_path (to confirm the rename target for inline title editing). */
   function findByBody(nodes: TreeNode[], body: string): TreeNode | null {
     for (const n of nodes) {
@@ -970,6 +985,7 @@
         newDir = await promoteNode(vault, leaf);
         return remapPromoted(leaf, newDir);
       }, leaf);
+      reloadPublishChoices();
       await refreshTree();
       selectedNode = null;
       void createNewNote(newDir); // target the new container
@@ -996,6 +1012,7 @@
     }
     try {
       const p = await createUntitledNote(root, parent);
+      reloadPublishChoices();
       await refreshTree();
       content = await readNote(root, p);
       activeName = noteStem(p);
@@ -1025,6 +1042,7 @@
     }
     try {
       await createFolder(root, targetParent(), name);
+      reloadPublishChoices();
       await refreshTree();
       mode = "none";
       nameInput = "";
@@ -1046,6 +1064,7 @@
     }
     try {
       await deleteNode(root, target);
+      reloadPublishChoices();
       await refreshTree();
       if (affectsOpen) closeEditor();
       selectedNode = null;
@@ -1078,6 +1097,7 @@
       await save.move(async () => {
         return remapMoved(src, await moveNode(vault, src, destDir));
       }, src);
+      reloadPublishChoices();
       await refreshTree();
       selectedNode = null;
       opError = null;
@@ -1109,6 +1129,7 @@
       await save.move(async () => {
         return remapAdopted(src, leaf, await adoptNode(vault, src, leaf));
       }, [src, leaf]);
+      reloadPublishChoices();
       await refreshTree();
       selectedNode = null;
       opError = null;
@@ -1125,6 +1146,7 @@
     if (!root || !activePath) return null;
     try {
       const rel = await saveAttachment(root, activePath, dataBase64, ext);
+      reloadPublishChoices();
       saveState.saveError = null;
       return `![](${rel})`;
     } catch (e) {
@@ -1155,6 +1177,7 @@
       const created = await createNoteWithContent(vault, parentDir(path), stem, text).catch(() =>
         createNoteWithContent(vault, vault, stem, text),
       );
+      reloadPublishChoices();
       const moved = !pathInside(created, path);
       if (moved) {
         content = save.pending?.text ?? text; // the editor is recreated for the new path
@@ -1535,6 +1558,7 @@
 
   /** Open a just-saved summary note in Note mode (refresh the tree so it appears in the sidebar). */
   async function openSavedNote(path: string) {
+    reloadPublishChoices(); // it may have just been made
     await refreshTree();
     layout.setMode("note");
     openFileFromPalette(path);
@@ -2223,7 +2247,10 @@
           {root}
           {tree}
           onclose={() => { showDeletedNotes = false; }}
-          onrestored={refreshTree}
+          onrestored={() => {
+            reloadPublishChoices();
+            void refreshTree();
+          }}
         />
       {/key}
     {/if}
@@ -2233,6 +2260,12 @@
         destination={publishConfirm.destination}
         onpublish={() => publishConfirm?.answer(true)}
         oncancel={() => publishConfirm?.answer(false)}
+        settleOpenNote={async () => !saveState.dirty || (await leaveNote()) === "saved"}
+        onadded={() => {
+          void refreshBackup();
+          // New versions are only on this computer until they reach the repository.
+          if (root) void backupStore.syncIfConnected(root);
+        }}
       />
     {/if}
     {#if showBackup && root}

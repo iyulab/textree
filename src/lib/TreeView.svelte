@@ -322,7 +322,12 @@
           </button>
         {/if}
         {#if published}
-          <span class="published" title="Included in the published site" data-testid="tree-published"
+          <span
+            class="published"
+            role="img"
+            title="Included in the published site"
+            aria-label="Included in the published site"
+            data-testid="tree-published"
             ><Icon name="globe" size={13} /></span>
         {/if}
         <button

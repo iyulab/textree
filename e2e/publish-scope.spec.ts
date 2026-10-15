@@ -1,5 +1,5 @@
 import { expect, test, type Browser, type Page } from "@playwright/test";
-import { existsSync, mkdtempSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, truncateSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -26,6 +26,20 @@ async function publishTo(p: Page, out: string) {
   await expect(p.getByTestId("publish-confirm-go")).toBeEnabled({ timeout: 15000 });
   await p.getByTestId("publish-confirm-go").click();
   await publishing;
+}
+
+/** Opens the dialog asked before publishing; settles once it is answered. */
+function openPublishDialog(p: Page): Promise<void> {
+  return p.evaluate(() =>
+    (window as unknown as { __textreeTest: { publishTo: (o: string) => Promise<void> } }).__textreeTest.publishTo(
+      "C:/unused-out-dir",
+    ),
+  );
+}
+
+/** The sidebar row holding the item named `name` — the published marker sits beside the item. */
+function rowOf(p: Page, name: RegExp) {
+  return p.locator(".row").filter({ has: p.getByRole("treeitem", { name }) });
 }
 
 async function command(p: Page, query: string): Promise<void> {
@@ -69,17 +83,58 @@ test("nothing chosen: the dialog offers the whole notes folder", async () => {
   try {
     await loadVault(page, vault);
     await recordNotes(page, vault, ["a.md"]);
-    const opening = page.evaluate(() =>
-      (window as unknown as { __textreeTest: { publishTo: (o: string) => Promise<void> } }).__textreeTest.publishTo(
-        "C:/unused-out-dir",
-      ),
-    );
+    const opening = openPublishDialog(page);
     await expect(page.getByTestId("publish-confirm-nothing-chosen")).toBeVisible();
     await expect(page.getByTestId("publish-confirm-go")).toBeDisabled();
     await page.getByTestId("publish-confirm-choose-all").click();
     await expect(page.getByTestId("publish-confirm-summary")).toContainText("1 note");
     await page.getByTestId("publish-confirm-cancel").click();
     await opening;
+    // The sidebar learned of the choice made in the dialog.
+    await expect(rowOf(page, /^a$/).getByTestId("tree-published")).toBeVisible();
+  } finally {
+    removeTempVault(vault);
+  }
+});
+
+test("notes with no version yet can be added from the dialog, and then go out", async () => {
+  const vault = createTempVault({ "x.md": "# X\n", "y.md": "# Y\n![big](big.bin)\n", "big.bin": "" });
+  // Over the size limit: never recorded, and named on a line of its own.
+  truncateSync(join(vault, "big.bin"), 50 * 1024 * 1024 + 1);
+  try {
+    await loadVault(page, vault);
+    const opening = openPublishDialog(page);
+    await page.getByTestId("publish-confirm-choose-all").click();
+    await expect(page.getByTestId("publish-confirm-never-recorded")).toContainText("x, y");
+    await expect(page.getByTestId("publish-confirm-go")).toBeDisabled();
+    await page.getByTestId("publish-confirm-add-versions").click();
+    await expect(page.getByTestId("publish-confirm-summary")).toContainText("2 notes", { timeout: 15000 });
+    await expect(page.getByTestId("publish-confirm-never-recorded")).toHaveCount(0);
+    await expect(page.getByTestId("publish-confirm-too-large")).toContainText("big.bin");
+    await expect(page.getByTestId("publish-confirm-missing")).toHaveCount(0);
+    await page.getByTestId("publish-confirm-cancel").click();
+    await opening;
+  } finally {
+    removeTempVault(vault);
+  }
+});
+
+test("a note renamed inside an included folder keeps being left out in the sidebar", async () => {
+  const vault = createTempVault({ "blog/post.md": "# Post\n", "blog/draft.md": "# Draft\n" });
+  try {
+    await loadVault(page, vault);
+    await page.getByRole("treeitem", { name: /blog/ }).click();
+    await command(page, "Include in published site");
+    await page.getByRole("treeitem", { name: /draft/ }).click();
+    await command(page, "Leave out of published site");
+    await expect(rowOf(page, /draft/).getByTestId("tree-published")).toHaveCount(0);
+    await page.getByRole("treeitem", { name: /draft/ }).click();
+    await page.getByRole("button", { name: "Rename", exact: true }).click();
+    await page.locator(".tree-rename-input").fill("draft2");
+    await page.locator(".tree-rename-input").press("Enter");
+    await expect(page.getByRole("treeitem", { name: /draft2/ })).toBeVisible();
+    await expect(rowOf(page, /post/).getByTestId("tree-published")).toBeVisible();
+    await expect(rowOf(page, /draft2/).getByTestId("tree-published")).toHaveCount(0);
   } finally {
     removeTempVault(vault);
   }
@@ -91,11 +146,11 @@ test("the sidebar marks what is included, and adding a version says so", async (
     await loadVault(page, vault);
     await page.getByRole("treeitem", { name: /blog/ }).click();
     await command(page, "Include in published site");
-    // The marker sits in the row beside the item; a note inside an included folder shows it too.
-    const rowOf = (name: RegExp) => page.locator(".row").filter({ has: page.getByRole("treeitem", { name }) });
-    await expect(rowOf(/blog/).getByTestId("tree-published")).toBeVisible();
-    await expect(rowOf(/post/).getByTestId("tree-published")).toBeVisible();
-    await expect(rowOf(/other/).getByTestId("tree-published")).toHaveCount(0);
+    // A note inside an included folder shows the marker too.
+    await expect(rowOf(page, /blog/).getByTestId("tree-published")).toBeVisible();
+    await expect(rowOf(page, /post/).getByTestId("tree-published")).toBeVisible();
+    await expect(rowOf(page, /other/).getByTestId("tree-published")).toHaveCount(0);
+    await expect(rowOf(page, /blog/).getByRole("img", { name: "Included in the published site" })).toBeVisible();
     await page.getByRole("treeitem", { name: /post/ }).click();
     await expectOpenNote(page, "post");
     await page.keyboard.press("Control+Shift+S");
