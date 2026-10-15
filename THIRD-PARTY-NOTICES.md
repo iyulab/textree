@@ -462,11 +462,11 @@ are compiled into the application.
 | `@lezer/xml` | 1.0.6 | MIT | https://github.com/lezer-parser/xml |
 | `@lezer/yaml` | 1.0.4 | MIT | https://github.com/lezer-parser/yaml |
 | `@marijn/find-cluster-break` | 1.0.4 | MIT | https://code.haverbeke.berlin/marijn/find-cluster-break |
-| `@tauri-apps/api` | 2.11.1 | Apache-2.0 OR MIT | https://github.com/tauri-apps/tauri |
-| `@tauri-apps/plugin-dialog` | 2.7.3 | MIT OR Apache-2.0 | https://github.com/tauri-apps/plugins-workspace |
-| `@tauri-apps/plugin-opener` | 2.5.5 | MIT OR Apache-2.0 | https://github.com/tauri-apps/plugins-workspace |
-| `@tauri-apps/plugin-process` | 2.3.1 | MIT OR Apache-2.0 | https://github.com/tauri-apps/plugins-workspace |
-| `@tauri-apps/plugin-updater` | 2.12.0 | MIT OR Apache-2.0 | https://github.com/tauri-apps/plugins-workspace |
+| `@tauri-apps/api` | 2.12.4 | Apache-2.0 OR MIT | https://github.com/tauri-apps/tauri |
+| `@tauri-apps/plugin-dialog` | 2.8.3 | MIT OR Apache-2.0 | https://github.com/tauri-apps/plugins-workspace |
+| `@tauri-apps/plugin-opener` | 2.7.2 | MIT OR Apache-2.0 | https://github.com/tauri-apps/plugins-workspace |
+| `@tauri-apps/plugin-process` | 2.4.0 | MIT OR Apache-2.0 | https://github.com/tauri-apps/plugins-workspace |
+| `@tauri-apps/plugin-updater` | 2.14.0 | MIT OR Apache-2.0 | https://github.com/tauri-apps/plugins-workspace |
 | `codemirror` | 6.0.2 | MIT | https://github.com/codemirror/basic-setup |
 | `commander` | 15.0.0 | MIT | https://github.com/tj/commander.js |
 | `crelt` | 1.0.7 | MIT | https://code.haverbeke.berlin/marijn/crelt |

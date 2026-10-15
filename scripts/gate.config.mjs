@@ -31,6 +31,9 @@ export default {
     { name: "check", cmd: "npm run check" },
     { name: "unit", cmd: "npm run test:unit" },
     { name: "build", cmd: "npm run build" },
+    // The release build refuses Tauri crates and npm packages on different minor releases; a
+    // development build does not check, so it is checked here before anything is tagged.
+    { name: "tauri-pairs", cmd: "npm run tauri:pairs", local: true },
     { name: "restore", cmd: `dotnet restore ${HOST_SOLUTION}` },
     { name: "pins", cmd: "npm run pins:check" },
     { name: "notices", cmd: "npm run notices:check" }, // reads the host's restored graph
