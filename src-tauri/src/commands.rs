@@ -1303,18 +1303,25 @@ pub fn publish_to_cloud(
 }
 
 /// What a publish of the folder would send out, shown before anything is sent.
-#[derive(Serialize, Debug, Clone, PartialEq, Eq)]
+#[derive(Serialize, Debug, Clone, PartialEq, Eq, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct PublishPreview {
-    /// Notes that become pages.
-    pub notes: usize,
-    /// Other files copied alongside them.
-    pub files: usize,
-    /// Notes (vault-relative, `/`-separated) that hold something other than their newest recorded
-    /// version, or were never recorded — they go out as they are on disk.
+    /// Nothing in the folder is chosen for publishing.
+    pub nothing_chosen: bool,
+    /// Chosen notes that go out, as their last added version.
+    pub notes: Vec<String>,
+    /// Files those notes link to that go out with them.
+    pub files: Vec<String>,
+    /// Of the notes going out, those whose file holds edits not added as a version.
     pub unrecorded: Vec<String>,
-    /// Files left out because their name starts with `.`.
-    pub hidden: Vec<String>,
+    /// Chosen notes that have no version yet and so stay out.
+    pub never_recorded: Vec<String>,
+    /// Files linked from published notes that are not in the last added versions.
+    pub missing: Vec<String>,
+    /// Notes linked from published notes that do not go out.
+    pub unpublished_links: Vec<String>,
+    /// Linked files left out because their own nearest choice is "leave out".
+    pub withheld: Vec<String>,
 }
 
 /// The publish choices of the folder at `root`, relative to it. Nothing is created.
@@ -1355,33 +1362,27 @@ pub fn publish_preview(vault_path: String) -> Result<PublishPreview, String> {
     if !root.is_dir() {
         return Err("the vault path is not a directory".into());
     }
-    let found = crate::publish::outgoing(&root).map_err(|e| e.to_string())?;
-    let unrecorded = match history_repo(&root)? {
-        None => found.notes.clone(),
-        Some(prepared) => {
-            let mut differing = Vec::new();
-            for rel in &found.notes {
-                let mut path = root.clone();
-                path.extend(rel.split('/'));
-                let now = std::fs::read(&path).map_err(|e| e.to_string())?;
-                let recorded = crate::git_engine::content_at_tip(
-                    prepared.repo(),
-                    crate::git_engine::NOTES_REF,
-                    &prepared.path_in_repo(Path::new(rel)),
-                )
-                .map_err(|e| e.message().to_string())?;
-                if recorded.as_deref() != Some(now.as_slice()) {
-                    differing.push(rel.clone());
-                }
-            }
-            differing
-        }
+    let Some(prepared) = history_repo(&root)? else {
+        return Ok(PublishPreview { nothing_chosen: true, ..PublishPreview::default() });
     };
+    let a = crate::publish_assembly::assemble(&prepared, &root)?;
+    let mut unrecorded = Vec::new();
+    for (rel, recorded) in a.files.iter().filter(|(rel, _)| a.notes.contains(rel)) {
+        let mut path = root.clone();
+        path.extend(rel.split('/'));
+        if std::fs::read(&path).ok().as_deref() != Some(recorded.as_slice()) {
+            unrecorded.push(rel.clone());
+        }
+    }
     Ok(PublishPreview {
-        notes: found.notes.len(),
-        files: found.files.len(),
+        nothing_chosen: a.nothing_chosen,
+        notes: a.notes,
+        files: a.assets,
         unrecorded,
-        hidden: found.hidden,
+        never_recorded: a.never_recorded,
+        missing: a.missing,
+        unpublished_links: a.unpublished_links,
+        withheld: a.withheld,
     })
 }
 
@@ -3243,48 +3244,61 @@ mod tests {
     }
 
     #[test]
-    fn publish_preview_counts_everything_as_unrecorded_in_a_folder_without_history() {
-        let tmp = TempDir::new().unwrap();
-        let root = tmp.path();
-        seed_note(root, "a.md", "never recorded");
-        seed_note(root, "img.png", "bytes");
-        seed_note(root, ".env", "SECRET=1");
-
-        let preview = publish_preview(root.to_string_lossy().to_string()).unwrap();
-        assert_eq!(preview.notes, 1);
-        assert_eq!(preview.files, 1);
-        assert_eq!(preview.unrecorded, vec!["a.md"]);
-        assert_eq!(preview.hidden, vec![".env"]);
-        assert!(!root.join(".git").exists(), "looking must not create a repository");
+    fn the_preview_lists_what_goes_out_under_the_choices() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let root = tmp.path().to_string_lossy().to_string();
+        record_note(tmp.path(), "a.md", "# A");
+        record_note(tmp.path(), "b.md", "# B");
+        std::fs::write(tmp.path().join("a.md"), "# A edited").unwrap();
+        std::fs::write(tmp.path().join("c.md"), "# C").unwrap();
+        assert!(publish_preview(root.clone()).unwrap().nothing_chosen);
+        set_publish_choice(root.clone(), "".into(), Some(true)).unwrap();
+        set_publish_choice(root.clone(), "b.md".into(), Some(false)).unwrap();
+        let p = publish_preview(root).unwrap();
+        assert!(!p.nothing_chosen);
+        assert_eq!(p.notes, vec!["a.md"]);
+        assert_eq!(p.unrecorded, vec!["a.md"]);
+        assert_eq!(p.never_recorded, vec!["c.md"]);
     }
 
     #[test]
-    fn publish_preview_names_only_notes_that_differ_from_their_newest_version() {
-        let tmp = TempDir::new().unwrap();
-        let root = tmp.path();
-        git2::Repository::init(root).unwrap();
-
-        record_note(root, "same.md", "as recorded");
-        let edited = record_note(root, "sub/edited.md", "first");
-        std::fs::write(&edited, "changed since").unwrap();
-        seed_note(root, "new.md", "never recorded");
-
-        let preview = publish_preview(root.to_string_lossy().to_string()).unwrap();
-        assert_eq!(preview.notes, 3);
-        assert_eq!(preview.unrecorded, vec!["new.md", "sub/edited.md"]);
+    fn previewing_a_folder_with_no_history_creates_nothing() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        seed_note(tmp.path(), "a.md", "# A");
+        let p = publish_preview(tmp.path().to_string_lossy().to_string()).unwrap();
+        assert!(p.nothing_chosen);
+        assert!(!tmp.path().join(".git").exists());
     }
 
     #[test]
-    fn publish_preview_reads_history_from_an_enclosing_repository() {
+    fn the_preview_names_linked_files_held_back_by_a_choice() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let root = tmp.path().to_string_lossy().to_string();
+        seed_note(tmp.path(), "pics/p.png", "bytes");
+        record_note(tmp.path(), "a.md", "![p](pics/p.png)");
+        set_publish_choice(root.clone(), "".into(), Some(true)).unwrap();
+        set_publish_choice(root.clone(), "pics".into(), Some(false)).unwrap();
+        let p = publish_preview(root).unwrap();
+        assert_eq!(p.notes, vec!["a.md"]);
+        assert!(p.files.is_empty());
+        assert_eq!(p.withheld, vec!["pics/p.png"]);
+    }
+
+    #[test]
+    fn the_preview_reads_history_from_an_enclosing_repository() {
         let tmp = TempDir::new().unwrap();
         git2::Repository::init(tmp.path()).unwrap();
         let root = tmp.path().join("notes");
         std::fs::create_dir(&root).unwrap();
         record_note(&root, "kept.md", "as recorded");
         seed_note(&root, "fresh.md", "never recorded");
+        let root_s = root.to_string_lossy().to_string();
+        set_publish_choice(root_s.clone(), "".into(), Some(true)).unwrap();
 
-        let preview = publish_preview(root.to_string_lossy().to_string()).unwrap();
-        assert_eq!(preview.unrecorded, vec!["fresh.md"]);
+        let preview = publish_preview(root_s).unwrap();
+        assert_eq!(preview.notes, vec!["kept.md"]);
+        assert_eq!(preview.never_recorded, vec!["fresh.md"]);
+        assert!(preview.unrecorded.is_empty());
     }
 
     #[test]

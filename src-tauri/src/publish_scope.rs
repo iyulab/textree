@@ -21,13 +21,11 @@ fn covers(choice: &str, rel: &str) -> bool {
 }
 
 /// The explicit choice that decides `rel`: the nearest one covering it (last wins on ties).
-#[allow(dead_code)] // consumed by the publish wiring in a later step
 pub fn nearest<'a>(rel: &str, choices: &'a [Choice]) -> Option<&'a Choice> {
     choices.iter().filter(|c| covers(&c.path, rel)).max_by_key(|c| c.path.len())
 }
 
 /// Whether `rel` goes out under `choices`.
-#[allow(dead_code)] // consumed by the publish wiring in a later step
 pub fn is_included(rel: &str, choices: &[Choice]) -> bool {
     nearest(rel, choices).is_some_and(|c| c.include)
 }

@@ -109,58 +109,9 @@ pub fn validate_publish_paths(vault: &Path, out: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// What publishing the vault sends out, vault-relative and `/`-separated, each list sorted.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct Outgoing {
-    /// Markdown notes (`.md`, any case) — each becomes a page.
-    pub notes: Vec<String>,
-    /// Every other file the renderer copies alongside the pages.
-    pub files: Vec<String>,
-    /// Files whose name starts with `.` — tooling state and secrets (`.env`, `.gitignore`), never
-    /// the author's content. The renderer leaves them out; they are listed so the person can see
-    /// they were.
-    pub hidden: Vec<String>,
-}
-
-/// Lists what a publish renders, walking the vault the way the renderer does: folders whose name
-/// starts with `.` and `node_modules` are not entered, files whose name starts with `.` are left
-/// out, other regular files are taken, and anything else (a symbolic link included — `file_type`
-/// does not follow it) is passed over.
-pub fn outgoing(vault: &Path) -> io::Result<Outgoing> {
-    fn walk(dir: &Path, rel: &str, found: &mut Outgoing) -> io::Result<()> {
-        for entry in std::fs::read_dir(dir)? {
-            let entry = entry?;
-            let name = entry.file_name().to_string_lossy().into_owned();
-            let child = if rel.is_empty() { name.clone() } else { format!("{rel}/{name}") };
-            let kind = entry.file_type()?;
-            if kind.is_dir() {
-                if !name.starts_with('.') && name != "node_modules" {
-                    walk(&entry.path(), &child, found)?;
-                }
-            } else if kind.is_file() {
-                if name.starts_with('.') {
-                    found.hidden.push(child);
-                } else if is_note(&name) {
-                    found.notes.push(child);
-                } else {
-                    found.files.push(child);
-                }
-            }
-        }
-        Ok(())
-    }
-    let mut found = Outgoing::default();
-    walk(vault, "", &mut found)?;
-    found.notes.sort();
-    found.files.sort();
-    found.hidden.sort();
-    Ok(found)
-}
-
 /// The notes (`.md`, any case) in the folder, relative and `/`-separated, sorted. Folders whose
 /// name starts with `.` and `node_modules` are not entered; files whose name starts with `.` and
 /// anything that is not a regular file are passed over.
-#[allow(dead_code)] // consumed by the publish wiring in a later step
 pub fn outgoing_notes(vault: &Path) -> io::Result<Vec<String>> {
     fn walk(dir: &Path, rel: &str, found: &mut Vec<String>) -> io::Result<()> {
         for entry in std::fs::read_dir(dir)? {
@@ -458,7 +409,7 @@ mod tests {
     }
 
     #[test]
-    fn outgoing_walks_the_vault_as_the_renderer_does() {
+    fn outgoing_notes_walks_the_vault_as_the_renderer_does() {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
         for rel in [
@@ -477,15 +428,12 @@ mod tests {
             put(root, rel);
         }
 
-        let found = outgoing(root).unwrap();
-        assert_eq!(found.notes, vec!["Upper.MD", "a.md", "sub/deep/b.md"]);
-        assert_eq!(found.files, vec!["sub/image.png"]);
-        assert_eq!(found.hidden, vec![".env", ".hidden-note.md", "sub/.DS_Store"]);
+        assert_eq!(outgoing_notes(root).unwrap(), vec!["Upper.MD", "a.md", "sub/deep/b.md"]);
     }
 
     #[test]
     #[cfg(windows)]
-    fn outgoing_passes_over_a_symbolic_link() {
+    fn outgoing_notes_passes_over_a_symbolic_link() {
         let tmp = TempDir::new().unwrap();
         put(tmp.path(), "a.md");
         let target = TempDir::new().unwrap();
@@ -500,18 +448,7 @@ mod tests {
             eprintln!("skipped: this account may not create symbolic links");
             return;
         }
-        assert_eq!(outgoing(tmp.path()).unwrap().notes, vec!["a.md"]);
-    }
-
-    #[test]
-    fn a_hidden_file_is_counted_apart_from_what_goes_out() {
-        let tmp = TempDir::new().unwrap();
-        put(tmp.path(), ".env");
-        put(tmp.path(), "a.md");
-        let found = outgoing(tmp.path()).unwrap();
-        assert_eq!(found.hidden, vec![".env"]);
-        assert_eq!(found.notes, vec!["a.md"]);
-        assert!(found.files.is_empty());
+        assert_eq!(outgoing_notes(tmp.path()).unwrap(), vec!["a.md"]);
     }
 
     #[test]

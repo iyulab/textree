@@ -437,14 +437,22 @@ export async function publishSite(
 
 /** What publishing the vault would send out — shown for confirmation before anything is sent. */
 export interface PublishPreview {
-  /** Notes that become pages. */
-  notes: number;
-  /** Other files copied alongside them. */
-  files: number;
-  /** Vault-relative notes whose contents differ from their newest version (or that have none). */
+  /** Nothing in the folder is chosen for publishing. */
+  nothingChosen: boolean;
+  /** Chosen notes that go out, as their last added version. */
+  notes: string[];
+  /** Files those notes link to that go out with them. */
+  files: string[];
+  /** Of the notes going out, those whose file holds edits not added as a version. */
   unrecorded: string[];
-  /** Vault-relative files left out because their name starts with ".". */
-  hidden: string[];
+  /** Chosen notes that have no version yet and so stay out. */
+  neverRecorded: string[];
+  /** Files linked from published notes that are not in the last added versions. */
+  missing: string[];
+  /** Notes linked from published notes that do not go out. */
+  unpublishedLinks: string[];
+  /** Linked files left out because their own nearest choice is "leave out". */
+  withheld: string[];
 }
 
 /** List what publishing the vault would send out. Reads only. */

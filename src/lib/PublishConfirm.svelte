@@ -1,13 +1,17 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { publishPreview, type PublishPreview } from "./ipc";
+  import { publishPreview, setPublishChoice, type PublishPreview } from "./ipc";
   import { friendlyError, type FriendlyError } from "./friendlyError.helpers";
   import {
     canPublish,
-    hiddenLine,
+    missingLine,
+    neverRecordedLine,
+    nothingChosenLine,
     publishSummary,
+    unpublishedLinksLine,
     unrecordedLead,
     unrecordedNames,
+    withheldLine,
     type PublishDestination,
   } from "./publishConfirm.helpers";
 
@@ -29,15 +33,34 @@
   let go = $state<HTMLButtonElement | null>(null);
 
   const ready = $derived(
-    preview !== null && failure === null && canPublish(preview.notes, preview.files),
+    preview !== null && failure === null && canPublish(preview.notes.length, preview.files.length),
   );
+  let choosing = $state(false);
 
-  onMount(() => {
-    scrim?.focus();
+  function load() {
+    preview = null;
     publishPreview(root).then(
       (found) => (preview = found),
       (e) => (failure = friendlyError(e)),
     );
+  }
+
+  /** The person chose to publish everything: recorded as a choice, then shown again. */
+  async function chooseWholeFolder() {
+    choosing = true;
+    try {
+      await setPublishChoice(root, "", true);
+      load();
+    } catch (e) {
+      failure = friendlyError(e);
+    } finally {
+      choosing = false;
+    }
+  }
+
+  onMount(() => {
+    scrim?.focus();
+    load();
   });
 
   // Publish is the answer the dialog expects, so it takes focus as soon as it can be pressed.
@@ -73,9 +96,17 @@
       <p class="muted" aria-busy="true" data-testid="publish-confirm-loading">
         Checking what will be published…
       </p>
+    {:else if preview.nothingChosen}
+      <p class="summary" data-testid="publish-confirm-nothing-chosen">{nothingChosenLine()}</p>
+      <button
+        class="btn"
+        onclick={chooseWholeFolder}
+        disabled={choosing}
+        data-testid="publish-confirm-choose-all">Publish the whole notes folder</button
+      >
     {:else}
       <p class="summary" data-testid="publish-confirm-summary">
-        {publishSummary(preview.notes, preview.files, destination)}
+        {publishSummary(preview.notes.length, preview.files.length, destination)}
       </p>
       {#if unrecordedLead(preview.unrecorded)}
         <div class="notice" data-testid="publish-confirm-unrecorded">
@@ -83,9 +114,9 @@
           <p class="names">{unrecordedNames(preview.unrecorded)}</p>
         </div>
       {/if}
-      {#if hiddenLine(preview.hidden)}
-        <p class="muted" data-testid="publish-confirm-hidden">{hiddenLine(preview.hidden)}</p>
-      {/if}
+      {#each [[neverRecordedLine(preview.neverRecorded), "never-recorded"], [missingLine(preview.missing), "missing"], [unpublishedLinksLine(preview.unpublishedLinks), "unpublished-links"], [withheldLine(preview.withheld), "withheld"]] as [line, id] (id)}
+        {#if line}<p class="muted" data-testid={`publish-confirm-${id}`}>{line}</p>{/if}
+      {/each}
     {/if}
 
     <div class="buttons">

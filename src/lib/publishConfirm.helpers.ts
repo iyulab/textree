@@ -1,6 +1,6 @@
 /**
- * Pure text for the dialog shown before publishing: what goes out, what goes out as it is now
- * rather than as a version, and what is left out.
+ * Pure text for the dialog shown before publishing: what goes out, which notes go out as their
+ * last added version, and what stays out.
  */
 
 /** Where the site goes. */
@@ -49,12 +49,12 @@ export function shortList(names: string[]): string {
   return rest > 0 ? `${shown} and ${rest} more` : shown;
 }
 
-/** The sentence introducing the notes that go out without a version, or null when there are none. */
+/** The sentence introducing chosen notes with newer edits, or null when there are none. */
 export function unrecordedLead(unrecorded: string[]): string | null {
   if (unrecorded.length === 0) return null;
   return unrecorded.length === 1
-    ? "1 note has changes you haven't added as a version. It goes out as it is now:"
-    : `${unrecorded.length} notes have changes you haven't added as a version. They go out as they are now:`;
+    ? "1 note has changes you haven't added as a version. Its last added version goes out:"
+    : `${unrecorded.length} notes have changes you haven't added as a version. Their last added versions go out:`;
 }
 
 /** The names of those notes, shortened. */
@@ -62,8 +62,31 @@ export function unrecordedNames(unrecorded: string[]): string {
   return shortList(unrecorded.map(displayName));
 }
 
-/** What is left out, or null when nothing is. */
-export function hiddenLine(hidden: string[]): string | null {
-  if (hidden.length === 0) return null;
-  return `Hidden files are left out: ${shortList(hidden)}`;
+/** Chosen notes with no version yet: they stay out. */
+export function neverRecordedLine(names: string[]): string | null {
+  return names.length === 0 ? null : `Not published until you add a version: ${shortList(names.map(displayName))}`;
+}
+
+/** Files linked from published notes that are not in the last added versions. */
+export function missingLine(names: string[]): string | null {
+  return names.length === 0 ? null : `Linked but not in the last added versions, so left out: ${shortList(names)}`;
+}
+
+/** Notes linked from published notes that do not go out. */
+export function unpublishedLinksLine(names: string[]): string | null {
+  return names.length === 0
+    ? null
+    : `Links to notes that aren't published will lead nowhere: ${shortList(names.map(displayName))}`;
+}
+
+/** Linked files held back because the folder they sit in is left out. */
+export function withheldLine(names: string[]): string | null {
+  return names.length === 0
+    ? null
+    : `Linked but left out of the published site, so not published: ${shortList(names)}`;
+}
+
+/** What the dialog says when nothing is chosen. */
+export function nothingChosenLine(): string {
+  return "Nothing in this notes folder is chosen for publishing yet. You can choose notes and folders in the sidebar, or publish the whole notes folder.";
 }

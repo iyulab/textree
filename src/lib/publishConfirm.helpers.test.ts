@@ -2,11 +2,15 @@ import { describe, expect, it } from "vitest";
 import {
   canPublish,
   displayName,
-  hiddenLine,
+  missingLine,
+  neverRecordedLine,
+  nothingChosenLine,
   publishSummary,
   shortList,
+  unpublishedLinksLine,
   unrecordedLead,
   unrecordedNames,
+  withheldLine,
 } from "./publishConfirm.helpers";
 
 const web = { kind: "web" } as const;
@@ -54,13 +58,13 @@ describe("unrecorded notes", () => {
 
   it("introduces one note in the singular", () => {
     expect(unrecordedLead(["a.md"])).toBe(
-      "1 note has changes you haven't added as a version. It goes out as it is now:",
+      "1 note has changes you haven't added as a version. Its last added version goes out:",
     );
   });
 
   it("introduces several in the plural", () => {
     expect(unrecordedLead(["a.md", "b.md"])).toBe(
-      "2 notes have changes you haven't added as a version. They go out as they are now:",
+      "2 notes have changes you haven't added as a version. Their last added versions go out:",
     );
   });
 
@@ -74,18 +78,33 @@ describe("unrecorded notes", () => {
   });
 });
 
-describe("hiddenLine", () => {
-  it("says nothing when nothing is hidden", () => {
-    expect(hiddenLine([])).toBeNull();
+describe("the dialog under chosen publishing", () => {
+  it("names chosen notes that cannot go out yet", () => {
+    expect(neverRecordedLine(["fresh.md"])).toBe("Not published until you add a version: fresh");
+    expect(neverRecordedLine([])).toBeNull();
   });
-
-  it("lists the hidden files", () => {
-    expect(hiddenLine([".env", ".gitignore"])).toBe("Hidden files are left out: .env, .gitignore");
+  it("names linked files that are left out", () => {
+    expect(missingLine(["blog/gone.png"])).toBe(
+      "Linked but not in the last added versions, so left out: blog/gone.png",
+    );
+    expect(missingLine([])).toBeNull();
   });
-
-  it("caps the list", () => {
-    const many = [".a", ".b", ".c", ".d", ".e", ".f"];
-    expect(hiddenLine(many)).toBe("Hidden files are left out: .a, .b, .c, .d, .e and 1 more");
+  it("names links that will lead nowhere", () => {
+    expect(unpublishedLinksLine(["diary.md"])).toBe(
+      "Links to notes that aren't published will lead nowhere: diary",
+    );
+    expect(unpublishedLinksLine([])).toBeNull();
+  });
+  it("names linked files that are held back by a choice", () => {
+    expect(withheldLine(["a.png", "b.png"])).toBe(
+      "Linked but left out of the published site, so not published: a.png, b.png",
+    );
+    expect(withheldLine([])).toBeNull();
+  });
+  it("explains an empty choice", () => {
+    expect(nothingChosenLine()).toBe(
+      "Nothing in this notes folder is chosen for publishing yet. You can choose notes and folders in the sidebar, or publish the whole notes folder.",
+    );
   });
 });
 
