@@ -170,7 +170,10 @@ pub fn outgoing_notes(vault: &Path) -> io::Result<Vec<String>> {
             let kind = entry.file_type()?;
             if kind.is_dir() {
                 if !name.starts_with('.') && name != "node_modules" {
-                    walk(&entry.path(), &child, found)?;
+                    // One unreadable subfolder must not hide the notes in the others.
+                    if let Err(e) = walk(&entry.path(), &child, found) {
+                        log::warn!("publish: skipping unreadable folder {child}: {e}");
+                    }
                 }
             } else if kind.is_file() && !name.starts_with('.') && is_note(&name) {
                 found.push(child);

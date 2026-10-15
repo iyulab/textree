@@ -20,14 +20,16 @@ fn covers(choice: &str, rel: &str) -> bool {
             && rel[..choice.len()].eq_ignore_ascii_case(choice))
 }
 
+/// The explicit choice that decides `rel`: the nearest one covering it (last wins on ties).
+#[allow(dead_code)] // consumed by the publish wiring in a later step
+pub fn nearest<'a>(rel: &str, choices: &'a [Choice]) -> Option<&'a Choice> {
+    choices.iter().filter(|c| covers(&c.path, rel)).max_by_key(|c| c.path.len())
+}
+
 /// Whether `rel` goes out under `choices`.
 #[allow(dead_code)] // consumed by the publish wiring in a later step
 pub fn is_included(rel: &str, choices: &[Choice]) -> bool {
-    choices
-        .iter()
-        .filter(|c| covers(&c.path, rel))
-        .max_by_key(|c| c.path.len())
-        .is_some_and(|c| c.include)
+    nearest(rel, choices).is_some_and(|c| c.include)
 }
 
 use git2::{Repository, Tree};
@@ -161,6 +163,17 @@ pub fn for_vault(choices: &[Choice], vault_in_repo: &str) -> Vec<Choice> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn nearest_is_the_closest_explicit_choice_or_none() {
+        let choices = vec![
+            Choice { path: "a".into(), include: true },
+            Choice { path: "a/private".into(), include: false },
+        ];
+        assert_eq!(nearest("a/x.md", &choices).map(|c| c.include), Some(true));
+        assert_eq!(nearest("A/Private/x.png", &choices).map(|c| c.include), Some(false));
+        assert!(nearest("b/x.md", &choices).is_none());
+    }
 
     #[derive(Deserialize)]
     struct Case {

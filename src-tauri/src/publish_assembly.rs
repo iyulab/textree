@@ -23,6 +23,8 @@ pub struct Assembly {
     pub missing: Vec<String>,
     /// Notes linked from published ones that do not go out.
     pub unpublished_links: Vec<String>,
+    /// Linked files left out because their own nearest choice is "leave out".
+    pub withheld: Vec<String>,
     pub nothing_chosen: bool,
 }
 
@@ -40,8 +42,8 @@ fn file_name(rel: &str) -> &str {
 
 /// Notes on disk under `root` (relative, `/`-separated) — only to name the chosen ones that have
 /// no version yet.
-fn notes_on_disk(root: &Path) -> Vec<String> {
-    crate::publish::outgoing_notes(root).unwrap_or_default()
+fn notes_on_disk(root: &Path) -> Result<Vec<String>, String> {
+    crate::publish::outgoing_notes(root).map_err(|e| e.to_string())
 }
 
 pub fn assemble(prepared: &VaultRepo, root: &Path) -> Result<Assembly, String> {
@@ -89,12 +91,18 @@ pub fn assemble(prepared: &VaultRepo, root: &Path) -> Result<Assembly, String> {
         git_engine::content_at_tip(repo, NOTES_REF, &prepared.path_in_repo(Path::new(rel)))
             .map_err(err)
     };
-    // A resolved path that names a folder (`.`, `sub/`) is neither a file nor a note.
+    // Recorded paths by lowercase spelling: links match ASCII case-insensitively, and what goes
+    // out keeps the recorded spelling.
+    let canon: BTreeMap<String, &String> =
+        recorded.iter().map(|p| (p.to_ascii_lowercase(), p)).collect();
+    // A resolved path that names a folder (`.`, `sub/`) is neither a file nor a note: it is a
+    // directory on disk or a prefix of recorded paths.
     let is_folder = |rel: &str| {
-        rel.is_empty() || {
-            let prefix = format!("{}/", rel.trim_end_matches('/'));
-            recorded.iter().any(|p| p.starts_with(&prefix))
-        }
+        let rel = rel.trim_end_matches('/');
+        let mut path = root.to_path_buf();
+        path.extend(rel.split('/'));
+        let prefix = format!("{}/", rel.to_ascii_lowercase());
+        path.is_dir() || canon.keys().any(|p| p.starts_with(&prefix))
     };
 
     let chosen_notes: Vec<&String> =
@@ -102,6 +110,7 @@ pub fn assemble(prepared: &VaultRepo, root: &Path) -> Result<Assembly, String> {
     let mut assets = BTreeSet::new();
     let mut missing = BTreeSet::new();
     let mut linked_notes = BTreeSet::new();
+    let mut withheld = BTreeSet::new();
     for note in &chosen_notes {
         let Some(body) = read(note)? else { continue };
         out.files.push(((*note).clone(), body.clone()));
@@ -122,12 +131,20 @@ pub fn assemble(prepared: &VaultRepo, root: &Path) -> Result<Assembly, String> {
             if hidden(&rel) || is_folder(&rel) {
                 continue;
             }
+            let found = canon.get(&rel.to_ascii_lowercase()).map(|p| (*p).clone());
             if is_note(&rel) {
-                if !(recorded.contains(&rel) && publish_scope::is_included(&rel, &choices)) {
-                    linked_notes.insert(rel);
+                if let Some(rec) = found {
+                    if !publish_scope::is_included(&rec, &choices) {
+                        linked_notes.insert(rec);
+                    }
                 }
-            } else if recorded.contains(&rel) {
-                assets.insert(rel);
+            } else if let Some(rec) = found {
+                // The nearest explicit choice wins; with none, the file follows the note.
+                if publish_scope::nearest(&rec, &choices).is_some_and(|c| !c.include) {
+                    withheld.insert(rec);
+                } else {
+                    assets.insert(rec);
+                }
             } else {
                 missing.insert(rel);
             }
@@ -141,8 +158,9 @@ pub fn assemble(prepared: &VaultRepo, root: &Path) -> Result<Assembly, String> {
     out.files.sort_by(|a, b| a.0.cmp(&b.0));
     out.assets = assets.into_iter().collect();
     out.missing = missing.into_iter().collect();
-    out.unpublished_links = linked_notes.into_iter().filter(|n| recorded.contains(n)).collect();
-    out.never_recorded = notes_on_disk(root)
+    out.unpublished_links = linked_notes.into_iter().collect();
+    out.withheld = withheld.into_iter().collect();
+    out.never_recorded = notes_on_disk(root)?
         .into_iter()
         .filter(|n| !hidden(n) && publish_scope::is_included(n, &choices) && !recorded.contains(n))
         .collect();
@@ -281,6 +299,46 @@ mod tests {
         record(tmp.path(), "README.md", b"# outside");
         choose(&vault, "", true);
         assert_eq!(paths(&assembled(&vault)), vec!["a.md"]);
+    }
+
+    #[test]
+    fn a_link_to_an_empty_or_unrecorded_folder_is_not_listed_anywhere() {
+        let tmp = tempfile::tempdir().unwrap();
+        record(tmp.path(), "a.md", b"[e](empty/) [u](unrec/) [e2](empty)");
+        std::fs::create_dir_all(tmp.path().join("empty")).unwrap();
+        std::fs::create_dir_all(tmp.path().join("unrec")).unwrap();
+        std::fs::write(tmp.path().join("unrec/x.txt"), b"x").unwrap();
+        choose(tmp.path(), "a.md", true);
+        let a = assembled(tmp.path());
+        assert_eq!(paths(&a), vec!["a.md"]);
+        assert!(a.missing.is_empty(), "{:?}", a.missing);
+        assert!(a.unpublished_links.is_empty() && a.assets.is_empty() && a.withheld.is_empty());
+    }
+
+    #[test]
+    fn links_match_case_insensitively_and_ship_the_recorded_spelling() {
+        let tmp = tempfile::tempdir().unwrap();
+        record(tmp.path(), "img/chart.png", b"png");
+        record(tmp.path(), "Other.md", b"# Other");
+        record(tmp.path(), "a.md", b"![](Img/Chart.PNG) [o](other.md)");
+        choose(tmp.path(), "a.md", true);
+        let a = assembled(tmp.path());
+        assert_eq!(paths(&a), vec!["a.md", "img/chart.png"]);
+        assert!(a.missing.is_empty(), "{:?}", a.missing);
+        assert_eq!(a.unpublished_links, vec!["Other.md"]);
+    }
+
+    #[test]
+    fn a_linked_file_explicitly_left_out_is_withheld() {
+        let tmp = tempfile::tempdir().unwrap();
+        record(tmp.path(), "private/photo.png", b"png");
+        record(tmp.path(), "shared/img.png", b"png");
+        record(tmp.path(), "a.md", b"![](private/photo.png) ![](shared/img.png)");
+        choose(tmp.path(), "a.md", true);
+        choose(tmp.path(), "private", false);
+        let a = assembled(tmp.path());
+        assert_eq!(paths(&a), vec!["a.md", "shared/img.png"]);
+        assert_eq!(a.withheld, vec!["private/photo.png"]);
     }
 
     #[test]
