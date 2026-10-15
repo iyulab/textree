@@ -14,8 +14,10 @@
   interface Props {
     /** Absolute vault root path. */
     root: string;
-    /** Absolute path of the note whose states are listed. */
+    /** Path of the note whose states are listed, relative to the vault. */
     path: string;
+    /** Moves on when the folder's history may have changed: the list is read again. */
+    revision: number;
     /** Whether the note has edits that are not on disk yet. */
     dirty: boolean;
     /** Close the panel. */
@@ -23,7 +25,7 @@
     /** Called after the note on disk changed, so the caller can reload it. */
     onrestored: () => void;
   }
-  let { root, path, dirty, onclose, onrestored }: Props = $props();
+  let { root, path, revision, dirty, onclose, onrestored }: Props = $props();
 
   let versions = $state<NoteVersion[]>([]);
   let shown = $state(PAGE);
@@ -34,18 +36,23 @@
   let listing = $derived(page(versions, shown));
 
   $effect(() => {
-    // Re-reads whenever the note being looked at changes.
+    // Re-reads whenever the note being looked at changes, or its history may have.
+    void revision;
     void load(root, path);
   });
 
+  let reads = 0;
   async function load(atRoot: string, ofNote: string) {
+    const mine = ++reads;
     failure = null;
     selected = null;
     preview = null;
     try {
-      versions = await noteVersions(atRoot, ofNote);
+      const found = await noteVersions(atRoot, ofNote);
+      // A read begun earlier that answers later says less than the latest one.
+      if (mine === reads) versions = found;
     } catch (e) {
-      failure = friendlyError(e);
+      if (mine === reads) failure = friendlyError(e);
     }
   }
 

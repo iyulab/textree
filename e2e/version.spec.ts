@@ -115,3 +115,23 @@ test("versions: a note never given a version says so instead of listing nothing"
     removeTempVault(vault);
   }
 });
+
+test("versions: a version added while the history is open shows up in it", async () => {
+  const vault = createTempVault({ "open.md": "# open\n" });
+
+  try {
+    await loadVault(page, vault);
+    await page.getByRole("treeitem", { name: /open/ }).click();
+    await expect(page.locator(".cm-content")).toBeVisible();
+    await runCommand(page, "Version history");
+    await expect(page.getByTestId("version-history")).toBeVisible();
+    await expect(page.getByTestId("version-entry")).toHaveCount(0);
+
+    await appendAndSave(page, vault, "open.md", "kept");
+    await addVersion(page, "kept");
+    await expect(page.getByTestId("version-entry")).toHaveCount(1);
+    await expect(page.getByTestId("version-entry").first()).toContainText("kept");
+  } finally {
+    removeTempVault(vault);
+  }
+});
