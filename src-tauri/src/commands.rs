@@ -1141,10 +1141,13 @@ pub fn rename_node(root: String, path: String, name: String) -> Result<String, S
     // Read before the move: resolving a path needs it to still be where it is. A folder also
     // carries a note named after it, and that note is renamed too — two moves, one revision.
     let from_rel = rel_to_root(root_p, target).ok();
+    // Only a note the folder really has: a pair for one it lacks would clear whatever choice the
+    // destination name holds (a different note of that name inside the folder).
     let folder_note = target
         .is_dir()
         .then(|| target.file_name().and_then(|s| s.to_str()).map(str::to_string))
-        .flatten();
+        .flatten()
+        .filter(|old| target.join(format!("{old}.md")).is_file());
 
     let p = crate::fs_ops::rename_node(root_p, target, &name).map_err(|e| e.to_string())?;
     log::info!("rename_node: {} -> {}", path, name);
@@ -3390,6 +3393,45 @@ mod tests {
         record_note(tmp.path(), "a.md", "# Another A");
         assert!(publish_choices(root.clone()).unwrap().is_empty());
         assert!(publish_preview(root).unwrap().nothing_chosen);
+    }
+
+    #[test]
+    fn gate_l2_8_a_folder_renamed_to_the_name_of_a_note_inside_keeps_that_note_left_out() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path().to_string_lossy().to_string();
+        record_note(tmp.path(), "drafts/blog.md", "# Not a folder note of drafts");
+        set_publish_choice(root.clone(), "".into(), Some(true)).unwrap();
+        set_publish_choice(root.clone(), "drafts/blog.md".into(), Some(false)).unwrap();
+        rename_node(root.clone(), tmp.path().join("drafts").to_string_lossy().to_string(), "blog".into())
+            .unwrap();
+        let mut got = publish_choices(root.clone()).unwrap();
+        got.sort_by(|a, b| a.path.cmp(&b.path));
+        assert_eq!(
+            got,
+            vec![
+                crate::publish_scope::Choice { path: "".into(), include: true },
+                crate::publish_scope::Choice { path: "blog/blog.md".into(), include: false },
+            ]
+        );
+        let p = publish_preview(root).unwrap();
+        assert!(!p.notes.contains(&"blog/blog.md".to_string()), "{p:?}");
+        assert!(!p.never_recorded.contains(&"blog/blog.md".to_string()), "{p:?}");
+    }
+
+    #[test]
+    fn gate_l2_8_a_folder_renamed_with_its_own_note_carries_that_notes_leave_out() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path().to_string_lossy().to_string();
+        record_note(tmp.path(), "drafts/drafts.md", "# Drafts");
+        record_note(tmp.path(), "drafts/a.md", "# A");
+        set_publish_choice(root.clone(), "".into(), Some(true)).unwrap();
+        set_publish_choice(root.clone(), "drafts/drafts.md".into(), Some(false)).unwrap();
+        rename_node(root.clone(), tmp.path().join("drafts").to_string_lossy().to_string(), "blog".into())
+            .unwrap();
+        assert!(tmp.path().join("blog/blog.md").is_file());
+        let got = publish_choices(root.clone()).unwrap();
+        assert!(got.contains(&crate::publish_scope::Choice { path: "blog/blog.md".into(), include: false }), "{got:?}");
+        assert_eq!(publish_preview(root).unwrap().notes, vec!["blog/a.md"]);
     }
 
     #[test]
