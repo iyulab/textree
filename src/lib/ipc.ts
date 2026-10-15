@@ -17,8 +17,18 @@ export interface TreeNode {
   children: TreeNode[];
 }
 
+/** A tree as the backend sends it (paths relative to the vault), as the stores hold it. */
+function treeOut(root: string, nodes: TreeNode[]): TreeNode[] {
+  return nodes.map((n) => ({
+    ...n,
+    path: absOut(root, n.path),
+    body_path: n.body_path === null ? null : absOut(root, n.body_path),
+    children: treeOut(root, n.children),
+  }));
+}
+
 export async function openVault(root: string): Promise<TreeNode[]> {
-  return invoke<TreeNode[]>("open_vault", { root });
+  return treeOut(root, await invoke<TreeNode[]>("open_vault", { root }));
 }
 
 /** Resolved default vault: its absolute path, and whether the preferred (Documents) location was
@@ -35,7 +45,7 @@ export async function ensureDefaultVault(): Promise<DefaultVault> {
 }
 
 export async function listTree(root: string): Promise<TreeNode[]> {
-  return invoke<TreeNode[]>("list_tree", { root });
+  return treeOut(root, await invoke<TreeNode[]>("list_tree", { root }));
 }
 
 export async function readNote(root: string, path: string): Promise<string> {

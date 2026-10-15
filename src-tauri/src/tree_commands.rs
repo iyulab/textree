@@ -42,9 +42,9 @@ async fn folder_resolved(root: &str, rel: &str) -> Result<String, String> {
 /// the person from opening another instead (the later opening wins — see
 /// [`commands::open_vault`]).
 #[tauri::command]
-pub async fn open_vault(root: String, app: AppHandle) -> Result<Vec<crate::vault::TreeNode>, String> {
+pub async fn open_vault(root: String, app: AppHandle) -> Result<Vec<commands::TreeItem>, String> {
     let ticket = commands::begin_open();
-    off_main(move || commands::open_vault(root, app, ticket)).await
+    off_main(move || commands::open_vault(root.clone(), app, ticket).and_then(|tree| commands::tree_out(&root, tree))).await
 }
 
 /// Runs `work` off the main thread while holding a turn over `places`.

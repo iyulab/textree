@@ -555,8 +555,44 @@ pub(crate) async fn off_main<T: Send + 'static>(
 }
 
 #[tauri::command]
-pub async fn list_tree(root: String) -> Result<Vec<TreeNode>, String> {
-    off_main(move || tree_of(root)).await
+pub async fn list_tree(root: String) -> Result<Vec<TreeItem>, String> {
+    off_main(move || tree_of(root.clone()).and_then(|tree| tree_out(&root, tree))).await
+}
+
+/// A node as the screen gets it: its paths relative to the folder.
+#[derive(Debug, Serialize, PartialEq, Eq)]
+pub struct TreeItem {
+    pub name: String,
+    pub kind: vault::NodeKind,
+    pub path: String,
+    pub body_path: Option<String>,
+    pub children: Vec<TreeItem>,
+}
+
+/// `tree`, a tree built on the folder at `root`, as the screen gets it.
+pub(crate) fn tree_out(root: &str, tree: Vec<TreeNode>) -> Result<Vec<TreeItem>, String> {
+    tree.into_iter()
+        .map(|node| {
+            Ok(TreeItem {
+                name: node.name,
+                kind: node.kind,
+                path: crate::vault_paths::rel_out(root, &node.path.to_string_lossy())?,
+                body_path: match node.body_path {
+                    Some(p) => Some(crate::vault_paths::rel_out(root, &p.to_string_lossy())?),
+                    None => None,
+                },
+                children: tree_out(root, node.children)?,
+            })
+        })
+        .collect()
+}
+
+/// A change to a note, as the screen is told about it: which folder, and where in it.
+#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
+pub struct FsEvent {
+    pub root: String,
+    pub kind: crate::watcher::ChangeKind,
+    pub rel: String,
 }
 
 pub(crate) fn tree_of(root: String) -> Result<Vec<TreeNode>, String> {
@@ -750,11 +786,15 @@ pub fn open_vault(root: String, app: AppHandle, ticket: u64) -> Result<Vec<TreeN
     let host = app.state::<Arc<host::HostHandle>>().inner().clone();
     let app_data = app.path().app_data_dir().map_err(|e| e.to_string())?;
     let emitter = app.clone();
+    let watched = root.clone();
     use tauri::Emitter as _;
     let watcher = crate::watcher::watch_vault(&root_path, &own, index.clone(), move |surface| match surface {
         crate::watcher::Surface::Changed(batch) => {
             for change in batch {
-                let _ = emitter.emit("fs_changed", change);
+                // Said with the folder it happened in: one that arrives after another folder was
+                // opened is not mistaken for a note of the same name there.
+                let Some(rel) = crate::vault_paths::rel_of(&watched, Path::new(&change.path)) else { continue };
+                let _ = emitter.emit("fs_changed", FsEvent { root: watched.clone(), kind: change.kind, rel });
             }
         }
         crate::watcher::Surface::Rescan => {
@@ -2640,6 +2680,22 @@ pub fn restore_deleted(root: String, rel: String) -> Result<RestoredNote, String
 mod tests {
     use super::*;
     use tempfile::TempDir;
+
+    #[test]
+    fn the_screen_gets_the_tree_with_paths_relative_to_the_folder() {
+        let tmp = TempDir::new().unwrap();
+        std::fs::create_dir_all(tmp.path().join("blog")).unwrap();
+        std::fs::write(tmp.path().join("blog").join("blog.md"), "own").unwrap();
+        std::fs::write(tmp.path().join("blog").join("post.md"), "x").unwrap();
+        std::fs::write(tmp.path().join("top.md"), "x").unwrap();
+        let root = tmp.path().to_string_lossy().to_string();
+        let tree = tree_out(&root, tree_of(root.clone()).unwrap()).unwrap();
+        let blog = tree.iter().find(|n| n.name == "blog").unwrap();
+        assert_eq!(blog.path, "blog");
+        assert_eq!(blog.body_path.as_deref(), Some("blog/blog.md"));
+        assert_eq!(blog.children.iter().map(|c| c.path.as_str()).collect::<Vec<_>>(), ["blog/post.md"]);
+        assert!(tree.iter().any(|n| n.path == "top.md" && n.body_path.as_deref() == Some("top.md")));
+    }
 
     #[test]
     fn a_site_without_a_title_is_named_after_the_notes_folder() {
