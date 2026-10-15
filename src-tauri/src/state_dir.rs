@@ -22,19 +22,18 @@ pub const CURRENT: u32 = 2;
 /// Steps from each format to the next, in order: step `i` brings format `i` to `i + 1`. The format
 /// is written only after the last one, so a step cut short runs again on the next open — every step
 /// must be safe to run twice, and must write what it makes before removing what it replaces.
-const STEPS: [Step; CURRENT as usize] = [
+/// Each step is handed the notes folder the settings are kept for.
+const STEPS: [Step<str>; CURRENT as usize] = [
     // 0 → 1: the files do not change. Format 1 is where the folder starts saying what it holds.
-    |_| Ok(()),
-    // 1 → 2: notes and folders are named relative to the notes folder. The step needs that folder,
-    // which a step is not given, so [`bring_up_to_date`] does it before the steps run.
-    // TODO(upstream: tauri-kit-state — a step that is handed what the app knows about the folder)
-    |_| Ok(()),
+    |_, _| Ok(()),
+    // 1 → 2: notes and folders are named relative to the notes folder.
+    |dir, root| relative_names_in(dir, root, &tauri_kit_fs::write_atomic),
 ];
 
 /// The settings files that name notes and folders.
 const NAMING_FILES: [&str; 3] = ["favorites.json", "order.json", "views.json"];
 
-const FORMATS: Versioned<'static> = Versioned::new(&STEPS);
+const FORMATS: Versioned<'static, str> = Versioned::new(&STEPS);
 
 /// Whether settings may be written into `dir` — not when they are in a format this release does
 /// not know.
@@ -50,15 +49,22 @@ pub fn bring_up_to_date(
     root: &str,
     write: impl Fn(&Path, &[u8]) -> io::Result<()>,
 ) -> io::Result<bool> {
-    if !FORMATS.writable(dir)? {
-        return Ok(false);
-    }
-    // Every time, not only from format 1: settings carried over from inside an old notes folder
-    // arrive in the old shape whatever the format says. Names already relative stay as they are.
+    FORMATS.bring_up_to_date(dir, root, write)
+}
+
+/// Names the notes and folders in every settings file in `dir` relative to `root`. The step from
+/// format 1, and what carries settings over from inside an old notes folder — those arrive in the
+/// old shape whatever format the folder they land in is at. Names already relative stay as they
+/// are, so running it twice changes nothing.
+pub fn relative_names_in(
+    dir: &Path,
+    root: &str,
+    write: &impl Fn(&Path, &[u8]) -> io::Result<()>,
+) -> io::Result<()> {
     for name in NAMING_FILES {
-        relative_names(&dir.join(name), root, &write)?;
+        relative_names(&dir.join(name), root, write)?;
     }
-    FORMATS.bring_up_to_date(dir, write)
+    Ok(())
 }
 
 /// Rewrites one settings file so the notes and folders it names under `root` are named relative to

@@ -2272,6 +2272,12 @@ pub fn move_state_out_of_vault(root: String) -> Result<MoveOut, String> {
         crate::fs_ops::patiently(|| std::fs::remove_file(&from)).map_err(|e| e.to_string())?;
         moved.settings = true;
     }
+    if moved.settings {
+        // Settings kept inside the folder name notes the old way, whatever format the settings
+        // folder they land in is at — bringing that folder up to date does not run again for them.
+        crate::state_dir::relative_names_in(&personal_dir(root_p)?, &root, &atomic_bytes_beside)
+            .map_err(|e| e.to_string())?;
+    }
 
     // The copies set aside need somewhere to go before they can be removed from the folder.
     // Each leaves the folder only once the history holds it: a copy that failed to carry has no
@@ -2930,6 +2936,25 @@ mod tests {
         assert!(move_state_out_of_vault(root).unwrap().happened());
         assert!(!legacy.exists());
         assert!(!tmp.path().join(".textree").exists());
+    }
+
+    #[test]
+    fn settings_carried_out_of_the_folder_name_notes_relative_to_it() {
+        // They were written by a release that named notes by their full path. The settings folder
+        // they land in is already at the current format, so no format step runs for them.
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path().to_string_lossy().to_string();
+        prepare_sidecar(root.clone()).unwrap();
+        let legacy = legacy_sidecar_path(tmp.path(), "favorites.json");
+        std::fs::create_dir_all(legacy.parent().unwrap()).unwrap();
+        let full = tmp.path().join("a.md").to_string_lossy().to_string();
+        std::fs::write(&legacy, serde_json::to_vec(&[full]).unwrap()).unwrap();
+
+        assert!(move_state_out_of_vault(root.clone()).unwrap().happened());
+
+        let carried = std::fs::read(personal_dir(tmp.path()).unwrap().join("favorites.json")).unwrap();
+        let names: Vec<String> = serde_json::from_slice(&carried).unwrap();
+        assert_eq!(names, vec!["a.md".to_string()]);
     }
 
     #[test]
