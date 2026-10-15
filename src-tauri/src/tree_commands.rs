@@ -322,6 +322,20 @@ pub async fn publish_preview(vault_path: String) -> Result<commands::PublishPrev
 }
 
 #[tauri::command]
+pub async fn publish_choices(root: String) -> Result<Vec<crate::publish_scope::Choice>, String> {
+    off_main(move || commands::publish_choices(root)).await
+}
+
+#[tauri::command]
+pub async fn set_publish_choice(
+    root: String,
+    rel: String,
+    choice: Option<bool>,
+) -> Result<Vec<crate::publish_scope::Choice>, String> {
+    off_main(move || commands::set_publish_choice(root, rel, choice)).await
+}
+
+#[tauri::command]
 pub async fn remote_connection(root: String) -> Result<Option<crate::remote::Connection>, String> {
     off_main(move || commands::remote_connection(root)).await
 }

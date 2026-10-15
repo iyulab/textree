@@ -2,6 +2,7 @@ import { invoke, Channel } from "@tauri-apps/api/core";
 import type { ChatMessage } from './ask.helpers';
 import type { DownloadSnapshot } from './modelDownload.helpers';
 import type { ByoConfig } from './byoConfig';
+import type { PublishChoice } from './publishScope.helpers';
 
 export type NodeKind = "leaf" | "container";
 
@@ -449,6 +450,20 @@ export interface PublishPreview {
 /** List what publishing the vault would send out. Reads only. */
 export async function publishPreview(vaultPath: string): Promise<PublishPreview> {
   return invoke<PublishPreview>("publish_preview", { vaultPath });
+}
+
+/** The folder's publish choices, relative to it ("" = the whole folder). */
+export async function publishChoices(root: string): Promise<PublishChoice[]> {
+  return invoke<PublishChoice[]>("publish_choices", { root });
+}
+
+/** Include (true), leave out (false), or follow the folder above (null). Returns the new choices. */
+export async function setPublishChoice(
+  root: string,
+  rel: string,
+  choice: boolean | null,
+): Promise<PublishChoice[]> {
+  return invoke<PublishChoice[]>("set_publish_choice", { root, rel, choice });
 }
 
 // ── Remote (exchange recorded notes with a remote the person connected) ─────────────────────

@@ -143,6 +143,8 @@ pub fn run() {
             commands::search_content,
             tree_commands::rebuild_index,
             tree_commands::publish_preview,
+            tree_commands::publish_choices,
+            tree_commands::set_publish_choice,
             tree_commands::remote_connection,
             tree_commands::connect_remote,
             tree_commands::disconnect_remote,

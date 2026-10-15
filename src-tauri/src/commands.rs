@@ -1078,6 +1078,10 @@ fn record_moves(root: &Path, pairs: &[(String, String)]) {
             Err(e) => log::warn!("record_moves: {reference} not updated: {}", e.message()),
         }
     }
+    // A note or folder that was chosen for publishing stays chosen where it went.
+    if let Err(e) = crate::publish_scope::follow_moves(repo, &moves) {
+        log::warn!("record_moves: publish choices not carried: {}", e.message());
+    }
 }
 
 pub fn rename_node(root: String, path: String, name: String) -> Result<String, String> {
@@ -1253,6 +1257,37 @@ pub struct PublishPreview {
     pub unrecorded: Vec<String>,
     /// Files left out because their name starts with `.`.
     pub hidden: Vec<String>,
+}
+
+/// The publish choices of the folder at `root`, relative to it. Nothing is created.
+pub fn publish_choices(root: String) -> Result<Vec<crate::publish_scope::Choice>, String> {
+    let root_p = Path::new(&root);
+    let Some(prepared) = history_repo(root_p)? else {
+        return Ok(Vec::new());
+    };
+    let all = crate::publish_scope::read(prepared.repo(), crate::publish_scope::PUBLIC_REF)
+        .map_err(|e| e.message().to_string())?;
+    let vault = crate::git_engine::slashed(&prepared.path_in_repo(Path::new("")));
+    Ok(crate::publish_scope::for_vault(&all, vault.trim_end_matches('/')))
+}
+
+/// Records that `rel` (relative to `root`, `""` = the whole folder) is included, left out, or
+/// (`None`) follows the folder above it. Returns the folder's choices afterwards.
+pub fn set_publish_choice(
+    root: String,
+    rel: String,
+    choice: Option<bool>,
+) -> Result<Vec<crate::publish_scope::Choice>, String> {
+    let root_p = Path::new(&root);
+    // Stays inside the folder. The note may be gone by now, so it need not exist.
+    if !rel.is_empty() && crate::pathsafe::rel_within(root_p, &root_p.join(&rel)).is_none() {
+        return Err("path is outside the vault".to_string());
+    }
+    let prepared = crate::git_engine::prepare(root_p).map_err(|e| e.message().to_string())?;
+    let in_repo = crate::git_engine::slashed(&prepared.path_in_repo(Path::new(&rel)));
+    crate::publish_scope::set(prepared.repo(), in_repo.trim_end_matches('/'), choice)
+        .map_err(|e| e.message().to_string())?;
+    publish_choices(root)
 }
 
 /// Lists what publishing `vault_path` would send out. Reads only: nothing is recorded, and a
@@ -2926,6 +2961,24 @@ mod tests {
         disconnect_remote(there_s.clone()).unwrap();
         assert_eq!(remote_connection(here_s).unwrap(), None);
         assert!(crate::remote::secret(&folder_key(&there)).is_none());
+    }
+
+    #[test]
+    fn a_choice_is_recorded_without_touching_the_folder() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let root = tmp.path().to_string_lossy().to_string();
+        seed_note(tmp.path(), "a.md", "# A\n");
+        let mut before: Vec<_> =
+            std::fs::read_dir(tmp.path()).unwrap().map(|e| e.unwrap().file_name()).collect();
+        let after_set = set_publish_choice(root.clone(), "a.md".into(), Some(true)).unwrap();
+        assert_eq!(after_set, vec![crate::publish_scope::Choice { path: "a.md".into(), include: true }]);
+        let mut after: Vec<_> =
+            std::fs::read_dir(tmp.path()).unwrap().map(|e| e.unwrap().file_name()).collect();
+        after.retain(|n| n != ".git");
+        before.sort();
+        after.sort();
+        assert_eq!(after, before);
+        assert!(set_publish_choice(root, "../x.md".into(), Some(true)).is_err());
     }
 
     #[test]
