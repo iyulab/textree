@@ -48,7 +48,6 @@ fn without_code(markdown: &str) -> String {
 }
 
 /// The link targets in `markdown`, in order.
-#[allow(dead_code)] // Task 4 (selective publishing) consumes this.
 pub fn targets(markdown: &str) -> Vec<Target> {
     let text = without_code(markdown);
     let bytes = text.as_bytes();
@@ -111,7 +110,6 @@ fn percent_decoded(s: &str) -> String {
 
 /// `target` (a `Path` target found in `note`) as a `/`-separated path inside the notes folder,
 /// or `None` for a web address, a bare anchor, or a path that leaves the folder.
-#[allow(dead_code)] // Task 4 (selective publishing) consumes this.
 pub fn resolve(note: &str, target: &str) -> Option<String> {
     let target = target.split(['#', '?']).next().unwrap_or("");
     // Checked before and after decoding: `%2F%2F` must not slip past the first check.

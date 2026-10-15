@@ -1417,6 +1417,33 @@ pub fn open_log_dir(app: tauri::AppHandle) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
+fn is_note_path(rel: &str) -> bool {
+    rel.len() >= 3 && rel.as_bytes()[rel.len() - 3..].eq_ignore_ascii_case(b".md")
+}
+
+/// The files `note_rel` links to by path that are inside the folder and on disk — the images and
+/// attachments a version of the note shows. Notes, hidden files and web addresses are left out.
+fn linked_files(root: &Path, note_rel: &str, body: &[u8]) -> Vec<String> {
+    let mut out = Vec::new();
+    for target in crate::note_refs::targets(&String::from_utf8_lossy(body)) {
+        let crate::note_refs::Target::Path(t) = target else {
+            continue;
+        };
+        let Some(rel) = crate::note_refs::resolve(note_rel, &t) else {
+            continue;
+        };
+        if is_note_path(&rel) || rel.split('/').any(|s| s.starts_with('.')) || out.contains(&rel) {
+            continue;
+        }
+        let mut path = root.to_path_buf();
+        path.extend(rel.split('/'));
+        if path.is_file() {
+            out.push(rel);
+        }
+    }
+    out
+}
+
 /// Records the given notes as one revision in the vault's history.
 ///
 /// Only the paths named here are written. What the person working in the repository has
@@ -1471,7 +1498,24 @@ pub fn commit_notes(
             ));
         }
         let content = std::fs::read(target).map_err(|e| e.to_string())?;
+        // Only a note brings the files it links to; any other path is recorded as given.
+        let linked = if is_note_path(&rel) {
+            linked_files(root_p, &rel, &content)
+        } else {
+            Vec::new()
+        };
         entries.push((in_repo, content));
+        for file in linked {
+            let file_in_repo = prepared.path_in_repo(Path::new(&file));
+            if repo.is_path_ignored(&file_in_repo).unwrap_or(false)
+                || entries.iter().any(|(p, _)| p == &file_in_repo)
+            {
+                continue;
+            }
+            let mut path = root_p.to_path_buf();
+            path.extend(file.split('/'));
+            entries.push((file_in_repo, std::fs::read(&path).map_err(|e| e.to_string())?));
+        }
     }
 
     let (author, committer) =
@@ -2789,6 +2833,38 @@ mod tests {
         }
         std::fs::write(&target, body).unwrap();
         target.to_string_lossy().to_string()
+    }
+
+    #[test]
+    fn adding_a_version_of_a_note_records_the_images_it_shows() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let root = tmp.path().to_string_lossy().to_string();
+        std::fs::create_dir_all(tmp.path().join("assets")).unwrap();
+        std::fs::write(tmp.path().join("assets/Pasted-1.png"), b"png").unwrap();
+        std::fs::write(tmp.path().join("assets/unused.png"), b"png").unwrap();
+        std::fs::write(tmp.path().join(".env"), b"KEY=1").unwrap();
+        let note = seed_note(
+            tmp.path(),
+            "a.md",
+            "![](assets/Pasted-1.png) [x](.env) [web](https://example.com/a.png)",
+        );
+        commit_notes(root.clone(), vec![note], "v".into()).unwrap();
+        let prepared = crate::git_engine::open_existing(tmp.path()).unwrap().unwrap();
+        let mut recorded =
+            crate::git_engine::tip_paths(prepared.repo(), crate::git_engine::NOTES_REF).unwrap();
+        recorded.sort();
+        assert_eq!(recorded, vec!["a.md", "assets/Pasted-1.png"]);
+    }
+
+    #[test]
+    fn a_missing_linked_file_does_not_stop_the_version() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let note = seed_note(tmp.path(), "a.md", "![](gone.png)");
+        assert!(
+            commit_notes(tmp.path().to_string_lossy().to_string(), vec![note], "v".into())
+                .unwrap()
+                .is_some()
+        );
     }
 
     /// Records `rel` under `root` and returns its absolute path.
