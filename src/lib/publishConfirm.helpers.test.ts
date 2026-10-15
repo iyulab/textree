@@ -7,6 +7,7 @@ import {
   nothingChosenLine,
   publishSummary,
   shortList,
+  tooLargeLine,
   unpublishedLinksLine,
   unrecordedLead,
   unrecordedNames,
@@ -100,6 +101,10 @@ describe("the dialog under chosen publishing", () => {
       "Linked but left out of the published site, so not published: a.png, b.png",
     );
     expect(withheldLine([])).toBeNull();
+  });
+  it("names linked files too large to publish", () => {
+    expect(tooLargeLine(["video.mp4"])).toBe("Too large to publish (over 50 MB), so left out: video.mp4");
+    expect(tooLargeLine([])).toBeNull();
   });
   it("explains an empty choice", () => {
     expect(nothingChosenLine()).toBe(

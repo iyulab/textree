@@ -8,6 +8,7 @@
     neverRecordedLine,
     nothingChosenLine,
     publishSummary,
+    tooLargeLine,
     unpublishedLinksLine,
     unrecordedLead,
     unrecordedNames,
@@ -114,7 +115,7 @@
           <p class="names">{unrecordedNames(preview.unrecorded)}</p>
         </div>
       {/if}
-      {#each [[neverRecordedLine(preview.neverRecorded), "never-recorded"], [missingLine(preview.missing), "missing"], [unpublishedLinksLine(preview.unpublishedLinks), "unpublished-links"], [withheldLine(preview.withheld), "withheld"]] as [line, id] (id)}
+      {#each [[neverRecordedLine(preview.neverRecorded), "never-recorded"], [missingLine(preview.missing), "missing"], [tooLargeLine(preview.tooLarge), "too-large"], [unpublishedLinksLine(preview.unpublishedLinks), "unpublished-links"], [withheldLine(preview.withheld), "withheld"]] as [line, id] (id)}
         {#if line}<p class="muted" data-testid={`publish-confirm-${id}`}>{line}</p>{/if}
       {/each}
     {/if}

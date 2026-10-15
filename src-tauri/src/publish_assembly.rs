@@ -23,8 +23,14 @@ pub struct Assembly {
     pub unpublished_links: Vec<String>,
     /// Linked files left out because their own nearest choice is "leave out".
     pub withheld: Vec<String>,
+    /// Linked files left out because they are over [`MAX_LINKED_FILE_BYTES`].
+    pub too_large: Vec<String>,
     pub nothing_chosen: bool,
 }
+
+/// The largest file a note brings along when a version of it is added, and that is published:
+/// 50 MB, under what common site hosts accept for a single file. A note itself is never held to it.
+pub const MAX_LINKED_FILE_BYTES: u64 = 50 * 1024 * 1024;
 
 fn is_note(rel: &str) -> bool {
     rel.len() >= 3 && rel.as_bytes()[rel.len() - 3..].eq_ignore_ascii_case(b".md")
@@ -45,6 +51,11 @@ fn notes_on_disk(root: &Path) -> Result<Vec<String>, String> {
 }
 
 pub fn assemble(prepared: &VaultRepo, root: &Path) -> Result<Assembly, String> {
+    assemble_capped(prepared, root, MAX_LINKED_FILE_BYTES)
+}
+
+/// [`assemble`], with linked files over `cap` bytes left out.
+fn assemble_capped(prepared: &VaultRepo, root: &Path, cap: u64) -> Result<Assembly, String> {
     let repo = prepared.repo();
     let err = |e: git2::Error| e.message().to_string();
     let vault_prefix = git_engine::slashed(&prepared.path_in_repo(Path::new("")))
@@ -109,6 +120,12 @@ pub fn assemble(prepared: &VaultRepo, root: &Path) -> Result<Assembly, String> {
     let mut missing = BTreeSet::new();
     let mut linked_notes = BTreeSet::new();
     let mut withheld = BTreeSet::new();
+    let mut too_large = BTreeSet::new();
+    let over_cap_on_disk = |rel: &str| {
+        let mut path = root.to_path_buf();
+        path.extend(rel.split('/'));
+        std::fs::metadata(&path).is_ok_and(|m| m.is_file() && m.len() > cap)
+    };
     for note in &chosen_notes {
         let Some(body) = read(note)? else { continue };
         out.files.push(((*note).clone(), body.clone()));
@@ -151,21 +168,30 @@ pub fn assemble(prepared: &VaultRepo, root: &Path) -> Result<Assembly, String> {
                 } else {
                     assets.insert(rec);
                 }
+            } else if over_cap_on_disk(&rel) {
+                // Not recorded because it is too large to be: saying it is missing would send
+                // the person to add a version that would leave it out again.
+                too_large.insert(rel);
             } else {
                 missing.insert(rel);
             }
         }
     }
-    for asset in &assets {
-        if let Some(bytes) = read(asset)? {
-            out.files.push((asset.clone(), bytes));
+    for asset in assets {
+        let Some(bytes) = read(&asset)? else { continue };
+        // Recorded before there was a limit: it stays out all the same.
+        if bytes.len() as u64 > cap {
+            too_large.insert(asset);
+            continue;
         }
+        out.files.push((asset.clone(), bytes));
+        out.assets.push(asset);
     }
     out.files.sort_by(|a, b| a.0.cmp(&b.0));
-    out.assets = assets.into_iter().collect();
     out.missing = missing.into_iter().collect();
     out.unpublished_links = linked_notes.into_iter().collect();
     out.withheld = withheld.into_iter().collect();
+    out.too_large = too_large.into_iter().collect();
     out.never_recorded = notes_on_disk(root)?
         .into_iter()
         .filter(|n| !hidden(n) && publish_scope::is_included(n, &choices) && !recorded.contains(n))
@@ -326,6 +352,24 @@ mod tests {
         assert!(shipped("public/photo.jpg", "Public/Photo.jpg"), "the folder named");
         assert!(shipped("x/public/photo.jpg", "public/photo.jpg"), "the folder named, deeper down");
         assert!(shipped("deep/photo.jpg", "photo.jpg"), "no folder part: the only one of that name");
+    }
+
+    #[test]
+    fn a_linked_file_over_the_limit_is_named_too_large_and_stays_out() {
+        let tmp = tempfile::tempdir().unwrap();
+        record(tmp.path(), "old.png", b"0123456789"); // recorded before there was a limit
+        std::fs::write(tmp.path().join("big.png"), b"0123456789").unwrap(); // never recorded
+        std::fs::write(tmp.path().join("small.png"), b"01").unwrap(); // never recorded
+        record(tmp.path(), "a.md", b"![](old.png) ![](big.png) ![](small.png) [d](diary.md)");
+        record(tmp.path(), "diary.md", b"# Diary");
+        choose(tmp.path(), "a.md", true);
+        let prepared = crate::git_engine::prepare(tmp.path()).unwrap();
+        let a = assemble_capped(&prepared, tmp.path(), 4).unwrap();
+        assert_eq!(paths(&a), vec!["a.md"]);
+        assert!(a.assets.is_empty());
+        assert_eq!(a.too_large, vec!["big.png", "old.png"]);
+        assert_eq!(a.missing, vec!["small.png"]);
+        assert_eq!(a.unpublished_links, vec!["diary.md"]);
     }
 
     #[test]

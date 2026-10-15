@@ -1380,6 +1380,8 @@ pub struct PublishPreview {
     pub unpublished_links: Vec<String>,
     /// Linked files left out because their own nearest choice is "leave out".
     pub withheld: Vec<String>,
+    /// Linked files left out because they are too large to publish.
+    pub too_large: Vec<String>,
 }
 
 /// The publish choices of the folder at `root`, relative to it. Nothing is created.
@@ -1441,6 +1443,7 @@ pub fn publish_preview(vault_path: String) -> Result<PublishPreview, String> {
         missing: a.missing,
         unpublished_links: a.unpublished_links,
         withheld: a.withheld,
+        too_large: a.too_large,
     })
 }
 
@@ -1638,6 +1641,14 @@ pub fn commit_notes(
             // A link may lead out of the folder through a junction or symlink.
             if !is_within(root_p, &path) {
                 log::warn!("commit_notes: linked file is outside the vault, left out: {file}");
+                continue;
+            }
+            // Too large to publish, so not worth a copy in the history either: looked at before
+            // anything is read.
+            if std::fs::metadata(&path)
+                .is_ok_and(|m| m.len() > crate::publish_assembly::MAX_LINKED_FILE_BYTES)
+            {
+                log::warn!("commit_notes: linked file over the size limit, left out: {file}");
                 continue;
             }
             // A linked file is a companion: one that cannot be read must not stop the note.
@@ -3412,6 +3423,29 @@ mod tests {
         assert_eq!(p.notes, vec!["a.md"]);
         assert_eq!(p.unrecorded, vec!["a.md"]);
         assert_eq!(p.never_recorded, vec!["c.md"]);
+    }
+
+    #[test]
+    fn a_linked_file_over_the_size_limit_is_not_recorded_and_is_named_too_large() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path().to_string_lossy().to_string();
+        std::fs::File::create(tmp.path().join("big.bin"))
+            .unwrap()
+            .set_len(crate::publish_assembly::MAX_LINKED_FILE_BYTES + 1)
+            .unwrap();
+        seed_note(tmp.path(), "small.png", "png");
+        record_note(tmp.path(), "a.md", "[b](big.bin) ![s](small.png)");
+        let prepared = crate::git_engine::prepare(tmp.path()).unwrap();
+        let recorded = crate::git_engine::tip_paths(prepared.repo(), crate::git_engine::NOTES_REF).unwrap();
+        assert!(recorded.iter().any(|p| p == "a.md") && recorded.iter().any(|p| p == "small.png"), "{recorded:?}");
+        assert!(!recorded.iter().any(|p| p == "big.bin"), "{recorded:?}");
+
+        set_publish_choice(root.clone(), "".into(), Some(true)).unwrap();
+        let p = publish_preview(root).unwrap();
+        assert_eq!(p.notes, vec!["a.md"]);
+        assert_eq!(p.files, vec!["small.png"]);
+        assert_eq!(p.too_large, vec!["big.bin"]);
+        assert!(p.missing.is_empty() && p.unpublished_links.is_empty(), "{p:?}");
     }
 
     #[test]

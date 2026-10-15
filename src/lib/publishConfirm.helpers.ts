@@ -86,6 +86,11 @@ export function withheldLine(names: string[]): string | null {
     : `Linked but left out of the published site, so not published: ${shortList(names)}`;
 }
 
+/** Linked files too large to publish. */
+export function tooLargeLine(names: string[]): string | null {
+  return names.length === 0 ? null : `Too large to publish (over 50 MB), so left out: ${shortList(names)}`;
+}
+
 /** What the dialog says when nothing is chosen. */
 export function nothingChosenLine(): string {
   return "Nothing in this notes folder is chosen for publishing yet. You can choose notes and folders in the sidebar, or publish the whole notes folder.";

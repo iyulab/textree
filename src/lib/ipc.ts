@@ -453,6 +453,8 @@ export interface PublishPreview {
   unpublishedLinks: string[];
   /** Linked files left out because their own nearest choice is "leave out". */
   withheld: string[];
+  /** Linked files left out because they are too large to publish. */
+  tooLarge: string[];
 }
 
 /** List what publishing the vault would send out. Reads only. */
