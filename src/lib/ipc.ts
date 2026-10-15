@@ -3,7 +3,7 @@ import type { ChatMessage } from './ask.helpers';
 import type { DownloadSnapshot } from './modelDownload.helpers';
 import type { ByoConfig } from './byoConfig';
 import type { PublishChoice } from './publishScope.helpers';
-import { absOut, relIn } from "./vaultPathsAdapter";
+import { absOut, folderRelIn, relIn } from "./vaultPathsAdapter";
 
 export type NodeKind = "leaf" | "container";
 
@@ -249,11 +249,11 @@ export async function createNote(
   parent: string,
   name: string,
 ): Promise<string> {
-  return invoke<string>("create_note", { root, parent, name });
+  return absOut(root, await invoke<string>("create_note", { root, parent: folderRelIn(root, parent), name }));
 }
 
 export async function createUntitledNote(root: string, parent: string): Promise<string> {
-  return invoke<string>("create_untitled_note", { root, parent });
+  return absOut(root, await invoke<string>("create_untitled_note", { root, parent: folderRelIn(root, parent) }));
 }
 
 export async function createNoteWithContent(
@@ -262,7 +262,10 @@ export async function createNoteWithContent(
   name: string,
   content: string,
 ): Promise<string> {
-  return invoke<string>("create_note_with_content", { root, parent, name, content });
+  return absOut(
+    root,
+    await invoke<string>("create_note_with_content", { root, parent: folderRelIn(root, parent), name, content }),
+  );
 }
 
 export async function createFolder(
@@ -270,7 +273,7 @@ export async function createFolder(
   parent: string,
   name: string,
 ): Promise<string> {
-  return invoke<string>("create_folder", { root, parent, name });
+  return absOut(root, await invoke<string>("create_folder", { root, parent: folderRelIn(root, parent), name }));
 }
 
 export async function renameNode(
@@ -278,7 +281,7 @@ export async function renameNode(
   path: string,
   name: string,
 ): Promise<string> {
-  return invoke<string>("rename_node", { root, path, name });
+  return absOut(root, await invoke<string>("rename_node", { root, rel: relIn(root, path), name }));
 }
 
 export async function renameNoteUnique(
@@ -286,7 +289,7 @@ export async function renameNoteUnique(
   path: string,
   name: string,
 ): Promise<string> {
-  return invoke<string>("rename_note_unique", { root, path, name });
+  return absOut(root, await invoke<string>("rename_note_unique", { root, rel: relIn(root, path), name }));
 }
 
 export async function moveNode(
@@ -294,7 +297,10 @@ export async function moveNode(
   path: string,
   dest: string,
 ): Promise<string> {
-  return invoke<string>("move_node", { root, path, dest });
+  return absOut(
+    root,
+    await invoke<string>("move_node", { root, rel: relIn(root, path), dest: folderRelIn(root, dest) }),
+  );
 }
 
 /** Promote a leaf note to a container and move the path node into it. Returns the new path. */
@@ -303,7 +309,10 @@ export async function adoptNode(
   path: string,
   leaf: string,
 ): Promise<string> {
-  return invoke<string>("adopt_node", { root, path, leaf });
+  return absOut(
+    root,
+    await invoke<string>("adopt_node", { root, rel: relIn(root, path), leaf: relIn(root, leaf) }),
+  );
 }
 
 /**
@@ -320,14 +329,14 @@ export async function saveAttachment(
 }
 
 export async function deleteNode(root: string, path: string): Promise<void> {
-  return invoke<void>("delete_node", { root, path });
+  return invoke<void>("delete_node", { root, rel: relIn(root, path) });
 }
 
 export async function promoteNode(
   root: string,
   path: string,
 ): Promise<string> {
-  return invoke<string>("promote_node", { root, path });
+  return absOut(root, await invoke<string>("promote_node", { root, rel: relIn(root, path) }));
 }
 
 // ── Sidecar persistence (per-vault settings kept with the app) ────────

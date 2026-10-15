@@ -64,6 +64,20 @@ pub fn resolve(root: &str, rel: &str) -> Result<PathBuf, String> {
     Ok(joined(root, &parts))
 }
 
+/// A folder something is made in or moved to: `rel`, or the vault itself when `rel` is empty.
+pub fn folder(root: &str, rel: &str) -> Result<PathBuf, String> {
+    if rel.is_empty() {
+        Ok(PathBuf::from(root))
+    } else {
+        resolve(root, rel)
+    }
+}
+
+/// The vault-relative path of a path an operation handed back, or a refusal when it is not inside.
+pub fn rel_out(root: &str, abs: &str) -> Result<String, String> {
+    rel_of(root, Path::new(abs)).ok_or_else(|| OUTSIDE.to_string())
+}
+
 /// The vault-relative path of `abs`, a path this side built on the same vault path.
 pub fn rel_of(root: &str, abs: &Path) -> Option<String> {
     let rel = |rest: &Path| Some(crate::git_engine::slashed(rest)).filter(|s| !s.is_empty());

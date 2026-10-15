@@ -71,40 +71,47 @@ fn folder_of(path: &str) -> PathBuf {
 #[tauri::command]
 pub async fn rename_node(
     root: String,
-    path: String,
+    rel: String,
     name: String,
     locks: State<'_, Arc<NoteLocks>>,
 ) -> Result<String, String> {
-    changing(&locks, vec![path.clone()], move || commands::rename_node(root, path, name)).await
+    let path = crate::vault_paths::resolve(&root, &rel)?.to_string_lossy().into_owned();
+    changing(&locks, vec![path.clone()], move || commands::rename_node(root.clone(), path, name).and_then(|p| crate::vault_paths::rel_out(&root, &p))).await
 }
 
 #[tauri::command]
 pub async fn rename_note_unique(
     root: String,
-    path: String,
+    rel: String,
     name: String,
     locks: State<'_, Arc<NoteLocks>>,
 ) -> Result<String, String> {
-    changing(&locks, vec![path.clone()], move || commands::rename_note_unique(root, path, name))
-        .await
+    let path = crate::vault_paths::resolve(&root, &rel)?.to_string_lossy().into_owned();
+    changing(&locks, vec![path.clone()], move || {
+        commands::rename_note_unique(root.clone(), path, name).and_then(|p| crate::vault_paths::rel_out(&root, &p))
+    })
+    .await
 }
 
 #[tauri::command]
 pub async fn move_node(
     root: String,
-    path: String,
+    rel: String,
     dest: String,
     locks: State<'_, Arc<NoteLocks>>,
 ) -> Result<String, String> {
-    changing(&locks, vec![path.clone()], move || commands::move_node(root, path, dest)).await
+    let path = crate::vault_paths::resolve(&root, &rel)?.to_string_lossy().into_owned();
+    let dest = crate::vault_paths::folder(&root, &dest)?.to_string_lossy().into_owned();
+    changing(&locks, vec![path.clone()], move || commands::move_node(root.clone(), path, dest).and_then(|p| crate::vault_paths::rel_out(&root, &p))).await
 }
 
 #[tauri::command]
 pub async fn delete_node(
     root: String,
-    path: String,
+    rel: String,
     locks: State<'_, Arc<NoteLocks>>,
 ) -> Result<(), String> {
+    let path = crate::vault_paths::resolve(&root, &rel)?.to_string_lossy().into_owned();
     changing(&locks, vec![path.clone()], move || commands::delete_node(root, path)).await
 }
 
@@ -112,22 +119,25 @@ pub async fn delete_node(
 #[tauri::command]
 pub async fn promote_node(
     root: String,
-    path: String,
+    rel: String,
     locks: State<'_, Arc<NoteLocks>>,
 ) -> Result<String, String> {
-    changing(&locks, vec![path.clone()], move || commands::promote_node(root, path)).await
+    let path = crate::vault_paths::resolve(&root, &rel)?.to_string_lossy().into_owned();
+    changing(&locks, vec![path.clone()], move || commands::promote_node(root.clone(), path).and_then(|p| crate::vault_paths::rel_out(&root, &p))).await
 }
 
 /// Adopting moves `path` under `leaf`, promoting `leaf` first — both are read from.
 #[tauri::command]
 pub async fn adopt_node(
     root: String,
-    path: String,
+    rel: String,
     leaf: String,
     locks: State<'_, Arc<NoteLocks>>,
 ) -> Result<String, String> {
+    let path = crate::vault_paths::resolve(&root, &rel)?.to_string_lossy().into_owned();
+    let leaf = crate::vault_paths::resolve(&root, &leaf)?.to_string_lossy().into_owned();
     let places = vec![path.clone(), leaf.clone()];
-    changing(&locks, places, move || commands::adopt_node(root, path, leaf)).await
+    changing(&locks, places, move || commands::adopt_node(root.clone(), path, leaf).and_then(|p| crate::vault_paths::rel_out(&root, &p))).await
 }
 
 /// The open alternatives of the notes in a folder. Reads history only.
@@ -216,7 +226,8 @@ pub async fn create_note(
     name: String,
     locks: State<'_, Arc<NoteLocks>>,
 ) -> Result<String, String> {
-    creating(&locks, PathBuf::from(&parent), move || commands::create_note(root, parent, name)).await
+    let parent = crate::vault_paths::folder(&root, &parent)?.to_string_lossy().into_owned();
+    creating(&locks, PathBuf::from(&parent), move || commands::create_note(root.clone(), parent, name).and_then(|p| crate::vault_paths::rel_out(&root, &p))).await
 }
 
 #[tauri::command]
@@ -225,7 +236,8 @@ pub async fn create_untitled_note(
     parent: String,
     locks: State<'_, Arc<NoteLocks>>,
 ) -> Result<String, String> {
-    creating(&locks, PathBuf::from(&parent), move || commands::create_untitled_note(root, parent))
+    let parent = crate::vault_paths::folder(&root, &parent)?.to_string_lossy().into_owned();
+    creating(&locks, PathBuf::from(&parent), move || commands::create_untitled_note(root.clone(), parent).and_then(|p| crate::vault_paths::rel_out(&root, &p)))
         .await
 }
 
@@ -237,8 +249,9 @@ pub async fn create_note_with_content(
     content: String,
     locks: State<'_, Arc<NoteLocks>>,
 ) -> Result<String, String> {
+    let parent = crate::vault_paths::folder(&root, &parent)?.to_string_lossy().into_owned();
     creating(&locks, PathBuf::from(&parent), move || {
-        commands::create_note_with_content(root, parent, name, content)
+        commands::create_note_with_content(root.clone(), parent, name, content).and_then(|p| crate::vault_paths::rel_out(&root, &p))
     })
     .await
 }
@@ -250,7 +263,8 @@ pub async fn create_folder(
     name: String,
     locks: State<'_, Arc<NoteLocks>>,
 ) -> Result<String, String> {
-    creating(&locks, PathBuf::from(&parent), move || commands::create_folder(root, parent, name)).await
+    let parent = crate::vault_paths::folder(&root, &parent)?.to_string_lossy().into_owned();
+    creating(&locks, PathBuf::from(&parent), move || commands::create_folder(root.clone(), parent, name).and_then(|p| crate::vault_paths::rel_out(&root, &p))).await
 }
 
 /// An attachment goes into an `assets` folder beside its note — the turn is that folder's, which
