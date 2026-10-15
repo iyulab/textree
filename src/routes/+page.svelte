@@ -367,7 +367,9 @@
       if (exchange.received.length > 0 || exchange.removed.length > 0) {
         void refreshTree();
         // Choices may have arrived from another device.
-        void publishScope.load(folder).catch(() => {});
+        void publishScope.load(folder).catch((e) => {
+          if (folder === root) opError = friendlyError(e);
+        });
       }
       const said = exchangeMessages(exchange);
       if (said.length > 0) {

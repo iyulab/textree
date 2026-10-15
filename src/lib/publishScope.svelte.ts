@@ -7,8 +7,12 @@ class PublishScope {
   choices = $state<PublishChoice[]>([]);
 
   async load(root: string): Promise<void> {
-    this.root = root;
-    this.choices = [];
+    // A reload of the folder already loaded keeps showing its choices until the new ones arrive
+    // (and keeps them if reading fails); only a different folder starts empty.
+    if (this.root !== root) {
+      this.root = root;
+      this.choices = [];
+    }
     const found = await publishChoices(root);
     if (this.root === root) this.choices = found;
   }
