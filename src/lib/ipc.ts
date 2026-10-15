@@ -73,7 +73,7 @@ export async function commitNotes(
   paths: string[],
   message: string,
 ): Promise<string | null> {
-  return invoke<string | null>("commit_notes", { root, paths, message });
+  return invoke<string | null>("commit_notes", { root, rels: paths.map((p) => relIn(root, p)), message });
 }
 
 /** One recorded state of a note. `id` is opaque — hand it back to `noteVersionText`. */
@@ -111,7 +111,7 @@ export type RestoredNote = {
 
 /** Every recorded state of one note, newest first. */
 export async function noteVersions(root: string, path: string): Promise<NoteVersion[]> {
-  return invoke<NoteVersion[]>("note_versions", { root, path });
+  return invoke<NoteVersion[]>("note_versions", { root, rel: relIn(root, path) });
 }
 
 /** What a note held at one recorded state. The file on disk is not touched. */
@@ -120,7 +120,7 @@ export async function noteVersionText(
   path: string,
   id: string,
 ): Promise<string> {
-  return invoke<string>("note_version_text", { root, path, id });
+  return invoke<string>("note_version_text", { root, rel: relIn(root, path), id });
 }
 
 /**
@@ -133,7 +133,7 @@ export async function restoreVersion(
   path: string,
   id: string,
 ): Promise<void> {
-  return invoke<void>("restore_version", { root, path, id });
+  return invoke<void>("restore_version", { root, rel: relIn(root, path), id });
 }
 
 /** One open alternative of a note: a second version kept beside it until a person picks one. */
@@ -158,7 +158,7 @@ export async function listAlternatives(root: string): Promise<NoteAlternative[]>
 
 /** Starts an alternative of a note from its last recorded version. The file is not touched. */
 export async function startAlternative(root: string, path: string): Promise<NoteAlternative> {
-  return invoke<NoteAlternative>("start_alternative", { root, path });
+  return invoke<NoteAlternative>("start_alternative", { root, rel: relIn(root, path) });
 }
 
 /** What an alternative holds for its note. */
@@ -195,7 +195,7 @@ export async function addAlternativeVersion(
  * typed into the alternative is its version.
  */
 export async function useAlternative(root: string, path: string, id: string): Promise<void> {
-  return invoke<void>("use_alternative", { root, path, id });
+  return invoke<void>("use_alternative", { root, rel: relIn(root, path), id });
 }
 
 /**

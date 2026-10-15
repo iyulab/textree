@@ -28,6 +28,20 @@ use tauri::{AppHandle, State};
 /// Opening a folder reads all of it; one that does not answer must not hold the window, or keep
 /// the person from opening another instead (the later opening wins — see
 /// [`commands::open_vault`]).
+
+/// Where `rel` is in the vault, worked out off the main thread: it looks at the disk, and a folder
+/// that stopped answering must hold up this request only.
+async fn resolved(root: &str, rel: &str) -> Result<String, String> {
+    let (root, rel) = (root.to_string(), rel.to_string());
+    off_main(move || crate::vault_paths::resolve(&root, &rel).map(|p| p.to_string_lossy().into_owned())).await
+}
+
+/// Like [`resolved`], for a folder something is made in or moved to; `""` is the vault itself.
+async fn folder_resolved(root: &str, rel: &str) -> Result<String, String> {
+    let (root, rel) = (root.to_string(), rel.to_string());
+    off_main(move || crate::vault_paths::folder(&root, &rel).map(|p| p.to_string_lossy().into_owned())).await
+}
+
 #[tauri::command]
 pub async fn open_vault(root: String, app: AppHandle) -> Result<Vec<crate::vault::TreeNode>, String> {
     let ticket = commands::begin_open();
@@ -75,7 +89,7 @@ pub async fn rename_node(
     name: String,
     locks: State<'_, Arc<NoteLocks>>,
 ) -> Result<String, String> {
-    let path = crate::vault_paths::resolve(&root, &rel)?.to_string_lossy().into_owned();
+    let path = resolved(&root, &rel).await?;
     changing(&locks, vec![path.clone()], move || commands::rename_node(root.clone(), path, name).and_then(|p| crate::vault_paths::rel_out(&root, &p))).await
 }
 
@@ -86,7 +100,7 @@ pub async fn rename_note_unique(
     name: String,
     locks: State<'_, Arc<NoteLocks>>,
 ) -> Result<String, String> {
-    let path = crate::vault_paths::resolve(&root, &rel)?.to_string_lossy().into_owned();
+    let path = resolved(&root, &rel).await?;
     changing(&locks, vec![path.clone()], move || {
         commands::rename_note_unique(root.clone(), path, name).and_then(|p| crate::vault_paths::rel_out(&root, &p))
     })
@@ -100,8 +114,8 @@ pub async fn move_node(
     dest: String,
     locks: State<'_, Arc<NoteLocks>>,
 ) -> Result<String, String> {
-    let path = crate::vault_paths::resolve(&root, &rel)?.to_string_lossy().into_owned();
-    let dest = crate::vault_paths::folder(&root, &dest)?.to_string_lossy().into_owned();
+    let path = resolved(&root, &rel).await?;
+    let dest = folder_resolved(&root, &dest).await?;
     changing(&locks, vec![path.clone()], move || commands::move_node(root.clone(), path, dest).and_then(|p| crate::vault_paths::rel_out(&root, &p))).await
 }
 
@@ -111,7 +125,7 @@ pub async fn delete_node(
     rel: String,
     locks: State<'_, Arc<NoteLocks>>,
 ) -> Result<(), String> {
-    let path = crate::vault_paths::resolve(&root, &rel)?.to_string_lossy().into_owned();
+    let path = resolved(&root, &rel).await?;
     changing(&locks, vec![path.clone()], move || commands::delete_node(root, path)).await
 }
 
@@ -122,7 +136,7 @@ pub async fn promote_node(
     rel: String,
     locks: State<'_, Arc<NoteLocks>>,
 ) -> Result<String, String> {
-    let path = crate::vault_paths::resolve(&root, &rel)?.to_string_lossy().into_owned();
+    let path = resolved(&root, &rel).await?;
     changing(&locks, vec![path.clone()], move || commands::promote_node(root.clone(), path).and_then(|p| crate::vault_paths::rel_out(&root, &p))).await
 }
 
@@ -134,8 +148,8 @@ pub async fn adopt_node(
     leaf: String,
     locks: State<'_, Arc<NoteLocks>>,
 ) -> Result<String, String> {
-    let path = crate::vault_paths::resolve(&root, &rel)?.to_string_lossy().into_owned();
-    let leaf = crate::vault_paths::resolve(&root, &leaf)?.to_string_lossy().into_owned();
+    let path = resolved(&root, &rel).await?;
+    let leaf = resolved(&root, &leaf).await?;
     let places = vec![path.clone(), leaf.clone()];
     changing(&locks, places, move || commands::adopt_node(root.clone(), path, leaf).and_then(|p| crate::vault_paths::rel_out(&root, &p))).await
 }
@@ -148,7 +162,8 @@ pub async fn list_alternatives(root: String) -> Result<Vec<NoteAlternative>, Str
 
 /// Starting an alternative writes a reference only — the note's file is not touched.
 #[tauri::command]
-pub async fn start_alternative(root: String, path: String) -> Result<NoteAlternative, String> {
+pub async fn start_alternative(root: String, rel: String) -> Result<NoteAlternative, String> {
+    let path = resolved(&root, &rel).await?;
     off_main(move || commands::start_alternative(root, path)).await
 }
 
@@ -183,10 +198,11 @@ pub async fn add_alternative_version(
 #[tauri::command]
 pub async fn use_alternative(
     root: String,
-    path: String,
+    rel: String,
     id: String,
     locks: State<'_, Arc<NoteLocks>>,
 ) -> Result<(), String> {
+    let path = resolved(&root, &rel).await?;
     changing(&locks, vec![path.clone()], move || commands::use_alternative(root, path, id)).await
 }
 
@@ -200,10 +216,11 @@ pub async fn set_aside_alternative(root: String, id: String) -> Result<(), Strin
 #[tauri::command]
 pub async fn restore_version(
     root: String,
-    path: String,
+    rel: String,
     id: String,
     locks: State<'_, Arc<NoteLocks>>,
 ) -> Result<(), String> {
+    let path = resolved(&root, &rel).await?;
     changing(&locks, vec![path.clone()], move || commands::restore_version(root, path, id)).await
 }
 
@@ -226,7 +243,7 @@ pub async fn create_note(
     name: String,
     locks: State<'_, Arc<NoteLocks>>,
 ) -> Result<String, String> {
-    let parent = crate::vault_paths::folder(&root, &parent)?.to_string_lossy().into_owned();
+    let parent = folder_resolved(&root, &parent).await?;
     creating(&locks, PathBuf::from(&parent), move || commands::create_note(root.clone(), parent, name).and_then(|p| crate::vault_paths::rel_out(&root, &p))).await
 }
 
@@ -236,7 +253,7 @@ pub async fn create_untitled_note(
     parent: String,
     locks: State<'_, Arc<NoteLocks>>,
 ) -> Result<String, String> {
-    let parent = crate::vault_paths::folder(&root, &parent)?.to_string_lossy().into_owned();
+    let parent = folder_resolved(&root, &parent).await?;
     creating(&locks, PathBuf::from(&parent), move || commands::create_untitled_note(root.clone(), parent).and_then(|p| crate::vault_paths::rel_out(&root, &p)))
         .await
 }
@@ -249,7 +266,7 @@ pub async fn create_note_with_content(
     content: String,
     locks: State<'_, Arc<NoteLocks>>,
 ) -> Result<String, String> {
-    let parent = crate::vault_paths::folder(&root, &parent)?.to_string_lossy().into_owned();
+    let parent = folder_resolved(&root, &parent).await?;
     creating(&locks, PathBuf::from(&parent), move || {
         commands::create_note_with_content(root.clone(), parent, name, content).and_then(|p| crate::vault_paths::rel_out(&root, &p))
     })
@@ -263,7 +280,7 @@ pub async fn create_folder(
     name: String,
     locks: State<'_, Arc<NoteLocks>>,
 ) -> Result<String, String> {
-    let parent = crate::vault_paths::folder(&root, &parent)?.to_string_lossy().into_owned();
+    let parent = folder_resolved(&root, &parent).await?;
     creating(&locks, PathBuf::from(&parent), move || commands::create_folder(root.clone(), parent, name).and_then(|p| crate::vault_paths::rel_out(&root, &p))).await
 }
 
@@ -277,7 +294,7 @@ pub async fn save_attachment(
     ext: String,
     locks: State<'_, Arc<NoteLocks>>,
 ) -> Result<String, String> {
-    let note = crate::vault_paths::resolve(&root, &note)?.to_string_lossy().into_owned();
+    let note = resolved(&root, &note).await?;
     let folder = folder_of(&note).join("assets");
     creating(&locks, folder, move || commands::save_attachment(root, note, data, ext)).await
 }
@@ -287,10 +304,17 @@ pub async fn save_attachment(
 #[tauri::command]
 pub async fn commit_notes(
     root: String,
-    paths: Vec<String>,
+    rels: Vec<String>,
     message: String,
 ) -> Result<Option<String>, String> {
-    off_main(move || commands::commit_notes(root, paths, message)).await
+    off_main(move || {
+        let paths = rels
+            .iter()
+            .map(|rel| crate::vault_paths::resolve(&root, rel).map(|p| p.to_string_lossy().into_owned()))
+            .collect::<Result<Vec<_>, _>>()?;
+        commands::commit_notes(root, paths, message)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -299,12 +323,14 @@ pub async fn move_state_out_of_vault(root: String) -> Result<MoveOut, String> {
 }
 
 #[tauri::command]
-pub async fn note_versions(root: String, path: String) -> Result<Vec<NoteVersion>, String> {
+pub async fn note_versions(root: String, rel: String) -> Result<Vec<NoteVersion>, String> {
+    let path = resolved(&root, &rel).await?;
     off_main(move || commands::note_versions(root, path)).await
 }
 
 #[tauri::command]
-pub async fn note_version_text(root: String, path: String, id: String) -> Result<String, String> {
+pub async fn note_version_text(root: String, rel: String, id: String) -> Result<String, String> {
+    let path = resolved(&root, &rel).await?;
     off_main(move || commands::note_version_text(root, path, id)).await
 }
 
