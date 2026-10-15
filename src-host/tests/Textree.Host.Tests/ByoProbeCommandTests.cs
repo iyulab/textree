@@ -28,7 +28,7 @@ public class ByoProbeCommandTests
     {
         var (code, line, seen) = await Run(
             new() { ["TEXTREE_BYO_PRESET"] = "openai", ["TEXTREE_BYO_API_KEY"] = "sk-x" },
-            new ByoProbeResult(true, 141, null, null));
+            new ByoProbeResult(true, Enumerable.Range(0, 141).Select(i => $"model-{i}").ToArray(), null, null));
 
         code.Should().Be(0);
         line.GetProperty("ok").GetBoolean().Should().BeTrue();
@@ -41,7 +41,7 @@ public class ByoProbeCommandTests
     {
         var (code, line, _) = await Run(
             new() { ["TEXTREE_BYO_PRESET"] = "anthropic", ["TEXTREE_BYO_API_KEY"] = "bad" },
-            new ByoProbeResult(false, 0, 401, "Unauthorized"));
+            new ByoProbeResult(false, [], 401, "Unauthorized"));
 
         code.Should().Be(0);
         line.GetProperty("ok").GetBoolean().Should().BeFalse();
@@ -54,7 +54,7 @@ public class ByoProbeCommandTests
     {
         var (_, _, seen) = await Run(
             new() { ["TEXTREE_BYO_PRESET"] = "my-server", ["TEXTREE_BYO_BASE_URL"] = "http://lan:8080/v1" },
-            new ByoProbeResult(true, 1, null, null));
+            new ByoProbeResult(true, ["model-0"], null, null));
 
         seen!.Preset.Should().Be(ByoPresets.Custom.Id);
         seen.BaseUrl.Should().Be("http://lan:8080/v1");
@@ -68,7 +68,7 @@ public class ByoProbeCommandTests
         var code = await ByoProbeCommand.RunAsync(new Dictionary<string, string?>(), output, (_, _) =>
         {
             called = true;
-            return Task.FromResult(new ByoProbeResult(true, 0, null, null));
+            return Task.FromResult(new ByoProbeResult(true, [], null, null));
         });
 
         code.Should().Be(2);

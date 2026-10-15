@@ -1,7 +1,7 @@
 Third-party licenses
 ====================
 
-This program includes the following 629 third-party packages.
+This program includes the following 627 third-party packages.
 
 ------------------------------------------------------------------------------
 adler2 2.0.1
@@ -17740,9 +17740,31 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ------------------------------------------------------------------------------
-ChildProcessGuard 1.1.1
+ChildProcessGuard 1.4.0
 License: MIT
 Upstream: https://github.com/iyulab/ChildProcessGuard
+
+MIT License
+
+Copyright (c) 2025 iyulab
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
 
 ------------------------------------------------------------------------------
 CsvHelper 33.1.0
@@ -17856,42 +17878,18 @@ To apply the Apache License to your work, attach the following boilerplate notic
    limitations under the License.
 
 ------------------------------------------------------------------------------
-ExcelDataReader 3.7.0
-License: MIT
-Upstream: https://github.com/ExcelDataReader/ExcelDataReader
-License text from: https://raw.githubusercontent.com/ExcelDataReader/ExcelDataReader/840007736467bb66be083764021a3a6b9afad5c2/LICENSE
-
-The MIT License (MIT)
-
-Copyright (c) 2014 ExcelDataReader
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-
-------------------------------------------------------------------------------
-FileFlux 0.33.12
+FileFlux 0.63.0
 License: MIT
 Upstream: https://github.com/iyulab/FileFlux
 
+Same license text as ChildProcessGuard 1.4.0.
+
 ------------------------------------------------------------------------------
-FileFlux.Core 0.33.12
+FileFlux.Core 0.63.0
 License: MIT
 Upstream: https://github.com/iyulab/FileFlux
+
+Same license text as ChildProcessGuard 1.4.0.
 
 ------------------------------------------------------------------------------
 Flux.Abstractions 0.27.0
@@ -17901,61 +17899,49 @@ Upstream: https://github.com/iyulab/flux-abstractions
 Same license text as tauri-kit-credentials 0.16.1.
 
 ------------------------------------------------------------------------------
-FluxCurator 0.10.3
+FluxCurator 0.14.0
 License: MIT
 Upstream: https://github.com/iyulab/FluxCurator
 
+Same license text as ChildProcessGuard 1.4.0.
+
 ------------------------------------------------------------------------------
-FluxCurator.Core 0.10.3
+FluxCurator.Core 0.14.0
 License: MIT
 Upstream: https://github.com/iyulab/FluxCurator
 
+Same license text as ChildProcessGuard 1.4.0.
+
 ------------------------------------------------------------------------------
-FluxFeed 0.41.2
+FluxFeed 0.55.0
 License: MIT
 Upstream: https://github.com/iyulab/FluxFeed
 
 Same license text as tauri-kit-credentials 0.16.1.
 
 ------------------------------------------------------------------------------
-FluxGuard 0.18.1
+FluxGuard 0.21.0
 License: MIT
 Upstream: https://github.com/iyulab/FluxGuard
 
+Same license text as tauri-kit-credentials 0.16.1.
+
 ------------------------------------------------------------------------------
-FluxGuard.Remote 0.18.1
+FluxGuard.Remote 0.21.0
 License: MIT
 Upstream: https://github.com/iyulab/FluxGuard
 
+Same license text as tauri-kit-credentials 0.16.1.
+
 ------------------------------------------------------------------------------
-FluxImprover 0.15.1
+FluxImprover 0.20.0
 License: MIT
 Upstream: https://github.com/iyulab/FluxImprover
 
-MIT License
-
-Copyright (c) 2025 iyulab
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+Same license text as ChildProcessGuard 1.4.0.
 
 ------------------------------------------------------------------------------
-FluxIndex.Core 0.69.1
+FluxIndex.Core 0.94.0
 License: MIT
 Upstream: https://github.com/iyulab/FluxIndex
 
@@ -17982,25 +17968,25 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ------------------------------------------------------------------------------
-FluxIndex.Providers.LMSupply 0.69.1
+FluxIndex.Providers.LMSupply 0.94.0
 License: MIT
 Upstream: https://github.com/iyulab/FluxIndex
 
-Same license text as FluxIndex.Core 0.69.1.
+Same license text as FluxIndex.Core 0.94.0.
 
 ------------------------------------------------------------------------------
-FluxIndex.SDK 0.69.1
+FluxIndex.SDK 0.94.0
 License: MIT
 Upstream: https://github.com/iyulab/FluxIndex
 
-Same license text as FluxIndex.Core 0.69.1.
+Same license text as FluxIndex.Core 0.94.0.
 
 ------------------------------------------------------------------------------
-FluxIndex.Storage.SQLite 0.69.1
+FluxIndex.Storage.SQLite 0.94.0
 License: MIT
 Upstream: https://github.com/iyulab/FluxIndex
 
-Same license text as FluxIndex.Core 0.69.1.
+Same license text as FluxIndex.Core 0.94.0.
 
 ------------------------------------------------------------------------------
 Google.Apis 1.69.0
@@ -18024,10 +18010,10 @@ Upstream: https://github.com/googleapis/google-api-dotnet-client
 Same license text as dirs 7.0.0.
 
 ------------------------------------------------------------------------------
-Google.GenAI 1.21.0
+Google.GenAI 1.24.0
 License: Apache-2.0
 Upstream: https://github.com/googleapis/dotnet-genai
-License text from: https://raw.githubusercontent.com/googleapis/dotnet-genai/189f46b705b9061b3d95638cb0ef623a919d4632/LICENSE
+License text from: https://raw.githubusercontent.com/googleapis/dotnet-genai/63f8806a6e6979444fa19c8ac0888104145d02fb/LICENSE
 
 Same license text as rustls-platform-verifier 0.7.1.
 
@@ -18096,84 +18082,116 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ------------------------------------------------------------------------------
-IronHive.Abstractions 0.45.4
+IronHive.Abstractions 0.65.0
 License: MIT
 Upstream: https://github.com/iyulab/ironhive
 
+Same license text as ChildProcessGuard 1.4.0.
+
 ------------------------------------------------------------------------------
-IronHive.Extensions.AI 0.45.4
+IronHive.Extensions.AI 0.65.0
 License: MIT
 Upstream: https://github.com/iyulab/ironhive
 
+Same license text as ChildProcessGuard 1.4.0.
+
 ------------------------------------------------------------------------------
-IronHive.Providers.Anthropic 0.45.4
+IronHive.Providers.Anthropic 0.65.0
 License: MIT
 Upstream: https://github.com/iyulab/ironhive
 
+Same license text as ChildProcessGuard 1.4.0.
+
 ------------------------------------------------------------------------------
-IronHive.Providers.GoogleAI 0.45.4
+IronHive.Providers.GoogleAI 0.65.0
 License: MIT
 Upstream: https://github.com/iyulab/ironhive
 
+Same license text as ChildProcessGuard 1.4.0.
+
 ------------------------------------------------------------------------------
-IronHive.Providers.OpenAI 0.45.4
+IronHive.Providers.OpenAI 0.65.0
 License: MIT
 Upstream: https://github.com/iyulab/ironhive
 
+Same license text as ChildProcessGuard 1.4.0.
+
 ------------------------------------------------------------------------------
-IronHive.Providers.OpenAI.Compatible 0.45.4
+IronHive.Providers.OpenAI.Compatible 0.65.0
 License: MIT
 Upstream: https://github.com/iyulab/ironhive
 
+Same license text as ChildProcessGuard 1.4.0.
+
 ------------------------------------------------------------------------------
-IronProw.Core 0.11.0
+IronProw.Core 0.16.1
 License: MIT
 Upstream: https://github.com/iyulab/iron-prow
 
+Same license text as tauri-kit-credentials 0.16.1.
+
 ------------------------------------------------------------------------------
-IronProw.IronHive 0.11.0
+IronProw.IronHive 0.16.1
 License: MIT
 Upstream: https://github.com/iyulab/iron-prow
 
+Same license text as tauri-kit-credentials 0.16.1.
+
 ------------------------------------------------------------------------------
-IronProw.LMSupply 0.11.0
+IronProw.LMSupply 0.16.1
 License: MIT
 Upstream: https://github.com/iyulab/iron-prow
 
+Same license text as tauri-kit-credentials 0.16.1.
+
 ------------------------------------------------------------------------------
-LMSupply.Core 0.98.0
+LMSupply.Core 0.121.0
 License: MIT
 Upstream: https://github.com/iyulab/lm-supply
 
+Same license text as ChildProcessGuard 1.4.0.
+
 ------------------------------------------------------------------------------
-LMSupply.Embedder 0.98.0
+LMSupply.Embedder 0.121.0
 License: MIT
 Upstream: https://github.com/iyulab/lm-supply
 
+Same license text as ChildProcessGuard 1.4.0.
+
 ------------------------------------------------------------------------------
-LMSupply.Generator 0.98.0
+LMSupply.Generator 0.121.0
 License: MIT
 Upstream: https://github.com/iyulab/lm-supply
 
+Same license text as ChildProcessGuard 1.4.0.
+
 ------------------------------------------------------------------------------
-LMSupply.Generator.Onnx 0.98.0
+LMSupply.Generator.Onnx 0.121.0
 License: MIT
 Upstream: https://github.com/iyulab/lm-supply
 
+Same license text as ChildProcessGuard 1.4.0.
+
 ------------------------------------------------------------------------------
-LMSupply.Llama 0.98.0
+LMSupply.Llama 0.121.0
 License: MIT
 Upstream: https://github.com/iyulab/lm-supply
 
+Same license text as ChildProcessGuard 1.4.0.
+
 ------------------------------------------------------------------------------
-LMSupply.Reranker 0.98.0
+LMSupply.Reranker 0.121.0
 License: MIT
 Upstream: https://github.com/iyulab/lm-supply
 
+Same license text as ChildProcessGuard 1.4.0.
+
 ------------------------------------------------------------------------------
-LMSupply.Text.Core 0.98.0
+LMSupply.Text.Core 0.121.0
 License: MIT
 Upstream: https://github.com/iyulab/lm-supply
+
+Same license text as ChildProcessGuard 1.4.0.
 
 ------------------------------------------------------------------------------
 Markdig 1.3.2
@@ -18206,10 +18224,10 @@ OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ------------------------------------------------------------------------------
-Microsoft.Data.Sqlite.Core 10.0.12
+Microsoft.Data.Sqlite.Core 10.0.13
 License: MIT
 Upstream: https://github.com/dotnet/dotnet
-License text from: https://raw.githubusercontent.com/dotnet/dotnet/95017c711e6afc1085133d440e42b4bd78155701/LICENSE.TXT
+License text from: https://raw.githubusercontent.com/dotnet/dotnet/4099f83977f4d29604a9aeb971fb0a7bc1d5f699/LICENSE.TXT
 
 The MIT License (MIT)
 
@@ -18236,42 +18254,42 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ------------------------------------------------------------------------------
-Microsoft.EntityFrameworkCore 10.0.12
+Microsoft.EntityFrameworkCore 10.0.13
 License: MIT
 Upstream: https://github.com/dotnet/dotnet
-License text from: https://raw.githubusercontent.com/dotnet/dotnet/95017c711e6afc1085133d440e42b4bd78155701/LICENSE.TXT
+License text from: https://raw.githubusercontent.com/dotnet/dotnet/4099f83977f4d29604a9aeb971fb0a7bc1d5f699/LICENSE.TXT
 
-Same license text as Microsoft.Data.Sqlite.Core 10.0.12.
+Same license text as Microsoft.Data.Sqlite.Core 10.0.13.
 
 ------------------------------------------------------------------------------
-Microsoft.EntityFrameworkCore.Abstractions 10.0.12
+Microsoft.EntityFrameworkCore.Abstractions 10.0.13
 License: MIT
 Upstream: https://github.com/dotnet/dotnet
-License text from: https://raw.githubusercontent.com/dotnet/dotnet/95017c711e6afc1085133d440e42b4bd78155701/LICENSE.TXT
+License text from: https://raw.githubusercontent.com/dotnet/dotnet/4099f83977f4d29604a9aeb971fb0a7bc1d5f699/LICENSE.TXT
 
-Same license text as Microsoft.Data.Sqlite.Core 10.0.12.
+Same license text as Microsoft.Data.Sqlite.Core 10.0.13.
 
 ------------------------------------------------------------------------------
-Microsoft.EntityFrameworkCore.Relational 10.0.12
+Microsoft.EntityFrameworkCore.Relational 10.0.13
 License: MIT
 Upstream: https://github.com/dotnet/dotnet
-License text from: https://raw.githubusercontent.com/dotnet/dotnet/95017c711e6afc1085133d440e42b4bd78155701/LICENSE.TXT
+License text from: https://raw.githubusercontent.com/dotnet/dotnet/4099f83977f4d29604a9aeb971fb0a7bc1d5f699/LICENSE.TXT
 
-Same license text as Microsoft.Data.Sqlite.Core 10.0.12.
+Same license text as Microsoft.Data.Sqlite.Core 10.0.13.
 
 ------------------------------------------------------------------------------
-Microsoft.EntityFrameworkCore.Sqlite.Core 10.0.12
+Microsoft.EntityFrameworkCore.Sqlite.Core 10.0.13
 License: MIT
 Upstream: https://github.com/dotnet/dotnet
-License text from: https://raw.githubusercontent.com/dotnet/dotnet/95017c711e6afc1085133d440e42b4bd78155701/LICENSE.TXT
+License text from: https://raw.githubusercontent.com/dotnet/dotnet/4099f83977f4d29604a9aeb971fb0a7bc1d5f699/LICENSE.TXT
 
-Same license text as Microsoft.Data.Sqlite.Core 10.0.12.
+Same license text as Microsoft.Data.Sqlite.Core 10.0.13.
 
 ------------------------------------------------------------------------------
-Microsoft.Extensions.AI.Abstractions 10.9.0
+Microsoft.Extensions.AI.Abstractions 10.10.1
 License: MIT
 Upstream: https://github.com/dotnet/extensions
-License text from: https://raw.githubusercontent.com/dotnet/extensions/b10f9c0a081b5dbb7755b8f5592e1d3c3f550a3a/LICENSE
+License text from: https://raw.githubusercontent.com/dotnet/extensions/59e1741f6fb45cf7ae08e2df088aef71537a7bc4/LICENSE
 
 The MIT License (MIT)
 
@@ -18298,17 +18316,17 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ------------------------------------------------------------------------------
-Microsoft.Extensions.DependencyModel 10.0.12
+Microsoft.Extensions.DependencyModel 10.0.13
 License: MIT
 Upstream: https://github.com/dotnet/dotnet
-License text from: https://raw.githubusercontent.com/dotnet/dotnet/95017c711e6afc1085133d440e42b4bd78155701/LICENSE.TXT
+License text from: https://raw.githubusercontent.com/dotnet/dotnet/4099f83977f4d29604a9aeb971fb0a7bc1d5f699/LICENSE.TXT
 
-Same license text as Microsoft.Data.Sqlite.Core 10.0.12.
+Same license text as Microsoft.Data.Sqlite.Core 10.0.13.
 
 ------------------------------------------------------------------------------
-Microsoft.ML.OnnxRuntime 1.30.0
+Microsoft.ML.OnnxRuntime.Managed 1.30.0
 License: MIT
-Upstream: https://github.com/Microsoft/onnxruntime
+Upstream: https://github.com/microsoft/onnxruntime
 
 MIT License
 
@@ -18333,14 +18351,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ------------------------------------------------------------------------------
-Microsoft.ML.OnnxRuntime.Managed 1.30.0
-License: MIT
-Upstream: https://github.com/microsoft/onnxruntime
-
-Same license text as Microsoft.ML.OnnxRuntime 1.30.0.
-
-------------------------------------------------------------------------------
-Microsoft.ML.OnnxRuntimeGenAI.Managed 0.13.2
+Microsoft.ML.OnnxRuntimeGenAI.Managed 0.17.1
 License: MIT
 Upstream: https://github.com/microsoft/onnxruntime-genai/
 
@@ -18351,7 +18362,7 @@ Microsoft.ML.Tokenizers 2.0.0
 License: MIT
 Upstream: https://github.com/dotnet/machinelearning
 
-Same license text as Microsoft.Data.Sqlite.Core 10.0.12.
+Same license text as Microsoft.Data.Sqlite.Core 10.0.13.
 
 ------------------------------------------------------------------------------
 Newtonsoft.Json 13.0.3
@@ -18393,10 +18404,10 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ------------------------------------------------------------------------------
-OpenAI 2.12.0
+OpenAI 2.14.0
 License: MIT
 Upstream: https://github.com/openai/openai-dotnet
-License text from: https://raw.githubusercontent.com/openai/openai-dotnet/6450c84ae936944613b1844d725466c9b450fa77/LICENSE
+License text from: https://raw.githubusercontent.com/openai/openai-dotnet/2e77b08828145f658ec04e49aec87abb1543c553/LICENSE
 
 The MIT License (MIT)
 
@@ -18766,10 +18777,10 @@ Same license text as rustls-platform-verifier 0.7.1.
 Same license text as SQLitePCLRaw.config.e_sqlite3 3.0.5.
 
 ------------------------------------------------------------------------------
-System.ClientModel 1.14.0
+System.ClientModel 1.15.0
 License: MIT
 Upstream: https://github.com/Azure/azure-sdk-for-net
-License text from: https://raw.githubusercontent.com/Azure/azure-sdk-for-net/3a58372182875061915cffce64f9b9d978a4ed6f/LICENSE.txt
+License text from: https://raw.githubusercontent.com/Azure/azure-sdk-for-net/6366473d5584b140bda80ddd1120c2f67e5d2658/LICENSE.txt
 
 The MIT License (MIT)
 
@@ -18798,30 +18809,30 @@ System.CodeDom 7.0.0
 License: MIT
 Upstream: https://github.com/dotnet/runtime
 
-Same license text as Microsoft.Data.Sqlite.Core 10.0.12.
+Same license text as Microsoft.Data.Sqlite.Core 10.0.13.
 
 ------------------------------------------------------------------------------
 System.Management 7.0.2
 License: MIT
 Upstream: https://github.com/dotnet/runtime
 
-Same license text as Microsoft.Data.Sqlite.Core 10.0.12.
+Same license text as Microsoft.Data.Sqlite.Core 10.0.13.
 
 ------------------------------------------------------------------------------
-System.Memory.Data 10.0.3
+System.Memory.Data 10.0.9
 License: MIT
 Upstream: https://github.com/dotnet/dotnet
-License text from: https://raw.githubusercontent.com/dotnet/dotnet/c2435c3e0f46de784341ac3ed62863ce77e117b4/LICENSE.TXT
+License text from: https://raw.githubusercontent.com/dotnet/dotnet/901ca941248413c79832d2fdbd709da0c4386353/LICENSE.TXT
 
-Same license text as Microsoft.Data.Sqlite.Core 10.0.12.
+Same license text as Microsoft.Data.Sqlite.Core 10.0.13.
 
 ------------------------------------------------------------------------------
-System.Numerics.Tensors 10.0.8
+System.Numerics.Tensors 10.0.12
 License: MIT
 Upstream: https://github.com/dotnet/dotnet
-License text from: https://raw.githubusercontent.com/dotnet/dotnet/94ea82652cdd4e0f8046b5bd5becbd11461482ca/LICENSE.TXT
+License text from: https://raw.githubusercontent.com/dotnet/dotnet/95017c711e6afc1085133d440e42b4bd78155701/LICENSE.TXT
 
-Same license text as Microsoft.Data.Sqlite.Core 10.0.12.
+Same license text as Microsoft.Data.Sqlite.Core 10.0.13.
 
 ------------------------------------------------------------------------------
 TauriKit.Sidecar.Loopback 0.16.1
@@ -18882,16 +18893,22 @@ License text from: https://raw.githubusercontent.com/tryAGI/Tiktoken/871d38c16d8
 Same license text as Tiktoken.Core 3.1.5.
 
 ------------------------------------------------------------------------------
-Undoc 0.13.0
+Undoc 0.25.0
 License: MIT
 Upstream: https://github.com/iyulab/undoc
 
+Same license text as ChildProcessGuard 1.4.0.
+
 ------------------------------------------------------------------------------
-Unhwp 0.13.0
+Unhwp 0.20.0
 License: MIT
 Upstream: https://github.com/iyulab/unhwp
 
+Same license text as ChildProcessGuard 1.4.0.
+
 ------------------------------------------------------------------------------
-Unpdf 0.22.0
+Unpdf 0.44.0
 License: MIT
 Upstream: https://github.com/iyulab/unpdf
+
+Same license text as tauri-kit-credentials 0.16.1.

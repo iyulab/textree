@@ -37,15 +37,9 @@
       "sha256": "2710a622a896bba67356913d4d0492cab5465f61b2ecce6d880aeb483834fb50"
     }
   ],
-  "ExcelDataReader@3.7.0": [
+  "Google.GenAI@1.24.0": [
     {
-      "source": "https://raw.githubusercontent.com/ExcelDataReader/ExcelDataReader/840007736467bb66be083764021a3a6b9afad5c2/LICENSE",
-      "sha256": "52ba99951f976c3c89ac69d9b3bed7ca264f7aac0253c61c163dc3b658fd0f04"
-    }
-  ],
-  "Google.GenAI@1.21.0": [
-    {
-      "source": "https://raw.githubusercontent.com/googleapis/dotnet-genai/189f46b705b9061b3d95638cb0ef623a919d4632/LICENSE",
+      "source": "https://raw.githubusercontent.com/googleapis/dotnet-genai/63f8806a6e6979444fa19c8ac0888104145d02fb/LICENSE",
       "sha256": "58d1e17ffe5109a7ae296caafcadfdbe6a7d176f0bc4ab01e12a689b0499d8bd"
     }
   ],
@@ -67,45 +61,45 @@
       "sha256": "ae543293657b6782e3d4a76257dc4157210ce88a352ef8392065d3f04dcd88d1"
     }
   ],
-  "Microsoft.Data.Sqlite.Core@10.0.12": [
+  "Microsoft.Data.Sqlite.Core@10.0.13": [
     {
-      "source": "https://raw.githubusercontent.com/dotnet/dotnet/95017c711e6afc1085133d440e42b4bd78155701/LICENSE.TXT",
+      "source": "https://raw.githubusercontent.com/dotnet/dotnet/4099f83977f4d29604a9aeb971fb0a7bc1d5f699/LICENSE.TXT",
       "sha256": "ae48df11a335dc1a615f4f938b69cba73bcf4485c4f97af49b38efb0f216353b"
     }
   ],
-  "Microsoft.EntityFrameworkCore.Abstractions@10.0.12": [
+  "Microsoft.EntityFrameworkCore.Abstractions@10.0.13": [
     {
-      "source": "https://raw.githubusercontent.com/dotnet/dotnet/95017c711e6afc1085133d440e42b4bd78155701/LICENSE.TXT",
+      "source": "https://raw.githubusercontent.com/dotnet/dotnet/4099f83977f4d29604a9aeb971fb0a7bc1d5f699/LICENSE.TXT",
       "sha256": "ae48df11a335dc1a615f4f938b69cba73bcf4485c4f97af49b38efb0f216353b"
     }
   ],
-  "Microsoft.EntityFrameworkCore.Relational@10.0.12": [
+  "Microsoft.EntityFrameworkCore.Relational@10.0.13": [
     {
-      "source": "https://raw.githubusercontent.com/dotnet/dotnet/95017c711e6afc1085133d440e42b4bd78155701/LICENSE.TXT",
+      "source": "https://raw.githubusercontent.com/dotnet/dotnet/4099f83977f4d29604a9aeb971fb0a7bc1d5f699/LICENSE.TXT",
       "sha256": "ae48df11a335dc1a615f4f938b69cba73bcf4485c4f97af49b38efb0f216353b"
     }
   ],
-  "Microsoft.EntityFrameworkCore.Sqlite.Core@10.0.12": [
+  "Microsoft.EntityFrameworkCore.Sqlite.Core@10.0.13": [
     {
-      "source": "https://raw.githubusercontent.com/dotnet/dotnet/95017c711e6afc1085133d440e42b4bd78155701/LICENSE.TXT",
+      "source": "https://raw.githubusercontent.com/dotnet/dotnet/4099f83977f4d29604a9aeb971fb0a7bc1d5f699/LICENSE.TXT",
       "sha256": "ae48df11a335dc1a615f4f938b69cba73bcf4485c4f97af49b38efb0f216353b"
     }
   ],
-  "Microsoft.EntityFrameworkCore@10.0.12": [
+  "Microsoft.EntityFrameworkCore@10.0.13": [
     {
-      "source": "https://raw.githubusercontent.com/dotnet/dotnet/95017c711e6afc1085133d440e42b4bd78155701/LICENSE.TXT",
+      "source": "https://raw.githubusercontent.com/dotnet/dotnet/4099f83977f4d29604a9aeb971fb0a7bc1d5f699/LICENSE.TXT",
       "sha256": "ae48df11a335dc1a615f4f938b69cba73bcf4485c4f97af49b38efb0f216353b"
     }
   ],
-  "Microsoft.Extensions.AI.Abstractions@10.9.0": [
+  "Microsoft.Extensions.AI.Abstractions@10.10.1": [
     {
-      "source": "https://raw.githubusercontent.com/dotnet/extensions/b10f9c0a081b5dbb7755b8f5592e1d3c3f550a3a/LICENSE",
+      "source": "https://raw.githubusercontent.com/dotnet/extensions/59e1741f6fb45cf7ae08e2df088aef71537a7bc4/LICENSE",
       "sha256": "47f0ad8ba753eae5de6178291cd8f38bbb42d2368b177f8e11714ad17c701275"
     }
   ],
-  "Microsoft.Extensions.DependencyModel@10.0.12": [
+  "Microsoft.Extensions.DependencyModel@10.0.13": [
     {
-      "source": "https://raw.githubusercontent.com/dotnet/dotnet/95017c711e6afc1085133d440e42b4bd78155701/LICENSE.TXT",
+      "source": "https://raw.githubusercontent.com/dotnet/dotnet/4099f83977f4d29604a9aeb971fb0a7bc1d5f699/LICENSE.TXT",
       "sha256": "ae48df11a335dc1a615f4f938b69cba73bcf4485c4f97af49b38efb0f216353b"
     }
   ],
@@ -115,9 +109,9 @@
       "sha256": "7c32af9d750f53c3d00051c2a3ebd87dbc1970c9cf7b3c4587f7e3a508add425"
     }
   ],
-  "OpenAI@2.12.0": [
+  "OpenAI@2.14.0": [
     {
-      "source": "https://raw.githubusercontent.com/openai/openai-dotnet/6450c84ae936944613b1844d725466c9b450fa77/LICENSE",
+      "source": "https://raw.githubusercontent.com/openai/openai-dotnet/2e77b08828145f658ec04e49aec87abb1543c553/LICENSE",
       "sha256": "5b1ac9960dc46756e316a2962c77fb8cbdee8fa87c9ab1825671235fac6a1f96"
     }
   ],
@@ -185,21 +179,21 @@
       "sha256": "5a1ab2f670f86dd2f8d42e40a8459cc278ca6d5225a7e2a5fa3ea0184396a6d9"
     }
   ],
-  "System.ClientModel@1.14.0": [
+  "System.ClientModel@1.15.0": [
     {
-      "source": "https://raw.githubusercontent.com/Azure/azure-sdk-for-net/3a58372182875061915cffce64f9b9d978a4ed6f/LICENSE.txt",
+      "source": "https://raw.githubusercontent.com/Azure/azure-sdk-for-net/6366473d5584b140bda80ddd1120c2f67e5d2658/LICENSE.txt",
       "sha256": "9b45236978bb5cd5de992021769e1eeaa79f0116d3b02cf8ba065a1ed603d5fa"
     }
   ],
-  "System.Memory.Data@10.0.3": [
+  "System.Memory.Data@10.0.9": [
     {
-      "source": "https://raw.githubusercontent.com/dotnet/dotnet/c2435c3e0f46de784341ac3ed62863ce77e117b4/LICENSE.TXT",
+      "source": "https://raw.githubusercontent.com/dotnet/dotnet/901ca941248413c79832d2fdbd709da0c4386353/LICENSE.TXT",
       "sha256": "ae48df11a335dc1a615f4f938b69cba73bcf4485c4f97af49b38efb0f216353b"
     }
   ],
-  "System.Numerics.Tensors@10.0.8": [
+  "System.Numerics.Tensors@10.0.12": [
     {
-      "source": "https://raw.githubusercontent.com/dotnet/dotnet/94ea82652cdd4e0f8046b5bd5becbd11461482ca/LICENSE.TXT",
+      "source": "https://raw.githubusercontent.com/dotnet/dotnet/95017c711e6afc1085133d440e42b4bd78155701/LICENSE.TXT",
       "sha256": "ae48df11a335dc1a615f4f938b69cba73bcf4485c4f97af49b38efb0f216353b"
     }
   ],
