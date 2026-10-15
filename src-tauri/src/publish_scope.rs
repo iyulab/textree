@@ -113,27 +113,27 @@ fn slashed(p: &Path) -> String {
     crate::git_engine::slashed(p)
 }
 
-/// Drops every choice at or under `path`; says whether any went. The whole folder (`""`) is
-/// never a place something comes into existence, so it drops nothing.
-fn drop_under(choices: &mut Vec<Choice>, path: &str) -> bool {
+/// Drops the choices at or under `path` that `drops` picks; says whether any went. The whole
+/// folder (`""`) is never a place something comes into existence, so it drops nothing.
+fn drop_under(choices: &mut Vec<Choice>, path: &str, drops: impl Fn(&Choice) -> bool) -> bool {
     if path.is_empty() {
         return false;
     }
     let before = choices.len();
-    choices.retain(|c| !covers(path, &c.path));
+    choices.retain(|c| !(covers(path, &c.path) && drops(c)));
     choices.len() != before
 }
 
-/// Drops every choice at or under each of `paths`. A path that comes into existence has no
-/// explicit choice of its own (only a move carries one), so this runs for what went away and for
-/// what was just made: what is there next follows its folder. Writes nothing when nothing
-/// matches, and makes no repository.
+/// Drops the include choices at or under each of `paths`. A path that comes into existence never
+/// inherits an include it did not ask for; a leave-out is kept (it can only hold back) — so a note
+/// left out, deleted and brought back is still left out. Runs for what went away and for what was
+/// just made. Writes nothing when nothing matches, and makes no repository.
 pub fn vacate(repo: &Repository, paths: &[PathBuf]) -> Result<(), git2::Error> {
     if repo.refname_to_id(PUBLIC_REF).is_err() {
         return Ok(());
     }
     update(repo, "Publish choice cleared", |choices| {
-        paths.iter().fold(false, |changed, p| drop_under(choices, &slashed(p)) | changed)
+        paths.iter().fold(false, |changed, p| drop_under(choices, &slashed(p), |c| c.include) | changed)
     })
 }
 
@@ -151,7 +151,8 @@ pub fn follow_moves(repo: &Repository, moves: &[(PathBuf, PathBuf)]) -> Result<(
             // destination covering its source.
             let (mut moving, mut rest): (Vec<Choice>, Vec<Choice>) =
                 std::mem::take(choices).into_iter().partition(|c| covers(&from, &c.path));
-            changed |= drop_under(&mut rest, &to);
+            // Every kind: the carried choice is the only one left at the destination.
+            changed |= drop_under(&mut rest, &to, |_| true);
             for c in &mut moving {
                 c.path = format!("{to}{}", &c.path[from.len()..]);
                 changed = true;
@@ -524,13 +525,21 @@ mod tests {
     }
 
     #[test]
-    fn vacating_drops_choices_at_and_under_a_path_only() {
+    fn gate_l2_8_vacating_drops_includes_at_and_under_a_path_and_keeps_leave_outs() {
         let (_d, repo) = repo();
         set(&repo, "a", Some(true)).unwrap();
-        set(&repo, "A/x.md", Some(false)).unwrap();
+        set(&repo, "A/x.md", Some(true)).unwrap();
+        set(&repo, "a/secret.md", Some(false)).unwrap();
         set(&repo, "ab", Some(true)).unwrap();
         vacate(&repo, &[PathBuf::from("a")]).unwrap();
-        assert_eq!(read(&repo, PUBLIC_REF).unwrap(), vec![Choice { path: "ab".into(), include: true }]);
+        assert_eq!(
+            read(&repo, PUBLIC_REF).unwrap(),
+            vec![Choice { path: "a/secret.md".into(), include: false }, Choice { path: "ab".into(), include: true }]
+        );
+        // Only a leave-out there: nothing to drop, nothing written.
+        let tip = repo.refname_to_id(PUBLIC_REF).unwrap();
+        vacate(&repo, &[PathBuf::from("a/secret.md")]).unwrap();
+        assert_eq!(repo.refname_to_id(PUBLIC_REF).unwrap(), tip);
     }
 
     #[test]

@@ -809,9 +809,10 @@ pub fn open_vault(root: String, app: AppHandle, ticket: u64) -> Result<Vec<TreeN
 
 // ── Structural edits (M4) — delegated to fs_ops ────────────────────────────────
 
-/// Drops the publish choices left at or under vault-relative `rels` — by a note that went away,
-/// for one that is just made there: a path that comes into existence follows its folder until
-/// someone chooses otherwise (only a move carries a choice along).
+/// Drops the include choices left at or under vault-relative `rels` — by a note that went away,
+/// for one that is just made there: a path that comes into existence never inherits an include it
+/// did not ask for (only a move carries a choice along). A leave-out is kept: it can only hold
+/// back, and a left-out note brought back from Deleted notes stays left out.
 ///
 /// Best-effort, like [`record_moves`]: the change on disk already happened. No repository is
 /// created — a folder whose notes were never recorded has no choices to drop.
@@ -898,7 +899,8 @@ pub fn promote_node(root: String, path: String) -> Result<String, String> {
     // Resolved first: promoting replaces the file this names.
     let from_rel = rel_to_root(root_p, Path::new(&path)).ok();
     let dir = crate::fs_ops::promote_leaf(root_p, Path::new(&path)).map_err(|e| e.to_string())?;
-    // The folder is new: it has no choice of its own (the note's own choice is carried below).
+    // The folder is new: it inherits no include left at its name (the note's own choice is
+    // carried below).
     forget_choices_at(root_p, &dir);
     // The note did not disappear, it went one level down and took its history with it.
     if let (Some(from), Some(to)) = (from_rel, folder_note_rel(root_p, &dir)) {
@@ -1050,7 +1052,8 @@ pub fn delete_node(root: String, path: String) -> Result<(), String> {
         crate::fs_ops::patiently(|| std::fs::remove_file(target)).map_err(|e| e.to_string())?;
     }
     log::info!("delete_node: {}", path);
-    // Its publish choices go with it: something made at the same place later is not it.
+    // An include goes with it: something made at the same place later did not ask to be
+    // published. A leave-out stays, so the note brought back is still left out.
     if let Some(rel) = rel {
         forget_choices(root_p, &[rel]);
     }
@@ -1177,8 +1180,8 @@ pub fn adopt_node(root: String, path: String, leaf: String) -> Result<String, St
 
     let p = crate::fs_ops::adopt_into_leaf(root_p, Path::new(&path), leaf_p)
         .map_err(|e| e.to_string())?;
-    // The folder the promotion made is new: it has no choice of its own. Cleared before the moves
-    // are carried, so the choices they bring in are kept.
+    // The folder the promotion made is new: it inherits no include left at its name. Cleared
+    // before the moves are carried, so the choices they bring in are kept.
     if let Some(dir) = p.parent() {
         forget_choices_at(root_p, dir);
     }
@@ -2620,8 +2623,8 @@ pub fn restore_deleted(root: String, rel: String) -> Result<RestoredNote, String
     .map_err(|e| e.to_string())?;
     log::info!("restore_deleted: {} (as deleted: {as_deleted})", dest.display());
     let landed = rel_to_root(root_p, &dest)?;
-    // Back as a note made there now: it follows its folder's publish setting, as does a folder
-    // made to hold it.
+    // Back as a note made there now: no include left there applies to it or to a folder made to
+    // hold it; a leave-out still does.
     let mut made = vec![landed.clone()];
     made.extend(made_folder.and_then(|d| rel_to_root(root_p, &d).ok()));
     forget_choices(root_p, &made);
@@ -3387,6 +3390,35 @@ mod tests {
         record_note(tmp.path(), "a.md", "# Another A");
         assert!(publish_choices(root.clone()).unwrap().is_empty());
         assert!(publish_preview(root).unwrap().nothing_chosen);
+    }
+
+    #[test]
+    fn gate_l2_8_a_left_out_note_deleted_and_brought_back_is_still_left_out() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path().to_string_lossy().to_string();
+        record_note(tmp.path(), "blog/post.md", "# Post");
+        let draft = record_note(tmp.path(), "blog/draft.md", "# Draft");
+        set_publish_choice(root.clone(), "blog".into(), Some(true)).unwrap();
+        set_publish_choice(root.clone(), "blog/draft.md".into(), Some(false)).unwrap();
+        delete_node(root.clone(), draft).unwrap();
+        let back = restore_deleted(root.clone(), "blog/draft.md".into()).unwrap();
+        assert_eq!(back.rel, "blog/draft.md");
+        assert!(tmp.path().join("blog/draft.md").is_file());
+        assert_eq!(publish_preview(root).unwrap().notes, vec!["blog/post.md"]);
+    }
+
+    #[test]
+    fn gate_l2_8_a_note_made_where_a_left_out_one_was_deleted_stays_left_out() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path().to_string_lossy().to_string();
+        let note = record_note(tmp.path(), "diary.md", "# Diary");
+        set_publish_choice(root.clone(), "".into(), Some(true)).unwrap();
+        set_publish_choice(root.clone(), "diary.md".into(), Some(false)).unwrap();
+        delete_node(root.clone(), note).unwrap();
+        create_note(root.clone(), root.clone(), "diary".into()).unwrap();
+        record_note(tmp.path(), "diary.md", "# Another diary");
+        let p = publish_preview(root).unwrap();
+        assert!(p.notes.is_empty(), "{p:?}");
     }
 
     #[test]
