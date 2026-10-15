@@ -591,6 +591,7 @@ export function hasPublishToken(): Promise<boolean> {
 // ── Semantic search (AI-sidecar) ──────────────────────────────────────────
 
 export interface SemanticHit {
+  /** Relative to the vault, `/`-separated. */
   path: string;
   snippet: string;
   score: number;
@@ -607,7 +608,7 @@ export async function semanticSearch(
   return invoke<SemanticHit[]>("semantic_search", {
     vault,
     query,
-    scopePath,
+    scope: scopePath === null ? null : folderRelIn(vault, scopePath),
     limit,
   });
 }
@@ -643,7 +644,8 @@ export function ask(
 ): Promise<void> {
   const channel = new Channel<AskEvent>();
   channel.onmessage = onEvent;
-  return invoke<void>('ask', { vault, messages, citationHits, scopePath, onEvent: channel });
+  const scope = scopePath === null ? null : folderRelIn(vault, scopePath);
+  return invoke<void>('ask', { vault, messages, citationHits, scope, onEvent: channel });
 }
 
 export function prepareGeneration(): Promise<void> {
