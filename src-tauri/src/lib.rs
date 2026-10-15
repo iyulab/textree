@@ -29,6 +29,7 @@ pub(crate) mod publish_secret;
 pub(crate) mod search;
 pub(crate) mod secret_store;
 mod telemetry;
+pub mod vault_paths;
 pub(crate) mod vault;
 pub(crate) mod watcher;
 pub(crate) mod note_locks;
