@@ -294,10 +294,16 @@
     }
   });
 
+  // Moves on whenever this folder's history may have changed — a version added, an exchange, an
+  // alternative started or ended — so what is showing it reads it again.
+  let historyRevision = $state(0);
+
   let alternativeReads = 0;
   async function refreshAlternatives() {
     const asking = root;
     const mine = ++alternativeReads;
+    // Not a dependency of whatever effect called this: reading it there would call it again.
+    untrack(() => historyRevision++);
     if (!asking) return;
     try {
       const found = await listAlternatives(asking);
@@ -2215,6 +2221,7 @@
         onclose={() => { showAddVersion = false; }}
         ondone={(message) => {
           versionNotice = message;
+          historyRevision++;
           void refreshBackup();
           // A new version is only on this computer until it reaches the repository.
           if (root) void backupStore.syncIfConnected(root);
@@ -2246,6 +2253,7 @@
       <VersionHistory
         {root}
         path={activePath}
+        revision={historyRevision}
         dirty={saveState.dirty}
         onclose={() => { showVersionHistory = false; }}
         onrestored={() => { if (activePath) void openSavedNote(activePath); }}
