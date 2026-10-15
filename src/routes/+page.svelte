@@ -93,6 +93,7 @@
   import { leaveRefusal } from "$lib/leaveRefusal.helpers";
   import { buildFolderTable, type FolderTable } from "$lib/folderTable.helpers";
   import { views } from "$lib/views.svelte";
+  import { publishScope } from "$lib/publishScope.svelte";
   import FolderTableView from "$lib/FolderTable.svelte";
   import Icon from "$lib/Icon.svelte";
   import { friendlyError, type FriendlyError } from "$lib/friendlyError.helpers";
@@ -363,7 +364,11 @@
       if (folder !== root) return;
       void refreshBackup();
       void refreshAlternatives();
-      if (exchange.received.length > 0 || exchange.removed.length > 0) void refreshTree();
+      if (exchange.received.length > 0 || exchange.removed.length > 0) {
+        void refreshTree();
+        // Choices may have arrived from another device.
+        void publishScope.load(folder).catch(() => {});
+      }
       const said = exchangeMessages(exchange);
       if (said.length > 0) {
         backupNotice = { kind: needsAttention(exchange) ? "error" : "ok", text: said.join(" ") };
@@ -511,6 +516,11 @@
     const setAside = await nav.load(path, readOnly); // load favorites/order settings
     const viewsSetAside = await views.load(path, readOnly); // saved folder views (views.json)
     if (viewsSetAside) setAside.push(viewsSetAside);
+    try {
+      await publishScope.load(path);
+    } catch (e) {
+      opError = friendlyError(e); // the folder still opens; the markers stay off
+    }
     if (overtaken()) return false;
     settingsNotice = describeSettingsOnOpen(readOnly, setAside);
     // Edits an earlier run could not write to this folder's notes: try them now.
@@ -1395,6 +1405,10 @@
       const p = selectedNode?.path ?? null;
       if (p) void nav.toggleFavorite(p);
     },
+    includeSelected: () => { if (selectedNode) void publishScope.choose(selectedNode.path, true).catch((e) => (opError = friendlyError(e))); },
+    excludeSelected: () => { if (selectedNode) void publishScope.choose(selectedNode.path, false).catch((e) => (opError = friendlyError(e))); },
+    followFolderSelected: () => { if (selectedNode) void publishScope.choose(selectedNode.path, null).catch((e) => (opError = friendlyError(e))); },
+    selectedHasPublishChoice: () => selectedNode !== null && publishScope.explicit(selectedNode.path) !== null,
     moveSelectedUp: () => reorderSelected(-1),
     moveSelectedDown: () => reorderSelected(1),
     rebuildIndex: () => {
@@ -2157,6 +2171,7 @@
       <AddVersion
         {root}
         paths={[activePath]}
+        published={publishScope.isIncluded(activePath)}
         onclose={() => { showAddVersion = false; }}
         ondone={(message) => {
           versionNotice = message;

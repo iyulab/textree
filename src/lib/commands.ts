@@ -30,6 +30,10 @@ export interface PaletteActions {
   deleteSelected: () => void;
   promoteSelected: () => void;
   toggleFavoriteSelected: () => void;
+  includeSelected: () => void;
+  excludeSelected: () => void;
+  followFolderSelected: () => void;
+  selectedHasPublishChoice: () => boolean;
   moveSelectedUp: () => void;
   moveSelectedDown: () => void;
   rebuildIndex: () => void;
@@ -71,6 +75,9 @@ export function buildCommands(a: PaletteActions): Command[] {
     { id: "node.delete", title: "Delete selected node", category: "Selected node", run: a.deleteSelected, when: sel },
     { id: "node.promote", title: "Promote selected node", category: "Selected node", run: a.promoteSelected, when: sel },
     { id: "node.favorite", title: "Toggle favorite on selected node", category: "Selected node", run: a.toggleFavoriteSelected, when: sel },
+    { id: "node.publishInclude", title: "Include in published site", category: "Selected node", run: a.includeSelected, when: sel },
+    { id: "node.publishExclude", title: "Leave out of published site", category: "Selected node", run: a.excludeSelected, when: sel },
+    { id: "node.publishFollow", title: "Follow folder's publish setting", category: "Selected node", run: a.followFolderSelected, when: a.selectedHasPublishChoice },
     { id: "node.moveUp", title: "Move selected node up", category: "Selected node", run: a.moveSelectedUp, when: sel },
     { id: "node.moveDown", title: "Move selected node down", category: "Selected node", run: a.moveSelectedDown, when: sel },
     { id: "note.addVersion", title: "Add version…", category: "Selected node", run: a.addVersion, keybinding: "mod+shift+s", when: a.hasOpenNote },

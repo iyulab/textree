@@ -8,12 +8,14 @@
     root: string;
     /** Absolute paths of the notes this version covers. */
     paths: string[];
+    /** The note goes out when the folder is published. */
+    published: boolean;
     /** Close the dialog. */
     onclose: () => void;
     /** Called after the attempt finished without error, so the caller can refresh. */
     ondone: (message: string) => void;
   }
-  let { root, paths, onclose, ondone }: Props = $props();
+  let { root, paths, published, onclose, ondone }: Props = $props();
 
   let typed = $state("");
   let busy = $state(false);
@@ -74,6 +76,9 @@
       data-testid="add-version-name"
     />
     <p class="scope" data-testid="add-version-scope">{scopeSummary(paths)}</p>
+    {#if published}
+      <p class="published-line" data-testid="add-version-published">Included in the published site: this version goes out the next time you publish.</p>
+    {/if}
 
     {#if failure}
       <p class="failure" data-testid="add-version-error">{failure.summary}</p>
@@ -130,7 +135,8 @@
     font-size: var(--font-size-ui);
     font-family: inherit;
   }
-  .scope {
+  .scope,
+  .published-line {
     margin: 0;
     font-size: var(--font-size-smaller);
     color: var(--text-muted);

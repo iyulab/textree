@@ -12,6 +12,7 @@
   import type { FriendlyError } from "./friendlyError.helpers";
   import { tree } from "./tree.svelte";
   import Icon from "./Icon.svelte";
+  import { publishScope } from "./publishScope.svelte";
   import { mergeOrder, nav } from "./nav.svelte";
   import Self from "./TreeView.svelte";
 
@@ -266,6 +267,7 @@
     {@const open = !tree.isCollapsed(node.path)}
     {@const isContainer = node.kind === "container" && hasChildren}
     {@const fav = nav.isFavorite(node.path)}
+    {@const published = publishScope.isIncluded(node.path)}
     <li>
       <div
         class="row"
@@ -318,6 +320,10 @@
             <span class="icon"><Icon name={node.kind === "container" ? "folder" : "file-text"} size={15} /></span>
             <span class="label">{node.name}</span>
           </button>
+        {/if}
+        {#if published}
+          <span class="published" title="Included in the published site" data-testid="tree-published"
+            ><Icon name="globe" size={13} /></span>
         {/if}
         <button
           class="fav"
@@ -473,6 +479,12 @@
   /* Container without a body: body can't be opened, but it can still be selected for structure editing */
   .no-body .label {
     color: var(--text-muted);
+  }
+  .published {
+    display: inline-flex;
+    align-items: center;
+    color: var(--text-muted);
+    padding: 0 var(--sp-1);
   }
   /* Favorite star — read indicator + toggle. Hidden until row hover/focus unless favorited. */
   .fav {
