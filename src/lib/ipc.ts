@@ -498,6 +498,11 @@ export interface RemoteExchange {
   alternatives: string[];
   /** Notes the other side changed that hold unrecorded edits here. Nothing moved. */
   keptBack: string[];
+  /**
+   * Notes of another folder in the same repository that are held or kept back, named relative to
+   * the repository. They hold this folder's exchange too, and only that folder can show them.
+   */
+  waitingElsewhere: string[];
   /** The remote now holds everything recorded here. */
   sent: boolean;
 }

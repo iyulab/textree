@@ -387,6 +387,10 @@ pub struct Exchange {
     pub alternatives: Vec<String>,
     /// Notes the other side changed that hold unrecorded edits here. Nothing moved.
     pub kept_back: Vec<String>,
+    /// Notes of another folder in the same repository that are held or kept back, named relative
+    /// to the repository. They hold this folder's exchange too — nothing is taken in until they
+    /// are decided — and only that folder can show them.
+    pub waiting_elsewhere: Vec<String>,
     /// The remote now holds everything recorded here.
     pub sent: bool,
 }
@@ -420,10 +424,14 @@ pub fn exchange(
                 overlap,
                 alternatives,
             } => {
+                out.waiting_elsewhere = elsewhere(vault, &overlap);
                 out.held = in_folder(vault, overlap);
                 out.alternatives = in_folder(vault, alternatives);
             }
-            Taken::KeptBack { notes } => out.kept_back = in_folder(vault, notes),
+            Taken::KeptBack { notes } => {
+                out.waiting_elsewhere = elsewhere(vault, &notes);
+                out.kept_back = in_folder(vault, notes);
+            }
             Taken::Nothing | Taken::Overtaken => {}
         }
         match push(repo, url, credentials.clone()).map_err(err)? {
@@ -448,6 +456,15 @@ fn in_folder(vault: &VaultRepo, paths: Vec<String>) -> Vec<String> {
         .iter()
         .filter_map(|p| vault.path_in_vault(Path::new(p)))
         .map(|p| crate::git_engine::slashed(&p))
+        .collect()
+}
+
+/// The repository paths outside the folder: another folder's notes sharing the repository.
+fn elsewhere(vault: &VaultRepo, paths: &[String]) -> Vec<String> {
+    paths
+        .iter()
+        .filter(|p| vault.path_in_vault(Path::new(p)).is_none())
+        .cloned()
         .collect()
 }
 
@@ -1666,6 +1683,12 @@ More.
         assert!(x.read("plan.md").is_none(), "all of it or none of it");
         assert_eq!(b.read("y/n.md").as_deref(), Some("# Written here, never recorded"));
         assert!(id_of(b.repo(), NOTES_REF).is_none());
+
+        // The folder that was synced says why nothing arrived, though the note is not its own.
+        let out = exchange(&x.vault, &x.root, &Machine::url_of(&remote), None, &NoteLocks::default()).unwrap();
+        assert!(out.kept_back.is_empty());
+        assert_eq!(out.waiting_elsewhere, vec!["y/n.md".to_string()]);
+        assert!(!out.sent);
     }
 
     #[test]
