@@ -31,6 +31,7 @@ mod telemetry;
 pub(crate) mod vault;
 pub(crate) mod watcher;
 pub(crate) mod note_locks;
+pub(crate) mod note_refs;
 pub(crate) mod state_dir;
 pub(crate) mod stranded;
 pub(crate) mod tree_commands;
