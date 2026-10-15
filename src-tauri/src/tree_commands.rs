@@ -25,10 +25,6 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tauri::{AppHandle, State};
 
-/// Opening a folder reads all of it; one that does not answer must not hold the window, or keep
-/// the person from opening another instead (the later opening wins — see
-/// [`commands::open_vault`]).
-
 /// Where `rel` is in the vault, worked out off the main thread: it looks at the disk, and a folder
 /// that stopped answering must hold up this request only.
 async fn resolved(root: &str, rel: &str) -> Result<String, String> {
@@ -42,6 +38,9 @@ async fn folder_resolved(root: &str, rel: &str) -> Result<String, String> {
     off_main(move || crate::vault_paths::folder(&root, &rel).map(|p| p.to_string_lossy().into_owned())).await
 }
 
+/// Opening a folder reads all of it; one that does not answer must not hold the window, or keep
+/// the person from opening another instead (the later opening wins — see
+/// [`commands::open_vault`]).
 #[tauri::command]
 pub async fn open_vault(root: String, app: AppHandle) -> Result<Vec<crate::vault::TreeNode>, String> {
     let ticket = commands::begin_open();
