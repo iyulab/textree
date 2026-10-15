@@ -164,6 +164,96 @@ pub fn follow_moves(repo: &Repository, moves: &[(PathBuf, PathBuf)]) -> Result<(
     })
 }
 
+/// What one side did to the recorded notes since the two sides last agreed: the renames git finds
+/// between the common revision and that side's tip, and the tip itself.
+struct Moved<'r> {
+    renames: Vec<(String, String)>,
+    tip: Tree<'r>,
+}
+
+impl Moved<'_> {
+    /// Where the choice at `path` went: a note's own rename, or, for a folder that is gone from the
+    /// tip, the place its notes went with their names below the folder kept. A note moved out of a
+    /// folder that is still there says nothing about the folder.
+    fn destination(&self, repo: &Repository, path: &str) -> Option<String> {
+        if path.is_empty() {
+            return None;
+        }
+        if let Some((_, to)) = self.renames.iter().find(|(from, _)| from.eq_ignore_ascii_case(path)) {
+            return Some(to.clone());
+        }
+        if holds(repo, &self.tip, path) {
+            return None;
+        }
+        self.renames.iter().find_map(|(from, to)| {
+            let below = from.get(path.len()..).filter(|_| covers(path, from) && from.len() > path.len())?;
+            (to.len() > below.len() && to.ends_with(below)).then(|| to[..to.len() - below.len()].to_string())
+        })
+    }
+
+    /// `choices` with each one carried to where this side moved what it names. Each is placed on
+    /// its own — a folder and a note inside it each have their own move — and where a carried
+    /// choice lands on one that stayed, the carried one is kept.
+    fn carried(&self, repo: &Repository, choices: &[Choice]) -> Vec<Choice> {
+        let (mut moved, mut stayed): (Vec<Choice>, Vec<Choice>) = (Vec::new(), Vec::new());
+        for c in choices {
+            match self.destination(repo, &c.path) {
+                Some(path) => moved.push(Choice { path, include: c.include }),
+                None => stayed.push(c.clone()),
+            }
+        }
+        stayed.retain(|s| !moved.iter().any(|m| m.path.eq_ignore_ascii_case(&s.path)));
+        stayed.append(&mut moved);
+        stayed
+    }
+}
+
+/// Whether anything is recorded at `rel` (a note or a folder) in `tree`.
+fn holds(repo: &Repository, tree: &Tree<'_>, rel: &str) -> bool {
+    let mut current = tree.clone();
+    let mut names = rel.split('/').peekable();
+    while let Some(name) = names.next() {
+        let Some(id) = current.get_name(name).map(|e| e.id()) else { return false };
+        if names.peek().is_none() {
+            return true;
+        }
+        match repo.find_tree(id).ok() {
+            Some(next) => current = next,
+            None => return false,
+        }
+    }
+    false
+}
+
+/// The renames on each side of the recorded notes since the two last agreed, as (here, there).
+/// `None` for a side when there is nothing to compare: no notes recorded here or received.
+fn moved_on_each_side(repo: &Repository) -> Result<(Option<Moved<'_>>, Option<Moved<'_>>), git2::Error> {
+    let notes = crate::git_engine::NOTES_REF;
+    let (Ok(ours), Ok(theirs)) = (repo.refname_to_id(notes), repo.refname_to_id(&crate::remote::tracking_of(notes)))
+    else {
+        return Ok((None, None));
+    };
+    let base = match repo.merge_base(ours, theirs) {
+        Ok(id) => repo.find_commit(id)?.tree()?,
+        Err(e) if e.code() == git2::ErrorCode::NotFound => return Ok((None, None)),
+        Err(e) => return Err(e),
+    };
+    let side = |tip: git2::Oid| -> Result<Option<Moved<'_>>, git2::Error> {
+        let tip = repo.find_commit(tip)?.tree()?;
+        let mut diff = repo.diff_tree_to_tree(Some(&base), Some(&tip), None)?;
+        let mut finding = git2::DiffFindOptions::new();
+        finding.renames(true);
+        diff.find_similar(Some(&mut finding))?;
+        let renames: Vec<(String, String)> = diff
+            .deltas()
+            .filter(|d| d.status() == git2::Delta::Renamed)
+            .filter_map(|d| Some((slashed(d.old_file().path()?), slashed(d.new_file().path()?))))
+            .collect();
+        Ok((!renames.is_empty()).then_some(Moved { renames, tip }))
+    };
+    Ok((side(ours)?, side(theirs)?))
+}
+
 fn value_of(choices: &[Choice], path: &str) -> Option<bool> {
     choices.iter().find(|c| c.path.eq_ignore_ascii_case(path)).map(|c| c.include)
 }
@@ -218,11 +308,21 @@ pub fn take_in(repo: &Repository) -> Result<(), git2::Error> {
                     Err(e) if e.code() == git2::ErrorCode::NotFound => Vec::new(),
                     Err(e) => return Err(e),
                 };
-                let joined = join(
-                    &base,
-                    &choices_in(repo, Some(&a.tree()?))?,
-                    &choices_in(repo, Some(&b.tree()?))?,
-                );
+                // Choices name paths; a note one side moved is still the same note. Each side's
+                // choices are carried along the other side's moves first, so a choice made on one
+                // device about a note never stays behind at a name the other device moved it from.
+                let (mut mine, mut other) = (choices_in(repo, Some(&a.tree()?))?, choices_in(repo, Some(&b.tree()?))?);
+                let mut base = base;
+                let (here, there) = moved_on_each_side(repo)?;
+                if let Some(here) = &here {
+                    other = here.carried(repo, &other);
+                    base = here.carried(repo, &base);
+                }
+                if let Some(there) = &there {
+                    mine = there.carried(repo, &mine);
+                    base = there.carried(repo, &base);
+                }
+                let joined = join(&base, &mine, &other);
                 let blob = repo.blob(render(&joined).as_bytes())?;
                 let tree = crate::git_engine::tree_with_file(repo, None, Path::new(FILE), Some(blob))?;
                 let tree = repo.find_tree(tree)?;
@@ -423,6 +523,79 @@ mod tests {
         let got = read(&repo, PUBLIC_REF).unwrap();
         assert!(!is_included("blog/x.md", &got));
         assert!(is_included("site/blog/x.md", &got));
+    }
+
+    /// A revision of the recorded notes holding `files`, on top of `parent`.
+    fn notes_at(repo: &git2::Repository, parent: Option<git2::Oid>, files: &[&str]) -> git2::Oid {
+        let mut tree: Option<git2::Oid> = None;
+        for f in files {
+            let blob = repo.blob(format!("note {}", f.rsplit('/').next().unwrap()).as_bytes()).unwrap();
+            let base = tree.map(|t| repo.find_tree(t).unwrap());
+            tree = Some(crate::git_engine::tree_with_file(repo, base.as_ref(), Path::new(f), Some(blob)).unwrap());
+        }
+        let tree = repo.find_tree(tree.unwrap()).unwrap();
+        let (author, committer) = crate::git_engine::commit_identities(repo).unwrap();
+        let parents: Vec<git2::Commit<'_>> = parent.map(|p| repo.find_commit(p).unwrap()).into_iter().collect();
+        let refs: Vec<&git2::Commit<'_>> = parents.iter().collect();
+        repo.commit(None, &author, &committer, "notes", &tree, &refs).unwrap()
+    }
+
+    /// The recorded notes as this side (`ours`) and the other device (`theirs`) hold them.
+    fn notes_on_each_side(repo: &git2::Repository, ours: git2::Oid, theirs: git2::Oid) {
+        repo.reference(crate::git_engine::NOTES_REF, ours, true, "ours").unwrap();
+        repo.reference(&crate::remote::tracking_of(crate::git_engine::NOTES_REF), theirs, true, "theirs").unwrap();
+    }
+
+    #[test]
+    fn a_leave_out_made_on_the_other_device_follows_a_folder_moved_here() {
+        let (_d, repo) = repo();
+        let before = notes_at(&repo, None, &["blog/a.md", "blog/draft.md"]);
+        let moved = notes_at(&repo, Some(before), &["site/blog/a.md", "site/blog/draft.md"]);
+        notes_on_each_side(&repo, moved, before);
+        set(&repo, "blog", Some(true)).unwrap();
+        diverge(
+            &repo,
+            |r| set(r, "blog/draft.md", Some(false)).unwrap(),
+            |r| follow_moves(r, &[(PathBuf::from("blog"), PathBuf::from("site/blog"))]).unwrap(),
+        );
+        let got = read(&repo, PUBLIC_REF).unwrap();
+        assert!(!is_included("site/blog/draft.md", &got), "{got:?}");
+        assert!(is_included("site/blog/a.md", &got), "{got:?}");
+        assert!(got.iter().all(|c| !covers("blog", &c.path)), "nothing left at the old place: {got:?}");
+    }
+
+    #[test]
+    fn a_leave_out_made_here_follows_a_folder_the_other_device_moved() {
+        let (_d, repo) = repo();
+        let before = notes_at(&repo, None, &["blog/a.md", "blog/draft.md"]);
+        let moved = notes_at(&repo, Some(before), &["site/blog/a.md", "site/blog/draft.md"]);
+        notes_on_each_side(&repo, before, moved);
+        set(&repo, "blog", Some(true)).unwrap();
+        diverge(
+            &repo,
+            |r| follow_moves(r, &[(PathBuf::from("blog"), PathBuf::from("site/blog"))]).unwrap(),
+            |r| set(r, "blog/draft.md", Some(false)).unwrap(),
+        );
+        let got = read(&repo, PUBLIC_REF).unwrap();
+        assert!(!is_included("site/blog/draft.md", &got), "{got:?}");
+        assert!(is_included("site/blog/a.md", &got), "{got:?}");
+    }
+
+    #[test]
+    fn a_note_moved_out_of_a_folder_that_stays_does_not_carry_the_folder_choice() {
+        let (_d, repo) = repo();
+        let before = notes_at(&repo, None, &["blog/a.md", "blog/b.md"]);
+        let moved = notes_at(&repo, Some(before), &["archive/a.md", "blog/b.md"]);
+        notes_on_each_side(&repo, moved, before);
+        set(&repo, "blog", Some(true)).unwrap();
+        diverge(
+            &repo,
+            |r| set(r, "blog", Some(false)).unwrap(),
+            |r| set(r, "other.md", Some(true)).unwrap(),
+        );
+        let got = read(&repo, PUBLIC_REF).unwrap();
+        assert!(!is_included("blog/b.md", &got), "{got:?}");
+        assert!(got.iter().all(|c| c.path != "archive"), "{got:?}");
     }
 
     #[test]
