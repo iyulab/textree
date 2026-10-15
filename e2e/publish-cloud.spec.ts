@@ -1,5 +1,13 @@
 import { test, expect, type Browser, type Page } from "@playwright/test";
-import { connectToApp, createTempVault, loadVault, removeTempVault, sampleVaultPath } from "./helpers";
+import {
+  choosePublish,
+  connectToApp,
+  createTempVault,
+  loadVault,
+  recordNotes,
+  removeTempVault,
+  sampleVaultPath,
+} from "./helpers";
 
 /**
  * "Publish to web" (slice 2c — in-app auth) — host-absent-safe E2E (CDP attach to WebView2).
@@ -64,6 +72,8 @@ test("'Publish to web' asks first, and Cancel neither signs in nor uploads", asy
   const vault = createTempVault({ "note.md": "# Note\n", "extra.txt": "x" });
   try {
     await loadVault(page, vault);
+    await recordNotes(page, vault, ["note.md"]);
+    await choosePublish(page, vault, "", true);
     await page.keyboard.press("Control+p");
     await page.getByTestId("palette-input").fill(">Publish to web");
     await expect(page.getByTestId("palette-item").first()).toContainText("Publish to web");
@@ -72,7 +82,7 @@ test("'Publish to web' asks first, and Cancel neither signs in nor uploads", asy
     const dialog = page.getByRole("dialog", { name: "Publish this folder?" });
     await expect(dialog).toBeVisible();
     await expect(page.getByTestId("publish-confirm-summary")).toHaveText(
-      "1 note and 1 other file in this folder will be published to the web.",
+      "1 note in this folder will be published to the web.",
     );
     await page.getByTestId("publish-confirm-cancel").click();
     await expect(dialog).toHaveCount(0);

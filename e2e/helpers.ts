@@ -323,3 +323,17 @@ export function git(repo: string, ...args: string[]): string {
 export function refsUnder(repo: string, prefix: string): string[] {
   return git(repo, "for-each-ref", "--format=%(refname)", prefix).split("\n").filter(Boolean);
 }
+
+/** Adds a version of each note (paths relative to the vault) through the app, as the person would. */
+export async function recordNotes(page: Page, vault: string, rels: string[]): Promise<void> {
+  await tauriInvoke(page, "commit_notes", {
+    root: vault,
+    paths: rels.map((r) => join(vault, ...r.split("/"))),
+    message: "test",
+  });
+}
+
+/** Chooses `rel` ("" = the whole folder) for publishing, or leaves it out. */
+export async function choosePublish(page: Page, vault: string, rel: string, include: boolean): Promise<void> {
+  await tauriInvoke(page, "set_publish_choice", { root: vault, rel, choice: include });
+}

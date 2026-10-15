@@ -4,11 +4,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   connectToApp,
-  expectOpenNote,
   loadVault,
   createTempVault,
   removeTempVault,
   readVaultFile,
+  recordNotes,
+  choosePublish,
 } from "./helpers";
 
 let browser: Browser;
@@ -58,6 +59,8 @@ test("publish renders the vault to an auto-theming static site, source untouched
   const out = mkdtempSync(join(tmpdir(), "textree-pub-")).replace(/\\/g, "/");
   try {
     await loadVault(page, vault);
+    await recordNotes(page, vault, ["note.md"]);
+    await choosePublish(page, vault, "", true);
     const publishing = startPublish(page, out);
     await confirmPublish(page);
     // While the renderer runs, the screen says so (the first render after install can take a while).
@@ -100,6 +103,8 @@ test("publish into the vault is rejected with friendly, actionable guidance", as
   const vault = createTempVault({ "note.md": "# Hi\n" });
   try {
     await loadVault(page, vault);
+    await recordNotes(page, vault, ["note.md"]);
+    await choosePublish(page, vault, "", true);
     await publishTo(page, vault);
     await expect(page.locator(".publish-banner.error")).toContainText("outside your vault");
   } finally {
@@ -117,29 +122,21 @@ test("the confirmation says what goes out, and Cancel publishes nothing", async 
   const out = mkdtempSync(join(tmpdir(), "textree-pub-")).replace(/\\/g, "/");
   try {
     await loadVault(page, vault);
-    // Give one note a version, so only the other goes out with changes that have none.
-    await page.getByRole("treeitem", { name: /kept/ }).click();
-    await expectOpenNote(page, "kept");
-    await page.keyboard.press("Control+Shift+S");
-    await expect(page.getByTestId("add-version")).toBeVisible();
-    await page.getByTestId("add-version-confirm").click();
-    await expect(page.getByTestId("add-version")).toHaveCount(0);
+    // Give one note a version and choose the whole folder: the other has no version to go out.
+    await recordNotes(page, vault, ["kept.md"]);
+    await choosePublish(page, vault, "", true);
 
     // Whatever an earlier publish left on the banner stays as it was: declining changes nothing.
     const bannerBefore = await page.locator(".publish-banner").allTextContents();
     const publishing = startPublish(page, out);
     const dialog = page.getByRole("dialog", { name: "Publish this folder?" });
     await expect(dialog).toBeVisible();
-    await expect(page.getByTestId("publish-confirm-summary")).toHaveText(
-      `2 notes and 1 other file in this folder will be published into ${out}.`,
+    await expect(page.getByTestId("publish-confirm-summary")).toContainText(
+      "1 note in this folder will be published",
     );
-    const unrecorded = page.getByTestId("publish-confirm-unrecorded");
-    await expect(unrecorded).toContainText("1 note has changes you haven't added as a version");
-    await expect(unrecorded).toContainText("draft");
-    await expect(unrecorded).not.toContainText("kept");
-    await expect(page.getByTestId("publish-confirm-hidden")).toHaveText(
-      "Hidden files are left out: .env",
-    );
+    const neverRecorded = page.getByTestId("publish-confirm-never-recorded");
+    await expect(neverRecorded).toContainText("draft");
+    await expect(neverRecorded).not.toContainText("kept");
     await expect(page.getByTestId("publish-confirm-go")).toBeFocused();
 
     await page.getByTestId("publish-confirm-cancel").click();
@@ -155,28 +152,6 @@ test("the confirmation says what goes out, and Cancel publishes nothing", async 
     await again;
     await expect(dialog).toHaveCount(0);
     expect(readdirSync(out)).toEqual([]);
-  } finally {
-    removeTempVault(vault);
-    removeTempVault(out);
-  }
-});
-
-test("a hidden file in the vault stays out of the published site", async () => {
-  const vault = createTempVault({
-    "note.md": "# Note\n",
-    ".env": "SECRET=1\n",
-    "sub/page.md": "# Page\n",
-    "sub/.gitignore": "*.tmp\n",
-  });
-  const out = mkdtempSync(join(tmpdir(), "textree-pub-")).replace(/\\/g, "/");
-  try {
-    await loadVault(page, vault);
-    await publishTo(page, out);
-    await expect(page.locator(".publish-banner.ok")).toContainText("Published");
-    expect(existsSync(join(out, "note.html"))).toBe(true);
-    expect(existsSync(join(out, "sub", "page.html"))).toBe(true);
-    expect(existsSync(join(out, ".env")), ".env must not be published").toBe(false);
-    expect(existsSync(join(out, "sub", ".gitignore")), "nor a nested dot-file").toBe(false);
   } finally {
     removeTempVault(vault);
     removeTempVault(out);

@@ -56,9 +56,10 @@ table is a read-only lens built from them.
 
 ### Publishing
 
-- **One-click publish** turns your folder into a read-only website. ⚠️ Today it publishes **every
-  note in the folder**, including ones you have not kept a version of; choosing which notes are
-  public is planned. Publish from a folder that holds only what you mean to share.
+- **One-click publish** turns your folder into a read-only website. Nothing is published unless you
+  choose it: include a note or a folder from the sidebar (a folder covers everything in it, and a
+  note can be left out again). Notes go out as their last added version, with only the files they
+  link to.
 - **Self-hosting**: the renderer is [canopy](https://github.com/iyulab/canopy), a separate MIT
   tool — `npx @iyulab/canopy build <folder> <out-dir>` produces a static site you can host
   anywhere.
