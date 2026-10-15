@@ -56,14 +56,21 @@
     );
   }
 
+  /**
+   * Why the last action asked for from the dialog did not happen. Said beside its button, so the
+   * rest of the dialog stays and the person can try again; cleared when they do.
+   */
+  let actionFailure = $state<FriendlyError | null>(null);
+
   /** The person chose to publish everything: recorded as a choice (the sidebar learns of it too), then shown again. */
   async function chooseWholeFolder() {
     choosing = true;
+    actionFailure = null;
     try {
       await publishScope.choose(root, true);
       load();
     } catch (e) {
-      failure = friendlyError(e);
+      actionFailure = friendlyError(e);
     } finally {
       choosing = false;
     }
@@ -76,17 +83,18 @@
     if (!preview || adding) return;
     const paths = preview.neverRecorded.map((rel) => joinPath(root, rel));
     adding = true;
+    actionFailure = null;
     try {
       // A version of what is on disk is only the right one once the open note's edits are there.
       if (!(await settleOpenNote())) {
-        failure = friendlyError("The open note's changes are not saved yet, so no version was added.");
+        actionFailure = friendlyError("The open note's changes are not saved yet, so no version was added.");
         return;
       }
       await commitNotes(root, paths, versionName("", paths));
       onadded();
       load();
     } catch (e) {
-      failure = friendlyError(e);
+      actionFailure = friendlyError(e);
     } finally {
       adding = false;
     }
@@ -138,6 +146,9 @@
         disabled={choosing}
         data-testid="publish-confirm-choose-all">Publish the whole notes folder</button
       >
+      {#if actionFailure}
+        <p class="failure" role="alert" data-testid="publish-confirm-action-error">{actionFailure.summary}</p>
+      {/if}
     {:else}
       <p class="summary" data-testid="publish-confirm-summary">
         {publishSummary(preview.notes.length, preview.files.length, destination)}
@@ -157,6 +168,9 @@
             disabled={adding}
             data-testid="publish-confirm-add-versions">Add a version of these notes</button
           >
+          {#if actionFailure}
+            <p class="failure" role="alert" data-testid="publish-confirm-action-error">{actionFailure.summary}</p>
+          {/if}
         </div>
       {/if}
       {#each [[missingLine(preview.missing), "missing"], [tooLargeLine(preview.tooLarge), "too-large"], [unpublishedLinksLine(preview.unpublishedLinks), "unpublished-links"], [withheldLine(preview.withheld), "withheld"]] as [line, id] (id)}
