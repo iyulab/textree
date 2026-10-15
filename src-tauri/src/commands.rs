@@ -898,6 +898,8 @@ pub fn promote_node(root: String, path: String) -> Result<String, String> {
     // Resolved first: promoting replaces the file this names.
     let from_rel = rel_to_root(root_p, Path::new(&path)).ok();
     let dir = crate::fs_ops::promote_leaf(root_p, Path::new(&path)).map_err(|e| e.to_string())?;
+    // The folder is new: it has no choice of its own (the note's own choice is carried below).
+    forget_choices_at(root_p, &dir);
     // The note did not disappear, it went one level down and took its history with it.
     if let (Some(from), Some(to)) = (from_rel, folder_note_rel(root_p, &dir)) {
         record_moves(root_p, &[(from, to)]);
@@ -1175,6 +1177,11 @@ pub fn adopt_node(root: String, path: String, leaf: String) -> Result<String, St
 
     let p = crate::fs_ops::adopt_into_leaf(root_p, Path::new(&path), leaf_p)
         .map_err(|e| e.to_string())?;
+    // The folder the promotion made is new: it has no choice of its own. Cleared before the moves
+    // are carried, so the choices they bring in are kept.
+    if let Some(dir) = p.parent() {
+        forget_choices_at(root_p, dir);
+    }
 
     // Adopting is a promotion followed by a move, and both have to be carried over.
     let mut pairs = Vec::new();
@@ -3401,6 +3408,35 @@ mod tests {
         restore_deleted(root.clone(), "gone/n.md".into()).unwrap();
         let left = publish_choices(root).unwrap();
         assert!(left.is_empty(), "each came into existence with no choice: {left:?}");
+    }
+
+    #[test]
+    fn gate_l2_8_a_folder_made_by_promoting_a_note_has_no_choice_of_its_own() {
+        use crate::publish_scope::Choice;
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path().to_string_lossy().to_string();
+        let foo = record_note(tmp.path(), "foo.md", "# Foo");
+        let bar = record_note(tmp.path(), "bar.md", "# Bar");
+        let src = record_note(tmp.path(), "src.md", "# Src");
+        // Left behind by folders of the same names removed outside the app.
+        set_publish_choice(root.clone(), "foo".into(), Some(true)).unwrap();
+        set_publish_choice(root.clone(), "bar".into(), Some(true)).unwrap();
+        set_publish_choice(root.clone(), "foo.md".into(), Some(false)).unwrap();
+        set_publish_choice(root.clone(), "src.md".into(), Some(false)).unwrap();
+
+        promote_node(root.clone(), foo).unwrap();
+        adopt_node(root.clone(), src, bar).unwrap();
+        let mut got = publish_choices(root.clone()).unwrap();
+        got.sort_by(|a, b| a.path.cmp(&b.path));
+        assert_eq!(
+            got,
+            vec![
+                Choice { path: "bar/src.md".into(), include: false },
+                Choice { path: "foo/foo.md".into(), include: false },
+            ]
+        );
+        assert!(!crate::publish_scope::is_included("foo/Untitled.md", &got));
+        assert!(!crate::publish_scope::is_included("bar/bar.md", &got));
     }
 
     #[test]
