@@ -12,9 +12,9 @@
  *   - npm: the production-dependency closure, whose code is bundled into the web assets.
  *   - The publishing renderer, a bundled helper: the Node.js runtime it runs on and the npm
  *     closure installed from canopy-sidecar/package-lock.json.
- *   - The local AI helper, a bundled self-contained .NET program: the .NET runtime and every NuGet
- *     package that contributes runtime or native assets, read from the host's restored graph (so
- *     `dotnet restore src-host/TextreeHost.slnx` has to have run) and the packages' own nuspecs.
+ *   - The local AI helper, a bundled self-contained .NET program: the .NET runtime packs and every
+ *     NuGet package that contributes runtime or native assets, read from the helper's graph as it is
+ *     published (restored first, with its runtime identifier) and the packages' own nuspecs.
  *
  * Beside the table it writes THIRD-PARTY-LICENSES.txt, the license texts themselves: most of these
  * licenses make keeping the text, copyright line included, the condition of redistribution, so a
@@ -58,8 +58,9 @@ const PINNED_TEXTS = join(ROOT, "scripts", "notice-texts");
 const PRELUDE = join(ROOT, "scripts", "third-party-notices-prelude.md");
 const RENDERER_LOCK = join(ROOT, "canopy-sidecar", "package-lock.json");
 const RENDERER_ASSEMBLY = join(ROOT, "scripts", "assemble-canopy-sidecar.ps1");
-const HOST_ASSETS = join(ROOT, "src-host", "src", "Textree.Host", "obj", "project.assets.json");
-const HOST_PROPS = join(ROOT, "src-host", "Directory.Build.props");
+// The helper ships self-contained for this runtime, so its .NET runtime packs are part of what ships.
+const HOST_PROJECT = join(ROOT, "src-host", "src", "Textree.Host", "Textree.Host.csproj");
+const HOST_PUBLISH = { RuntimeIdentifier: "win-x64", SelfContained: true };
 
 /**
  * License expressions that are compatible with this application's GPL-3.0-only license: the
@@ -79,13 +80,6 @@ function rendererNodeVersion() {
   return m[1];
 }
 
-/** The .NET major the host is built for (net10.0 → 10). */
-function hostDotnetMajor() {
-  const m = readFileSync(HOST_PROPS, "utf8").match(/<TargetFramework>net(\d+)\.\d+<\/TargetFramework>/);
-  if (!m) throw new Error("could not read the host's target framework from src-host/Directory.Build.props");
-  return m[1];
-}
-
 const rust = cargoPackages({ cwd: join(ROOT, "src-tauri"), target: TARGET });
 const npm = npmPackages({ lock: join(ROOT, "package-lock.json"), installedAt: ROOT });
 // The renderer's closure comes from its committed lock file; its license texts from the assembled
@@ -100,14 +94,9 @@ if (canopy.verdict !== "pinned") {
 }
 const renderer = npmPackages({ lock: RENDERER_LOCK, installedAt: CANOPY_STAGE });
 const node = rendererNodeVersion();
-const host = (() => {
-  try {
-    return nugetPackages({ assets: HOST_ASSETS });
-  } catch {
-    throw new Error("the host's dependency graph is missing — run `dotnet restore src-host/TextreeHost.slnx` first");
-  }
-})();
-const dotnet = hostDotnetMajor();
+// Restores the helper as it is published before reading its graph, so the notices name the versions
+// the pins say, runtime packs included.
+const host = nugetPackages({ project: HOST_PROJECT, properties: HOST_PUBLISH });
 
 const needsReview = unaccepted([...rust, ...npm, ...renderer, ...host], COMPATIBLE);
 if (needsReview.length) {
@@ -148,10 +137,9 @@ const body = [
   "",
   "## Local AI helper",
   "",
-  "The helper that indexes notes and runs local models is a self-contained .NET program.",
-  "",
-  `- **.NET ${dotnet} runtime** — MIT — https://github.com/dotnet/runtime. Its own third-party`,
-  "  notices: https://github.com/dotnet/runtime/blob/main/THIRD-PARTY-NOTICES.TXT",
+  "The helper that indexes notes and runs local models is a self-contained .NET program: the .NET",
+  "runtime ships inside it, as the runtime packs listed below, whose own third-party notices are",
+  "reproduced in THIRD-PARTY-LICENSES.txt with the rest.",
   "",
   `The ${host.length} NuGet packages below put code into the helper (runtime or native assets).`,
   "",

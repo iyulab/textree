@@ -23,8 +23,8 @@
     "e2e:run": "node scripts/e2e-run.mjs",
     "notices": "node scripts/generate-third-party-notices.mjs",
     "notices:check": "node scripts/generate-third-party-notices.mjs --check",
-    "tokens:check": "node scripts/check-forbidden-tokens.mjs",
-    "pins:check": "node scripts/canopy-stage.mjs && tauri-kit-dev pin-drift --props src-host/Directory.Packages.props --assets src-host/src/Textree.Host/obj/project.assets.json --publisher iyulab --waivers scripts/pin-drift-waivers.json",
+    "tokens:check": "tauri-kit-dev public-text --config scripts/public-text.config.mjs",
+    "pins:check": "node scripts/canopy-stage.mjs && tauri-kit-dev pin-drift --props src-host/Directory.Packages.props --project src-host/src/Textree.Host/Textree.Host.csproj --properties \"RuntimeIdentifier=win-x64;SelfContained=true\" --publisher iyulab --waivers scripts/pin-drift-waivers.json",
     "host:smoke": "node scripts/host-smoke.mjs",
     "gate": "tauri-kit-dev gate --config scripts/gate.config.mjs",
     "tauri": "tauri"
@@ -48,7 +48,7 @@
     "katex": "0.18.9"
   },
   "devDependencies": {
-    "@iyulab/tauri-kit-dev": "^0.2.0",
+    "@iyulab/tauri-kit-dev": "^0.9.0",
     "@playwright/test": "^1.60.0",
     "@sveltejs/adapter-static": "^3.0.6",
     "@sveltejs/kit": "^2.9.0",

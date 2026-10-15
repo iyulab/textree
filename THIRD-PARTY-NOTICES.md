@@ -627,12 +627,11 @@ The 137 packages below are the renderer's production-dependency closure.
 
 ## Local AI helper
 
-The helper that indexes notes and runs local models is a self-contained .NET program.
+The helper that indexes notes and runs local models is a self-contained .NET program: the .NET
+runtime ships inside it, as the runtime packs listed below, whose own third-party notices are
+reproduced in THIRD-PARTY-LICENSES.txt with the rest.
 
-- **.NET 10 runtime** — MIT — https://github.com/dotnet/runtime. Its own third-party
-  notices: https://github.com/dotnet/runtime/blob/main/THIRD-PARTY-NOTICES.TXT
-
-The 71 NuGet packages below put code into the helper (runtime or native assets).
+The 73 NuGet packages below put code into the helper (runtime or native assets).
 
 | Component | Version | License | Upstream |
 | --- | --- | --- | --- |
@@ -675,6 +674,7 @@ The 71 NuGet packages below put code into the helper (runtime or native assets).
 | `LMSupply.Reranker` | 0.121.0 | MIT | https://github.com/iyulab/lm-supply |
 | `LMSupply.Text.Core` | 0.121.0 | MIT | https://github.com/iyulab/lm-supply |
 | `Markdig` | 1.3.2 | BSD-2-Clause | https://github.com/xoofx/markdig |
+| `Microsoft.AspNetCore.App.Runtime.win-x64` | 10.0.13 | MIT | https://github.com/dotnet/dotnet |
 | `Microsoft.Data.Sqlite.Core` | 10.0.13 | MIT | https://github.com/dotnet/dotnet |
 | `Microsoft.EntityFrameworkCore` | 10.0.13 | MIT | https://github.com/dotnet/dotnet |
 | `Microsoft.EntityFrameworkCore.Abstractions` | 10.0.13 | MIT | https://github.com/dotnet/dotnet |
@@ -685,6 +685,7 @@ The 71 NuGet packages below put code into the helper (runtime or native assets).
 | `Microsoft.ML.OnnxRuntime.Managed` | 1.30.0 | MIT | https://github.com/microsoft/onnxruntime |
 | `Microsoft.ML.OnnxRuntimeGenAI.Managed` | 0.17.1 | MIT | https://github.com/microsoft/onnxruntime-genai/ |
 | `Microsoft.ML.Tokenizers` | 2.0.0 | MIT | https://github.com/dotnet/machinelearning |
+| `Microsoft.NETCore.App.Runtime.win-x64` | 10.0.13 | MIT | https://github.com/dotnet/dotnet |
 | `Newtonsoft.Json` | 13.0.3 | MIT | https://github.com/JamesNK/Newtonsoft.Json |
 | `NTextCat` | 0.3.65 | MIT | https://github.com/ivanakcheurov/ntextcat |
 | `OpenAI` | 2.14.0 | MIT | https://github.com/openai/openai-dotnet |

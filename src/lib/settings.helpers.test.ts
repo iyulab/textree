@@ -128,6 +128,7 @@ describe("isValidByoUrlForPreset", () => {
 describe("isValidByoUrl", () => {
   it("accepts http/https URLs", () => {
     expect(isValidByoUrl("http://localhost:11434")).toBe(true);
+    // public-text: allow — a server on a private network is exactly what this accepts
     expect(isValidByoUrl("https://gpustack.internal:8080")).toBe(true);
   });
   it("rejects empty or malformed input", () => {

@@ -71,6 +71,7 @@ public class TelemetryEmitterTests
         var handler = new CapturingHandler();
         Enabled(handler).ReportError(
             TelemetryEventName.ModelDownloadFailed, "embedder", ModelPhase.Downloading,
+            // public-text: allow — the test is that a home folder never leaves the machine
             new IOException($"No such file or directory: C:/Users/{Environment.UserName}/.cache/café.onnx"));
 
         var envelope = await SentEnvelope(handler);
@@ -140,7 +141,7 @@ public class TelemetryEmitterTests
         var handler = new CapturingHandler();
         Enabled(handler, logger).ReportError(
             TelemetryEventName.ModelDownloadFailed, "embedder", ModelPhase.Downloading,
-            // forbidden-tokens: allow absolute-path — the test is that a home folder never leaves the machine
+            // public-text: allow — the test is that a home folder never leaves the machine
             new IOException("No such file: C:/Users/alice/café.onnx"));
         await handler.Sent.WaitAsync(TimeSpan.FromSeconds(5));
 

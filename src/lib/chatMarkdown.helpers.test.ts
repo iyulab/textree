@@ -118,7 +118,7 @@ describe('parseChatMarkdown', () => {
   });
 
   it('preserves a bare email as literal text', () => {
-    // forbidden-tokens: allow personal - the address shape is the subject; it reaches no one
+    // public-text: allow — the address shape is the subject; it reaches no one
     const line = 'email a@b.com';
     expect(parseChatMarkdown(line)).toEqual([
       { type: 'paragraph', children: [{ type: 'text', value: line }] },

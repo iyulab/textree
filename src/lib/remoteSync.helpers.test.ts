@@ -21,7 +21,7 @@ describe("repositoryLabel", () => {
   });
 
   it("drops a sign-in part, a trailing slash and a query", () => {
-    // forbidden-tokens: allow personal — the sign-in part of a URL, not anyone's mail address
+    // public-text: allow — the sign-in part of a URL, not anyone's mail address
     expect(repositoryLabel("https://me@gitlab.com/group/sub/notes.git/?x=1")).toBe(
       "gitlab.com/group/sub/notes",
     );

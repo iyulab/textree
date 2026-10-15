@@ -26,7 +26,7 @@ describe("displayName / containingFolder", () => {
 
   it("keeps names that are not written in the Latin alphabet", () => {
     // A name outside the Latin alphabet, so that the slice is by character and not by byte.
-    // forbidden-tokens: allow non-latin - the multi-byte name is what this case is about
+    // public-text: allow — the multi-byte name is what this case is about
     expect(displayName("sub/메모.md")).toBe("메모");
   });
 });
