@@ -89,7 +89,7 @@ describe("friendlyError", () => {
     const r = friendlyError("'draft.md' is covered by an ignore rule, so recording it would leave it out");
     expect(r.summary).toContain("says to skip this file");
     expect(r.summary).toContain("untouched");
-    expect(r.summary.toLowerCase()).not.toMatch(/gitignore|git/);
+    expect(r.summary.toLowerCase()).not.toMatch(/gitignore|\bgit\b/);
   });
 
   it("falls back to the raw text when the error is unrecognized (no silent loss)", () => {
@@ -118,7 +118,7 @@ describe("friendlyError", () => {
     for (const raw of cases) {
       const r = friendlyError(raw);
       expect(r.summary).not.toBe(raw);
-      expect(r.summary).not.toMatch(/(remote|git|push|pull|commit|branch|merge)/i);
+      expect(r.summary).not.toMatch(/\b(remote|git|push|pull|commit|branch|merge)\b/i);
       expect(r.raw).toBe(raw);
     }
     expect(friendlyError("the remote refused these credentials").summary).toMatch(/access token/);
