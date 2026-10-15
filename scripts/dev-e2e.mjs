@@ -57,6 +57,12 @@ const DEFAULT_VAULT_BASE = join(tmpdir(), "textree-e2e-default-vault");
  */
 const PERSONAL_BASE = join(tmpdir(), "textree-e2e-personal");
 
+/**
+ * Where the AI helper keeps its search indexes during a run. Without this it uses the user's own
+ * application data, and a host-present run leaves an index there for every temporary vault.
+ */
+const INDEX_ROOT = join(tmpdir(), "textree-e2e-index");
+
 /** Keep in sync with E2E_WATCHDOG_INTERVAL_MS in e2e/helpers.ts. */
 const WATCHDOG_INTERVAL_MS = "3000";
 
@@ -80,6 +86,7 @@ rmSync(OPEN_STALL_FLAG, { force: true });
 for (const [owned, expected] of [
   [DEFAULT_VAULT_BASE, join(tmpdir(), "textree-e2e-default-vault")],
   [PERSONAL_BASE, join(tmpdir(), "textree-e2e-personal")],
+  [INDEX_ROOT, join(tmpdir(), "textree-e2e-index")],
 ]) {
   if (resolve(owned) !== resolve(expected)) {
     throw new Error(`Refusing to reset an unexpected path: ${owned}`);
@@ -181,6 +188,7 @@ const child = spawn(`tauri dev --config "${GENERATED_OVERLAY}"`, {
     ...process.env,
     TEXTREE_DEFAULT_VAULT_BASE: DEFAULT_VAULT_BASE,
     TEXTREE_PERSONAL_BASE: PERSONAL_BASE,
+    TEXTREE_INDEX_ROOT: INDEX_ROOT,
     // The watchdog probes every few seconds instead of every five minutes, so a spec can watch
     // whole probe cycles (e2e/lifetime.spec.ts) — and every other spec runs with it probing.
     TEXTREE_WATCHDOG_INTERVAL_MS: WATCHDOG_INTERVAL_MS,

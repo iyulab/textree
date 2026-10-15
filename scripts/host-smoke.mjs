@@ -63,8 +63,10 @@ ${output.slice(-3000)}`);
 // The host serves only whoever started it: a fresh token, as the app hands one to each run.
 const token = randomBytes(32).toString("base64url");
 const auth = { authorization: `Bearer ${token}` };
-const hostEnv = { ...process.env, TEXTREE_HOST_TOKEN: token };
 const vault = mkdtempSync(join(tmpdir(), "textree-host-smoke-"));
+// The index goes next to the vault and is removed with it, not into the user's application data.
+const indexRoot = mkdtempSync(join(tmpdir(), "textree-host-smoke-index-"));
+const hostEnv = { ...process.env, TEXTREE_HOST_TOKEN: token, TEXTREE_INDEX_ROOT: indexRoot };
 writeFileSync(join(vault, "garden.md"), "# Garden\nTomatoes need full sun and regular watering.\n");
 writeFileSync(join(vault, "taxes.md"), "# Taxes\nFile the quarterly estimate before the deadline.\n");
 const slashed = vault.replace(/\\/g, "/");
@@ -176,6 +178,7 @@ try {
     else host.kill();
   }
   rmSync(vault, { recursive: true, force: true });
+  rmSync(indexRoot, { recursive: true, force: true });
   // A host whose process has exited can still hold its output pipes open while the OS finishes
   // tearing it down; waiting on them would keep the smoke from ever returning its verdict.
   host.stdout.destroy();
