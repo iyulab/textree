@@ -122,7 +122,15 @@ pub fn assemble(prepared: &VaultRepo, root: &Path) -> Result<Assembly, String> {
                     } else {
                         format!("{}.md", name.to_ascii_lowercase())
                     };
-                    by_name.get(file_name(&key)).and_then(|c| (c.len() == 1).then(|| c[0].clone()))
+                    // A name with a folder part names that folder: the recorded path is it, or
+                    // ends in it after a `/`.
+                    let fits = |p: &&String| {
+                        let p = p.to_ascii_lowercase();
+                        !key.contains('/') || p == key || p.ends_with(&format!("/{key}"))
+                    };
+                    let found: Vec<&String> =
+                        by_name.get(file_name(&key)).map_or(Vec::new(), |c| c.iter().filter(fits).collect());
+                    (found.len() == 1).then(|| found[0].clone())
                 }
             };
             let Some(rel) = resolved else { continue };
@@ -302,6 +310,22 @@ mod tests {
         assert_eq!(paths(&a), vec!["blog/post.md", "img/chart.png", "photos/photo.jpg"]);
         assert_eq!(a.missing, vec!["blog/gone.png"]);
         assert_eq!(a.unpublished_links, vec!["diary.md"]);
+    }
+
+    #[test]
+    fn gate_l2_8_a_wiki_link_with_a_folder_part_matches_only_that_folder() {
+        let shipped = |recorded: &str, link: &str| {
+            let tmp = tempfile::tempdir().unwrap();
+            record(tmp.path(), recorded, b"jpg");
+            record(tmp.path(), "a.md", format!("![[{link}]]").as_bytes());
+            choose(tmp.path(), "a.md", true);
+            paths(&assembled(tmp.path())).contains(&recorded)
+        };
+        assert!(!shipped("private/photo.jpg", "public/photo.jpg"), "another folder");
+        assert!(!shipped("notpublic/photo.jpg", "public/photo.jpg"), "a folder that only ends the same");
+        assert!(shipped("public/photo.jpg", "Public/Photo.jpg"), "the folder named");
+        assert!(shipped("x/public/photo.jpg", "public/photo.jpg"), "the folder named, deeper down");
+        assert!(shipped("deep/photo.jpg", "photo.jpg"), "no folder part: the only one of that name");
     }
 
     #[test]
