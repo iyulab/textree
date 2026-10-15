@@ -1237,6 +1237,24 @@ fn stage(vault: &Path) -> Result<Staged, String> {
     Ok(Staged { _dir: dir, source, assembly, prepared })
 }
 
+/// The renderer would name the site after the staged folder; name it after the notes folder.
+fn with_default_title(
+    mut options: crate::publish::PublishOptions,
+    vault: &Path,
+) -> crate::publish::PublishOptions {
+    if options.site_title.is_none() {
+        options.site_title = vault.file_name().map(|n| n.to_string_lossy().into_owned());
+    }
+    options
+}
+
+/// Records the published state; the publish already went out, so a failure here is only logged.
+fn record_after_publish(staged: &Staged) {
+    if let Err(e) = crate::publish_assembly::record_published(&staged.prepared, &staged.assembly) {
+        log::warn!("could not record the published state: {e}");
+    }
+}
+
 /// Publishes the open vault to a static site by spawning canopy. Read-only over the source:
 /// the vault `.md` is never mutated; only `out_dir` (which must lie outside the vault) is written.
 pub fn publish_site(
@@ -1249,6 +1267,7 @@ pub fn publish_site(
     let out = PathBuf::from(&out_dir);
     let canopy = resolve_canopy(&app)?;
     let staged = stage(&vault)?;
+    let options = with_default_title(options, &vault);
     let result = crate::publish::run_publish(
         &vault,
         &staged.source,
@@ -1257,7 +1276,7 @@ pub fn publish_site(
         &canopy,
         crate::publish::RENDER_TIMEOUT,
     )?;
-    crate::publish_assembly::record_published(&staged.prepared, &staged.assembly)?;
+    record_after_publish(&staged);
     log::info!("publish_site: {} ({} pages)", result.out_dir, result.page_count);
     Ok(result)
 }
@@ -1275,9 +1294,10 @@ pub fn publish_to_cloud(
     let token = crate::publish_secret::get_token()
         .ok_or("no publish token is set — add one in Settings")?;
     let staged = stage(&vault)?;
+    let options = with_default_title(options, &vault);
     let result =
         crate::cloud_publish::publish_to_cloud(&vault, &staged.source, &options, &canopy, &token)?;
-    crate::publish_assembly::record_published(&staged.prepared, &staged.assembly)?;
+    record_after_publish(&staged);
     log::info!("publish_to_cloud: {} ({} pages)", result.url, result.page_count);
     Ok(result)
 }
@@ -2513,6 +2533,19 @@ pub fn restore_deleted(root: String, rel: String) -> Result<RestoredNote, String
 mod tests {
     use super::*;
     use tempfile::TempDir;
+
+    #[test]
+    fn a_site_without_a_title_is_named_after_the_notes_folder() {
+        let none = crate::publish::PublishOptions { site_title: None, tokens_css: Some("x".into()) };
+        let named = with_default_title(none, Path::new("/some/where/My Notes"));
+        assert_eq!(named.site_title.as_deref(), Some("My Notes"));
+        assert_eq!(named.tokens_css.as_deref(), Some("x"));
+        let given = crate::publish::PublishOptions { site_title: Some("Mine".into()), tokens_css: None };
+        assert_eq!(
+            with_default_title(given, Path::new("/some/where/My Notes")).site_title.as_deref(),
+            Some("Mine")
+        );
+    }
 
     #[test]
     fn stale_base_allows_a_save_while_the_note_still_holds_its_base() {
