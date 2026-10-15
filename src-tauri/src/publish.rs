@@ -157,6 +157,33 @@ pub fn outgoing(vault: &Path) -> io::Result<Outgoing> {
     Ok(found)
 }
 
+/// The notes (`.md`, any case) in the folder, relative and `/`-separated, sorted. Folders whose
+/// name starts with `.` and `node_modules` are not entered; files whose name starts with `.` and
+/// anything that is not a regular file are passed over.
+#[allow(dead_code)] // consumed by the publish wiring in a later step
+pub fn outgoing_notes(vault: &Path) -> io::Result<Vec<String>> {
+    fn walk(dir: &Path, rel: &str, found: &mut Vec<String>) -> io::Result<()> {
+        for entry in std::fs::read_dir(dir)? {
+            let entry = entry?;
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let child = if rel.is_empty() { name.clone() } else { format!("{rel}/{name}") };
+            let kind = entry.file_type()?;
+            if kind.is_dir() {
+                if !name.starts_with('.') && name != "node_modules" {
+                    walk(&entry.path(), &child, found)?;
+                }
+            } else if kind.is_file() && !name.starts_with('.') && is_note(&name) {
+                found.push(child);
+            }
+        }
+        Ok(())
+    }
+    let mut found = Vec::new();
+    walk(vault, "", &mut found)?;
+    found.sort();
+    Ok(found)
+}
+
 /// Whether the renderer turns this file into a page.
 fn is_note(name: &str) -> bool {
     let bytes = name.as_bytes();

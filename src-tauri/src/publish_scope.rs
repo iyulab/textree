@@ -21,7 +21,7 @@ fn covers(choice: &str, rel: &str) -> bool {
 }
 
 /// Whether `rel` goes out under `choices`.
-#[allow(dead_code)] // consumed by the publish wiring in later steps
+#[allow(dead_code)] // consumed by the publish wiring in a later step
 pub fn is_included(rel: &str, choices: &[Choice]) -> bool {
     choices
         .iter()
