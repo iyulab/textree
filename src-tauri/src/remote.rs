@@ -711,15 +711,18 @@ struct Place {
 }
 
 /// The place of `path` (relative to the repository), or `None` when it cannot be a note's. What
-/// arrives comes from outside this machine: a path that climbs out, names a drive or a stream,
-/// or reaches into a hidden folder — the repository's own storage among them — is never a place
-/// to write. The app records none of those, so refusing them refuses nothing it sent.
+/// arrives comes from outside this machine: a path that climbs out, names a drive or a stream, or
+/// reaches into the repository's own storage is never a place to write. The app records none of
+/// those, so refusing them refuses nothing it sent. A hidden folder is not refused for being
+/// hidden: a notes folder may itself sit in one, and every note it holds is named through it.
+/// These are repository paths, possibly of another folder, so the vault's own path checks do not
+/// apply to them.
 fn place_of(vault: &VaultRepo, root: &Path, path: &str) -> Option<Place> {
     let plain = !path.is_empty()
         && Path::new(path).components().all(|c| match c {
             Component::Normal(name) => name
                 .to_str()
-                .is_some_and(|name| !name.starts_with('.') && !name.contains(':')),
+                .is_some_and(|name| !name.contains(':') && !is_repository_storage(name)),
             _ => false,
         });
     if !plain {
@@ -738,6 +741,13 @@ fn place_of(vault: &VaultRepo, root: &Path, path: &str) -> Option<Place> {
         top,
         here: false,
     })
+}
+
+/// Whether a name reaches the repository's storage folder — also by the spellings Windows takes
+/// for it: trailing dots and spaces dropped, any case, or its short name.
+fn is_repository_storage(name: &str) -> bool {
+    let name = name.trim_end_matches(['.', ' ']).to_ascii_lowercase();
+    name == ".git" || name.starts_with("git~")
 }
 
 fn movement(step: &Step) -> Option<(Option<Oid>, Oid)> {
@@ -1695,14 +1705,36 @@ More.
     fn a_path_that_cannot_be_a_note_is_never_written() {
         let (_tmp, remote, a, b) = setup();
         a.record("plan.md", "# Plan");
-        a.record(".hidden/n.md", "# Hidden");
+        // Recorded without a file: on Windows the path names a stream of another file.
+        let (author, committer) = commit_identities(a.repo()).unwrap();
+        commit_paths(
+            a.repo(),
+            NOTES_REF,
+            &[(PathBuf::from("notes/n.md:hidden"), b"stream".to_vec())],
+            "version",
+            &author,
+            &committer,
+            WhenUnchanged::Skip,
+        )
+        .unwrap();
         a.send(&remote);
 
         let plan = b.take(&remote);
         let refused = apply(&b.vault, &b.root, &plan, &NoteLocks::default()).unwrap_err();
-        assert!(refused.contains(".hidden/n.md"), "{refused}");
+        assert!(refused.contains("n.md:hidden"), "{refused}");
         assert!(b.read("plan.md").is_none(), "nothing was taken in");
-        assert!(b.read(".hidden/n.md").is_none());
         assert!(id_of(b.repo(), NOTES_REF).is_none());
+    }
+
+    #[test]
+    fn only_the_repository_storage_and_paths_that_leave_are_refused() {
+        let (_tmp, _remote, _a, b) = setup();
+        for refused in ["../x.md", ".git/config", "a/.Git/x", "a/.git. /x", "GIT~1/x", "a:b.md", ""] {
+            assert!(place_of(&b.vault, &b.root, refused).is_none(), "{refused}");
+        }
+        // A notes folder may sit in a hidden folder; its notes are named through it.
+        for kept in [".notes/a.md", "a/.hidden.md", "git/x.md", ".github-notes/a.md"] {
+            assert!(place_of(&b.vault, &b.root, kept).is_some(), "{kept}");
+        }
     }
 }
