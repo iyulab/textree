@@ -406,7 +406,11 @@ pub fn exchange(
         fetch(repo, url, credentials.clone()).map_err(err)?;
         crate::publish_scope::take_in(repo).map_err(err)?;
         let plan = plan(vault, root).map_err(err)?;
-        match apply(vault, root, &plan, locks)? {
+        let taken = apply(vault, root, &plan, locks)?;
+        // Decided on what was taken in, not on what this folder names: a note waiting in another
+        // folder of the same repository holds the send back just the same.
+        let waits = matches!(taken, Taken::Held { .. } | Taken::KeptBack { .. });
+        match taken {
             Taken::Done { written, removed } => {
                 out.received.extend(in_folder(vault, written));
                 out.removed.extend(in_folder(vault, removed));
@@ -429,7 +433,7 @@ pub fn exchange(
             }
             Sent::NothingToSend => break,
             // Held or kept back: sending waits until a person has decided.
-            Sent::Behind if !out.held.is_empty() || !out.kept_back.is_empty() => break,
+            Sent::Behind if waits => break,
             Sent::Behind => continue,
         }
     }
@@ -1211,6 +1215,34 @@ mod tests {
         let held = exchange_on(&b);
         assert_eq!(held.held, vec!["sub/manual.md".to_string()]);
         assert_eq!(held.alternatives, vec!["sub/manual.md".to_string()]);
+    }
+
+    #[test]
+    fn a_note_waiting_in_another_folder_of_the_repository_holds_the_send_without_being_named() {
+        let tmp = tempfile::tempdir().unwrap();
+        let remote = tmp.path().join("remote.git");
+        Repository::init_bare(&remote).unwrap();
+        for name in ["a", "b"] {
+            Repository::init(tmp.path().join(name)).unwrap();
+        }
+        let a = Machine::new(tmp.path().join("a").join("x"));
+        let (bx, by) = (
+            Machine::new(tmp.path().join("b").join("x")),
+            Machine::new(tmp.path().join("b").join("y")),
+        );
+        let url = Machine::url_of(&remote);
+        a.record("n.md", "# N\n");
+        a.send(&remote);
+        exchange(&bx.vault, &bx.root, &url, None, &NoteLocks::default()).unwrap();
+
+        a.record("n.md", "# N\n\nFrom a.\n");
+        a.send(&remote);
+        bx.record("n.md", "# N\n\nFrom b.\n");
+        // Exchanged from the other folder: the note that waits is not one this folder can name,
+        // and nothing is sent until it is decided.
+        let out = exchange(&by.vault, &by.root, &url, None, &NoteLocks::default()).unwrap();
+        assert!(out.held.is_empty() && out.alternatives.is_empty(), "{out:?}");
+        assert!(!out.sent);
     }
 
     #[test]
