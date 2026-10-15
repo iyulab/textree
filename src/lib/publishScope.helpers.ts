@@ -24,7 +24,7 @@ function covers(choice: string, rel: string): boolean {
 export function isIncluded(rel: string, choices: PublishChoice[]): boolean {
   let nearest: PublishChoice | null = null;
   for (const choice of choices) {
-    if (covers(choice.path, rel) && (nearest === null || choice.path.length > nearest.path.length)) {
+    if (covers(choice.path, rel) && (nearest === null || choice.path.length >= nearest.path.length)) {
       nearest = choice;
     }
   }

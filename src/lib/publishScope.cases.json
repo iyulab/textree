@@ -9,5 +9,6 @@
   { "why": "case does not matter", "choices": [{ "path": "Blog", "include": true }], "rel": "blog/A.md", "included": true },
   { "why": "the folder itself", "choices": [{ "path": "blog", "include": true }], "rel": "blog", "included": true },
   { "why": "a folder name with an accent", "choices": [{ "path": "café", "include": true }], "rel": "café/a.md", "included": true },
-  { "why": "an accented prefix is not a folder", "choices": [{ "path": "caf", "include": true }], "rel": "café/a.md", "included": false }
+  { "why": "an accented prefix is not a folder", "choices": [{ "path": "caf", "include": true }], "rel": "café/a.md", "included": false },
+  { "why": "of two equal choices the later one wins", "choices": [{ "path": "Blog", "include": true }, { "path": "blog", "include": false }], "rel": "blog/a.md", "included": false }
 ]
