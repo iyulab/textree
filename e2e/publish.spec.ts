@@ -70,12 +70,16 @@ test("publish renders the vault to an auto-theming static site, source untouched
       .poll(() => existsSync(join(out, "note.html")), { timeout: 15000 })
       .toBe(true);
 
-    // The injected tokens were rewritten for the OS preference (auto theme on the static site):
-    // the dark block now lives inside a prefers-color-scheme media query wrapping :root.
-    const tokens = readFileSync(join(out, "tokens.css"), "utf8");
+    // The app's tokens ride along as a stylesheet linked after the renderer's own, so they win, and
+    // their dark values apply both by the system's preference (unless the reader switched the page
+    // to light) and on a page switched to dark with its toggle.
+    const tokens = readFileSync(join(out, "assets", "stylesheet-1.css"), "utf8");
     const mediaAt = tokens.indexOf("@media (prefers-color-scheme: dark)");
     expect(mediaAt).toBeGreaterThanOrEqual(0);
-    expect(tokens.slice(mediaAt)).toContain(":root {");
+    expect(tokens.slice(mediaAt)).toContain(':root:not([data-theme="light"]) {');
+    expect(tokens).toContain('[data-theme="dark"]');
+    const html = readFileSync(join(out, "note.html"), "utf8");
+    expect(html.indexOf("assets/stylesheet-1.css")).toBeGreaterThan(html.indexOf("tokens.css"));
 
     // Publishing is read-only over the source — the note (CRLF included) is byte-unchanged.
     expect(readVaultFile(vault, "note.md")).toBe(source);

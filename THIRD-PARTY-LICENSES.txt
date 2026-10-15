@@ -16030,7 +16030,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 
 ------------------------------------------------------------------------------
-@iyulab/canopy 0.16.0
+@iyulab/canopy 0.28.4
 License: MIT
 Upstream: https://github.com/iyulab/canopy
 

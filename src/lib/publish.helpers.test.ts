@@ -1,16 +1,15 @@
 import { expect, test } from "vitest";
 import { toPublishTokens } from "./publish.helpers";
 
-test("wraps the dark-theme block in a prefers-color-scheme media query on :root", () => {
+test("states the dark values for a system that prefers dark and for a page switched to dark", () => {
   const css = ':root {\n  --c: white;\n}\n[data-theme="dark"] {\n  --c: black;\n}\n';
   const out = toPublishTokens(css);
   // Light :root is the default and untouched.
   expect(out).toContain(":root {\n  --c: white;\n}");
-  // The dark vars now apply via the OS preference (no JS toggle exists on a static site).
-  expect(out).toContain("@media (prefers-color-scheme: dark)");
-  expect(out).toContain("--c: black;");
-  // The attribute selector is gone — nothing sets data-theme on the published page.
-  expect(out).not.toContain('[data-theme="dark"]');
+  // The system's preference applies unless the reader switched the page to light.
+  expect(out).toContain('@media (prefers-color-scheme: dark) {\n  :root:not([data-theme="light"]) {\n  --c: black;\n}');
+  // A page switched to dark with its toggle gets them too.
+  expect(out).toContain('[data-theme="dark"] {\n  --c: black;\n}');
 });
 
 test("leaves css without a dark-theme block unchanged", () => {
@@ -33,5 +32,5 @@ test("keeps the light :root and the dark vars distinct after the rewrite", () =>
   const out = toPublishTokens(css);
   expect(out).toContain("--bg:#fff");
   expect(out).toContain("--bg:#111");
-  expect(out).not.toContain("data-theme");
+  expect(out.split("--bg:#111").length - 1).toBe(2);
 });

@@ -19,7 +19,8 @@ pub struct PublishOptions {
     /// Overrides the site title (defaults to the vault folder name inside canopy).
     pub site_title: Option<String>,
     /// The host's design-token CSS **content** (not a path). Written to a temp file and passed to
-    /// canopy via `--tokens-css` so the published site matches the app. None = canopy built-in tokens.
+    /// canopy via `--stylesheet` (linked after canopy's own, so its values win) so the published
+    /// site matches the app. None = canopy built-in tokens.
     pub tokens_css: Option<String>,
 }
 
@@ -175,10 +176,34 @@ fn canopy_args(
         args.push(title.into());
     }
     if let Some(path) = tokens_css {
-        args.push("--tokens-css".into());
+        args.push("--stylesheet".into());
         args.push(path.into());
     }
     args
+}
+
+/// What the renderer prints for a published file whose path it writes itself (a page's `.html`,
+/// its stylesheets): `the vault publishes "<file>", where canopy writes …`.
+const COLLISION_MARK: &str = "the vault publishes \"";
+
+/// The files the build refused because the renderer writes to their paths itself, named in plain
+/// words — or None when the build failed for another reason.
+fn collision_message(stderr: &str) -> Option<String> {
+    let files: Vec<&str> = stderr
+        .lines()
+        .filter_map(|line| {
+            let rest = &line[line.find(COLLISION_MARK)? + COLLISION_MARK.len()..];
+            Some(&rest[..rest.find('"')?])
+        })
+        .collect();
+    if files.is_empty() {
+        return None;
+    }
+    let named = files.iter().map(|f| format!("\"{f}\"")).collect::<Vec<_>>().join(", ");
+    Some(format!(
+        "The published site needs these names for its own files: {named}. Rename or move {}, then publish again.",
+        if files.len() == 1 { "it" } else { "them" }
+    ))
 }
 
 /// Counts `.html` files in the output tree — the number of published pages reported back.
@@ -260,7 +285,7 @@ pub fn run_publish(
 ) -> Result<PublishResult, String> {
     validate_publish_paths(vault, out)?;
 
-    // Materialize the injected tokens CSS to a temp file (canopy reads it via --tokens-css). Held in
+    // Materialize the injected tokens CSS to a temp file (canopy reads it via --stylesheet). Held in
     // scope until canopy finishes so the path stays valid; auto-removed on drop.
     let tokens_file = match &options.tokens_css {
         Some(css) => {
@@ -283,6 +308,9 @@ pub fn run_publish(
     let output = spawn_bounded(cmd, timeout)?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
+        if let Some(message) = collision_message(&stderr) {
+            return Err(message);
+        }
         return Err(format!("canopy failed: {}", stderr.trim()));
     }
 
@@ -296,6 +324,19 @@ pub fn run_publish(
 mod tests {
     use super::*;
     use tempfile::TempDir;
+
+    #[test]
+    fn a_file_on_a_path_the_renderer_writes_is_named_in_plain_words() {
+        let stderr = "canopy: the vault publishes \"tokens.css\", where canopy writes its design tokens — rename or move it\n\
+                      canopy: the vault publishes \"guide.html\", where canopy writes the page rendered from guide.md — rename or move it\n";
+        assert_eq!(
+            collision_message(stderr).as_deref(),
+            Some("The published site needs these names for its own files: \"tokens.css\", \"guide.html\". Rename or move them, then publish again.")
+        );
+        let one = "canopy: the vault publishes \"styles.css\", where canopy writes its stylesheet — rename or move it";
+        assert!(collision_message(one).unwrap().ends_with("Rename or move it, then publish again."));
+        assert_eq!(collision_message("canopy: something else went wrong"), None);
+    }
 
     /// The render wait must be bounded: a child that outlives the deadline is killed and the call
     /// returns promptly with a timeout error — it must NOT wait for the child to finish on its own.
@@ -452,7 +493,7 @@ mod tests {
             Some(Path::new("t.css")),
         );
         let expected: Vec<OsString> =
-            ["build", "v", "o", "--site-title", "Site", "--tokens-css", "t.css"]
+            ["build", "v", "o", "--site-title", "Site", "--stylesheet", "t.css"]
                 .iter()
                 .map(OsString::from)
                 .collect();
