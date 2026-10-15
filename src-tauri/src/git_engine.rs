@@ -823,6 +823,36 @@ pub fn commit_tree_on(
     })
 }
 
+/// Rewrites what `reference` holds: `build` gets the tree at the current tip (None when the
+/// reference does not exist yet) and returns the tree to record, or None to leave it as it is.
+/// Reading and recording happen in one turn, so a writer that moved the reference meanwhile
+/// makes this attempt start over from what that writer recorded.
+pub fn update_tree_on(
+    repo: &Repository,
+    reference: &str,
+    message: &str,
+    author: &Signature<'_>,
+    committer: &Signature<'_>,
+    mut build: impl FnMut(Option<&Tree<'_>>) -> Result<Option<Oid>, git2::Error>,
+) -> Result<Option<Oid>, git2::Error> {
+    advancing(|| {
+        let tip = repo.find_reference(reference).ok().and_then(|r| r.target());
+        let tip_commit = tip.map(|t| repo.find_commit(t)).transpose()?;
+        let current = tip_commit.as_ref().map(git2::Commit::tree).transpose()?;
+        let Some(next) = build(current.as_ref())? else {
+            return Ok(None);
+        };
+        if current.as_ref().is_some_and(|t| t.id() == next) {
+            return Ok(None);
+        }
+        let tree = repo.find_tree(next)?;
+        let parents: Vec<&git2::Commit<'_>> = tip_commit.iter().collect();
+        let commit = repo.commit(None, author, committer, message, &tree, &parents)?;
+        advance(repo, reference, commit, tip, message)?;
+        Ok(Some(commit))
+    })
+}
+
 /// Commits a single path. Convenience over [`commit_paths`] for callers with one file and no
 /// separate committer.
 pub fn commit_file(

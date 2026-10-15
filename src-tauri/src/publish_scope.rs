@@ -30,7 +30,7 @@ pub fn is_included(rel: &str, choices: &[Choice]) -> bool {
         .is_some_and(|c| c.include)
 }
 
-use git2::{Oid, Repository};
+use git2::{Repository, Tree};
 use std::path::{Path, PathBuf};
 
 /// Where the choices are recorded. It travels with the notes to a connected remote.
@@ -64,40 +64,49 @@ fn render(choices: &[Choice]) -> String {
         .collect()
 }
 
-/// The choices recorded on `at` (a reference name), `/`-separated and relative to the repository.
-pub fn read(repo: &Repository, at: &str) -> Result<Vec<Choice>, git2::Error> {
-    let Some(tree) = crate::git_engine::tip_tree(repo, at) else {
+fn choices_in(repo: &Repository, tree: Option<&Tree<'_>>) -> Result<Vec<Choice>, git2::Error> {
+    let Some(tree) = tree else {
         return Ok(Vec::new());
     };
-    let Some(id) = crate::git_engine::blob_in_tree(repo, &tree, Path::new(FILE)) else {
+    let Some(id) = crate::git_engine::blob_in_tree(repo, tree, Path::new(FILE)) else {
         return Ok(Vec::new());
     };
     Ok(parse(&String::from_utf8_lossy(repo.find_blob(id)?.content())))
 }
 
-fn write(
+/// The choices recorded on `at` (a reference name), `/`-separated and relative to the repository.
+pub fn read(repo: &Repository, at: &str) -> Result<Vec<Choice>, git2::Error> {
+    choices_in(repo, crate::git_engine::tip_tree(repo, at).as_ref())
+}
+
+/// Reads the choices at the tip, lets `change` alter them, and records the result, all in one
+/// turn: a change made by someone else meanwhile is read again, never overwritten.
+fn update(
     repo: &Repository,
-    choices: &[Choice],
-    also: Option<Oid>,
     message: &str,
+    mut change: impl FnMut(&mut Vec<Choice>) -> bool,
 ) -> Result<(), git2::Error> {
-    let blob = repo.blob(render(choices).as_bytes())?;
-    let tree = crate::git_engine::tree_with_file(repo, None, Path::new(FILE), Some(blob))?;
     let (author, committer) = crate::git_engine::commit_identities(repo)?;
-    crate::git_engine::commit_tree_on(repo, PUBLIC_REF, tree, also, message, &author, &committer)?;
+    crate::git_engine::update_tree_on(repo, PUBLIC_REF, message, &author, &committer, |tree| {
+        let mut choices = choices_in(repo, tree)?;
+        if !change(&mut choices) {
+            return Ok(None);
+        }
+        let blob = repo.blob(render(&choices).as_bytes())?;
+        crate::git_engine::tree_with_file(repo, None, Path::new(FILE), Some(blob)).map(Some)
+    })?;
     Ok(())
 }
 
 /// Records the choice for `rel_in_repo`: include, leave out, or (`None`) follow the folder above.
 pub fn set(repo: &Repository, rel_in_repo: &str, choice: Option<bool>) -> Result<(), git2::Error> {
-    let mut choices: Vec<Choice> = read(repo, PUBLIC_REF)?
-        .into_iter()
-        .filter(|c| !c.path.eq_ignore_ascii_case(rel_in_repo))
-        .collect();
-    if let Some(include) = choice {
-        choices.push(Choice { path: rel_in_repo.to_string(), include });
-    }
-    write(repo, &choices, None, "Publish choice")
+    update(repo, "Publish choice", |choices| {
+        choices.retain(|c| !c.path.eq_ignore_ascii_case(rel_in_repo));
+        if let Some(include) = choice {
+            choices.push(Choice { path: rel_in_repo.to_string(), include });
+        }
+        true
+    })
 }
 
 fn slashed(p: &Path) -> String {
@@ -106,24 +115,22 @@ fn slashed(p: &Path) -> String {
 
 /// Carries the choices of moved notes and folders to where they went.
 pub fn follow_moves(repo: &Repository, moves: &[(PathBuf, PathBuf)]) -> Result<(), git2::Error> {
-    let mut choices = read(repo, PUBLIC_REF)?;
-    let mut changed = false;
-    for (from, to) in moves {
-        let (from, to) = (slashed(from), slashed(to));
-        for c in &mut choices {
-            if c.path.eq_ignore_ascii_case(&from) {
-                c.path = to.clone();
-                changed = true;
-            } else if covers(&from, &c.path) && !from.is_empty() {
-                c.path = format!("{to}{}", &c.path[from.len()..]);
-                changed = true;
+    update(repo, "Publish choice follows a move", |choices| {
+        let mut changed = false;
+        for (from, to) in moves {
+            let (from, to) = (slashed(from), slashed(to));
+            for c in choices.iter_mut() {
+                if c.path.eq_ignore_ascii_case(&from) {
+                    c.path = to.clone();
+                    changed = true;
+                } else if covers(&from, &c.path) && !from.is_empty() {
+                    c.path = format!("{to}{}", &c.path[from.len()..]);
+                    changed = true;
+                }
             }
         }
-    }
-    if changed {
-        write(repo, &choices, None, "Publish choice follows a move")?;
-    }
-    Ok(())
+        changed
+    })
 }
 
 /// The choices as seen from a notes folder at `vault_in_repo` (`""` when it is the repository root).
@@ -205,6 +212,36 @@ mod tests {
         assert_eq!(second.parent_ids().collect::<Vec<_>>(), vec![first]);
         set(&repo, "b.md", Some(true)).unwrap(); // nothing changed
         assert_eq!(repo.refname_to_id(PUBLIC_REF).unwrap(), second.id());
+    }
+
+    #[test]
+    fn a_write_based_on_a_stale_read_cannot_erase_a_newer_choice() {
+        let (_d, repo) = repo();
+        set(&repo, "a.md", Some(true)).unwrap();
+        let (author, committer) = crate::git_engine::commit_identities(&repo).unwrap();
+        let mut first = true;
+        crate::git_engine::update_tree_on(&repo, PUBLIC_REF, "Publish choice", &author, &committer, |tree| {
+            let mut choices = choices_in(&repo, tree)?;
+            if first {
+                first = false;
+                // Someone else records a choice after this attempt has read the tip.
+                let mut theirs = choices.clone();
+                theirs.push(Choice { path: "secret".into(), include: false });
+                let blob = repo.blob(render(&theirs).as_bytes())?;
+                let t = crate::git_engine::tree_with_file(&repo, None, Path::new(FILE), Some(blob))?;
+                let tip = repo.find_commit(repo.refname_to_id(PUBLIC_REF)?)?;
+                let c = repo.commit(None, &author, &committer, "other", &repo.find_tree(t)?, &[&tip])?;
+                repo.reference(PUBLIC_REF, c, true, "other")?;
+            }
+            choices.push(Choice { path: "b.md".into(), include: true });
+            let blob = repo.blob(render(&choices).as_bytes())?;
+            crate::git_engine::tree_with_file(&repo, None, Path::new(FILE), Some(blob)).map(Some)
+        })
+        .unwrap();
+        let got = read(&repo, PUBLIC_REF).unwrap();
+        assert!(got.contains(&Choice { path: "secret".into(), include: false }));
+        assert!(got.contains(&Choice { path: "b.md".into(), include: true }));
+        assert!(got.contains(&Choice { path: "a.md".into(), include: true }));
     }
 
     #[test]
