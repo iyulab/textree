@@ -126,7 +126,7 @@ pub fn outgoing_notes(vault: &Path) -> io::Result<Vec<String>> {
                         log::warn!("publish: skipping unreadable folder {child}: {e}");
                     }
                 }
-            } else if kind.is_file() && !name.starts_with('.') && is_note(&name) {
+            } else if kind.is_file() && !name.starts_with('.') && crate::note_refs::is_note_path(&name) {
                 found.push(child);
             }
         }
@@ -136,12 +136,6 @@ pub fn outgoing_notes(vault: &Path) -> io::Result<Vec<String>> {
     walk(vault, "", &mut found)?;
     found.sort();
     Ok(found)
-}
-
-/// Whether the renderer turns this file into a page.
-fn is_note(name: &str) -> bool {
-    let bytes = name.as_bytes();
-    bytes.len() >= 3 && bytes[bytes.len() - 3..].eq_ignore_ascii_case(b".md")
 }
 
 /// The arguments after the renderer's own prefix: build `vault` into `out`.

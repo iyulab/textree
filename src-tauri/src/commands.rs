@@ -1,5 +1,6 @@
 use crate::host;
 use crate::note_locks::NoteLocks;
+use crate::note_refs::is_note_path;
 use crate::pathsafe::is_within;
 use crate::search::{IndexHandle, IndexState, SearchHit};
 use crate::vault::{self, TreeNode};
@@ -1306,11 +1307,17 @@ fn with_default_title(
     options
 }
 
-/// Records the published state; the publish already went out, so a failure here is only logged.
-fn record_after_publish(staged: &Staged) {
+/// Sends `staged` out with `render`, then records it as the published state — only once it went
+/// out. Recording comes after, so a failure there is only logged.
+fn publish_staged<T>(
+    staged: &Staged,
+    render: impl FnOnce(&Path) -> Result<T, String>,
+) -> Result<T, String> {
+    let result = render(&staged.source)?;
     if let Err(e) = crate::publish_assembly::record_published(&staged.prepared, &staged.assembly) {
         log::warn!("could not record the published state: {e}");
     }
+    Ok(result)
 }
 
 /// Publishes the open vault to a static site by spawning canopy. Read-only over the source:
@@ -1326,15 +1333,16 @@ pub fn publish_site(
     let canopy = resolve_canopy(&app)?;
     let staged = stage(&vault)?;
     let options = with_default_title(options, &vault);
-    let result = crate::publish::run_publish(
-        &vault,
-        &staged.source,
-        &out,
-        &options,
-        &canopy,
-        crate::publish::RENDER_TIMEOUT,
-    )?;
-    record_after_publish(&staged);
+    let result = publish_staged(&staged, |source| {
+        crate::publish::run_publish(
+            &vault,
+            source,
+            &out,
+            &options,
+            &canopy,
+            crate::publish::RENDER_TIMEOUT,
+        )
+    })?;
     log::info!("publish_site: {} ({} pages)", result.out_dir, result.page_count);
     Ok(result)
 }
@@ -1353,9 +1361,9 @@ pub fn publish_to_cloud(
         .ok_or("no publish token is set — add one in Settings")?;
     let staged = stage(&vault)?;
     let options = with_default_title(options, &vault);
-    let result =
-        crate::cloud_publish::publish_to_cloud(&vault, &staged.source, &options, &canopy, &token)?;
-    record_after_publish(&staged);
+    let result = publish_staged(&staged, |source| {
+        crate::cloud_publish::publish_to_cloud(&vault, source, &options, &canopy, &token)
+    })?;
     log::info!("publish_to_cloud: {} ({} pages)", result.url, result.page_count);
     Ok(result)
 }
@@ -1404,10 +1412,14 @@ pub fn set_publish_choice(
     choice: Option<bool>,
 ) -> Result<Vec<crate::publish_scope::Choice>, String> {
     let root_p = Path::new(&root);
-    // Stays inside the folder. The note may be gone by now, so it need not exist.
-    if !rel.is_empty() && crate::pathsafe::rel_within(root_p, &root_p.join(&rel)).is_none() {
-        return Err("path is outside the vault".to_string());
-    }
+    // Stays inside the folder, and is recorded as the folder spells it (`a/./b` is `a/b`). The
+    // note may be gone by now, so it need not exist.
+    let rel = if rel.is_empty() {
+        rel
+    } else {
+        crate::pathsafe::rel_within(root_p, &root_p.join(&rel))
+            .ok_or_else(|| "path is outside the vault".to_string())?
+    };
     let prepared = crate::git_engine::prepare(root_p).map_err(|e| e.message().to_string())?;
     let in_repo = crate::git_engine::slashed(&prepared.path_in_repo(Path::new(&rel)));
     crate::publish_scope::set(prepared.repo(), in_repo.trim_end_matches('/'), choice)
@@ -1535,10 +1547,6 @@ pub fn open_log_dir(app: tauri::AppHandle) -> Result<(), String> {
     log::info!("open_log_dir: {}", dir.display());
     tauri_plugin_opener::open_path(dir.to_string_lossy().as_ref(), None::<&str>)
         .map_err(|e| e.to_string())
-}
-
-fn is_note_path(rel: &str) -> bool {
-    rel.len() >= 3 && rel.as_bytes()[rel.len() - 3..].eq_ignore_ascii_case(b".md")
 }
 
 /// The files `note_rel` links to by path that are inside the folder and on disk — the images and
@@ -3327,6 +3335,17 @@ mod tests {
     }
 
     #[test]
+    fn a_choice_is_recorded_under_the_path_as_the_folder_spells_it() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path().to_string_lossy().to_string();
+        seed_note(tmp.path(), "sub/a.md", "# A");
+        let got = set_publish_choice(root.clone(), "sub/./a.md".into(), Some(true)).unwrap();
+        assert_eq!(got, vec![crate::publish_scope::Choice { path: "sub/a.md".into(), include: true }]);
+        let got = set_publish_choice(root, "sub/gone/".into(), Some(false)).unwrap();
+        assert!(got.contains(&crate::publish_scope::Choice { path: "sub/gone".into(), include: false }), "{got:?}");
+    }
+
+    #[test]
     fn gate_l2_8_a_folder_renamed_onto_a_deleted_ones_place_keeps_its_own_choice() {
         // Both alphabetical orders: the moved folder sorting before the deleted one, and after.
         for (deleted, moved) in [("public", "drafts"), ("alpha", "zeta")] {
@@ -3446,6 +3465,33 @@ mod tests {
         assert_eq!(p.files, vec!["small.png"]);
         assert_eq!(p.too_large, vec!["big.bin"]);
         assert!(p.missing.is_empty() && p.unpublished_links.is_empty(), "{p:?}");
+    }
+
+    #[test]
+    fn publishing_records_the_published_state_only_once_it_went_out() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path().to_string_lossy().to_string();
+        record_note(tmp.path(), "a.md", "# A");
+        set_publish_choice(root, "".into(), Some(true)).unwrap();
+        let published = |p: &crate::git_engine::VaultRepo| {
+            p.repo().refname_to_id(crate::publish_assembly::PUBLISHED_REF).ok()
+        };
+
+        let staged = stage(tmp.path()).unwrap();
+        let failed: Result<(), String> = publish_staged(&staged, |_| Err("the host refused".into()));
+        assert!(failed.is_err());
+        assert_eq!(published(&staged.prepared), None, "nothing went out, so nothing is recorded");
+
+        let mut rendered_from = None;
+        publish_staged(&staged, |source| {
+            rendered_from = Some(std::fs::read_to_string(source.join("a.md")).unwrap());
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(rendered_from.as_deref(), Some("# A"));
+        let tip = published(&staged.prepared).expect("recorded after it went out");
+        let tree = staged.prepared.repo().find_commit(tip).unwrap().tree().unwrap();
+        assert!(tree.get_name("a.md").is_some());
     }
 
     #[test]

@@ -1442,7 +1442,6 @@ More.
             repo,
             crate::publish_assembly::PUBLISHED_REF,
             tree,
-            None,
             "p",
             &sig,
             &sig,

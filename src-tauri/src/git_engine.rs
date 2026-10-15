@@ -790,14 +790,13 @@ pub(crate) fn advance(
     .map(drop)
 }
 
-/// Points `reference` at a new revision holding exactly `tree`. Its parents are the reference's
-/// current tip, if there is one, and `also`, if given (a revision joining another side). When the
-/// tip already holds `tree` and nothing is joined, nothing is written and `None` comes back.
+/// Points `reference` at a new revision holding exactly `tree`, whose parent is the reference's
+/// current tip, if there is one. When the tip already holds `tree`, nothing is written and `None`
+/// comes back.
 pub fn commit_tree_on(
     repo: &Repository,
     reference: &str,
     tree: Oid,
-    also: Option<Oid>,
     message: &str,
     author: &Signature<'_>,
     committer: &Signature<'_>,
@@ -807,13 +806,10 @@ pub fn commit_tree_on(
         let mut parents = Vec::new();
         if let Some(tip) = tip {
             let commit = repo.find_commit(tip)?;
-            if commit.tree_id() == tree && also.is_none() {
+            if commit.tree_id() == tree {
                 return Ok(None);
             }
             parents.push(commit);
-        }
-        if let Some(other) = also {
-            parents.push(repo.find_commit(other)?);
         }
         let tree = repo.find_tree(tree)?;
         let parent_refs: Vec<&git2::Commit<'_>> = parents.iter().collect();

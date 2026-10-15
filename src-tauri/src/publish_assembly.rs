@@ -2,7 +2,7 @@
 //! as they are in the folder. Only chosen notes go out, with only the files they link to.
 
 use crate::git_engine::{self, VaultRepo, NOTES_REF};
-use crate::note_refs::{self, Target};
+use crate::note_refs::{self, is_note_path, Target};
 use crate::publish_scope;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -31,10 +31,6 @@ pub struct Assembly {
 /// The largest file a note brings along when a version of it is added, and that is published:
 /// 50 MB, under what common site hosts accept for a single file. A note itself is never held to it.
 pub const MAX_LINKED_FILE_BYTES: u64 = 50 * 1024 * 1024;
-
-fn is_note(rel: &str) -> bool {
-    rel.len() >= 3 && rel.as_bytes()[rel.len() - 3..].eq_ignore_ascii_case(b".md")
-}
 
 fn hidden(rel: &str) -> bool {
     rel.split('/').any(|s| s.starts_with('.'))
@@ -115,7 +111,7 @@ fn assemble_capped(prepared: &VaultRepo, root: &Path, cap: u64) -> Result<Assemb
     };
 
     let chosen_notes: Vec<&String> =
-        recorded.iter().filter(|p| is_note(p) && publish_scope::is_included(p, &choices)).collect();
+        recorded.iter().filter(|p| is_note_path(p) && publish_scope::is_included(p, &choices)).collect();
     let mut assets = BTreeSet::new();
     let mut missing = BTreeSet::new();
     let mut linked_notes = BTreeSet::new();
@@ -155,7 +151,7 @@ fn assemble_capped(prepared: &VaultRepo, root: &Path, cap: u64) -> Result<Assemb
                 continue;
             }
             let found = canon.get(&rel.to_ascii_lowercase()).map(|p| (*p).clone());
-            if is_note(&rel) {
+            if is_note_path(&rel) {
                 if let Some(rec) = found {
                     if !publish_scope::is_included(&rec, &choices) {
                         linked_notes.insert(rec);
@@ -194,7 +190,11 @@ fn assemble_capped(prepared: &VaultRepo, root: &Path, cap: u64) -> Result<Assemb
     out.too_large = too_large.into_iter().collect();
     out.never_recorded = notes_on_disk(root)?
         .into_iter()
-        .filter(|n| !hidden(n) && publish_scope::is_included(n, &choices) && !recorded.contains(n))
+        .filter(|n| {
+            !hidden(n)
+                && publish_scope::is_included(n, &choices)
+                && !canon.contains_key(&n.to_ascii_lowercase())
+        })
         .collect();
     Ok(out)
 }
@@ -202,9 +202,14 @@ fn assemble_capped(prepared: &VaultRepo, root: &Path, cap: u64) -> Result<Assemb
 /// Where the state last published from this machine is kept. It is never sent to a remote.
 pub const PUBLISHED_REF: &str = "refs/textree/published";
 
-/// Writes the assembled files under `dir`, creating folders as needed.
+/// Writes the assembled files under `dir`, creating folders as needed. A path that is not made of
+/// plain names (one read from a history someone else wrote could climb out of `dir`) is skipped.
 pub fn write_out(assembly: &Assembly, dir: &Path) -> std::io::Result<()> {
     for (rel, bytes) in &assembly.files {
+        if !rel.split('/').all(crate::pathsafe::is_valid_name) {
+            log::warn!("write_out: skipped a path that is not made of plain names: {rel:?}");
+            continue;
+        }
         let mut path = dir.to_path_buf();
         path.extend(rel.split('/'));
         if let Some(parent) = path.parent() {
@@ -234,7 +239,7 @@ pub fn record_published(prepared: &VaultRepo, assembly: &Assembly) -> Result<(),
     }
     let Some(tree) = tree else { return Ok(()) };
     let (author, committer) = git_engine::commit_identities(repo).map_err(err)?;
-    git_engine::commit_tree_on(repo, PUBLISHED_REF, tree, None, "Published", &author, &committer)
+    git_engine::commit_tree_on(repo, PUBLISHED_REF, tree, "Published", &author, &committer)
         .map_err(err)?;
     Ok(())
 }
@@ -316,6 +321,19 @@ mod tests {
         let a = assembled(tmp.path());
         assert_eq!(a.notes, vec!["a.md"]);
         assert_eq!(a.never_recorded, vec!["fresh.md"]);
+    }
+
+    #[test]
+    #[cfg(windows)] // a folder that does not tell names apart by case
+    fn a_note_recorded_under_another_case_is_not_named_as_never_recorded() {
+        let tmp = tempfile::tempdir().unwrap();
+        record(tmp.path(), "Note.md", b"# Note");
+        // Renamed outside the app, only the case changed (the history still spells it the old way).
+        std::fs::rename(tmp.path().join("Note.md"), tmp.path().join("tmp-name")).unwrap();
+        std::fs::rename(tmp.path().join("tmp-name"), tmp.path().join("note.md")).unwrap();
+        choose(tmp.path(), "", true);
+        let a = assembled(tmp.path());
+        assert!(a.never_recorded.is_empty(), "{:?}", a.never_recorded);
     }
 
     #[test]
@@ -483,6 +501,29 @@ mod tests {
         assert_eq!(std::fs::read(out.path().join("blog/post.md")).unwrap(), b"![c](img.png)");
         assert_eq!(std::fs::read(out.path().join("blog/img.png")).unwrap(), b"png");
         assert!(!out.path().join("private.md").exists());
+    }
+
+    #[test]
+    fn writing_out_skips_a_path_that_is_not_made_of_plain_names() {
+        let tmp = tempfile::tempdir().unwrap();
+        let out = tmp.path().join("inner").join("site");
+        let crafted = ["../evil.md", "a/../../evil2.md", "C:/x.md", "a\\..\\..\\evil3.md", "", "/abs.md", "a//b.md", "./a.md"];
+        let mut files: Vec<(String, Vec<u8>)> = crafted.iter().map(|p| (p.to_string(), b"x".to_vec())).collect();
+        files.push(("ok/fine.md".into(), b"fine".to_vec()));
+        write_out(&Assembly { files, ..Assembly::default() }, &out).unwrap();
+        assert_eq!(std::fs::read(out.join("ok/fine.md")).unwrap(), b"fine");
+        let mut written = Vec::new();
+        let mut stack = vec![tmp.path().to_path_buf()];
+        while let Some(dir) = stack.pop() {
+            for entry in std::fs::read_dir(&dir).unwrap().flatten() {
+                if entry.path().is_dir() {
+                    stack.push(entry.path());
+                } else {
+                    written.push(entry.path());
+                }
+            }
+        }
+        assert_eq!(written, vec![out.join("ok").join("fine.md")]);
     }
 
     #[test]

@@ -8,6 +8,12 @@ pub enum Target {
     Wiki(String),
 }
 
+/// Whether a name or `/`-separated path is a note: it ends in `.md`, in any case.
+pub(crate) fn is_note_path(rel: &str) -> bool {
+    let bytes = rel.as_bytes();
+    bytes.len() >= 3 && bytes[bytes.len() - 3..].eq_ignore_ascii_case(b".md")
+}
+
 /// Removes fenced blocks and inline code, keeping line structure.
 fn without_code(markdown: &str) -> String {
     let mut out = String::with_capacity(markdown.len());
