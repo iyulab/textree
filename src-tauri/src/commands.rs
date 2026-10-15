@@ -808,10 +808,40 @@ pub fn open_vault(root: String, app: AppHandle, ticket: u64) -> Result<Vec<TreeN
 
 // ── Structural edits (M4) — delegated to fs_ops ────────────────────────────────
 
+/// Drops the publish choices left at or under vault-relative `rels` — by a note that went away,
+/// for one that is just made there: a path that comes into existence follows its folder until
+/// someone chooses otherwise (only a move carries a choice along).
+///
+/// Best-effort, like [`record_moves`]: the change on disk already happened. No repository is
+/// created — a folder whose notes were never recorded has no choices to drop.
+fn forget_choices(root: &Path, rels: &[String]) {
+    let prepared = match crate::git_engine::open_existing(root) {
+        Ok(Some(p)) => p,
+        Ok(None) => return,
+        Err(e) => {
+            log::warn!("forget_choices: cannot open the repository: {}", e.message());
+            return;
+        }
+    };
+    let paths: Vec<PathBuf> = rels.iter().map(|r| prepared.path_in_repo(Path::new(r))).collect();
+    if let Err(e) = crate::publish_scope::vacate(prepared.repo(), &paths) {
+        log::warn!("forget_choices: publish choices not cleared: {}", e.message());
+    }
+}
+
+/// [`forget_choices`] for something just made at `created`.
+fn forget_choices_at(root: &Path, created: &Path) {
+    match rel_to_root(root, created) {
+        Ok(rel) => forget_choices(root, &[rel]),
+        Err(e) => log::warn!("forget_choices: {}: {e}", created.display()),
+    }
+}
+
 pub fn create_note(root: String, parent: String, name: String) -> Result<String, String> {
     let path = crate::fs_ops::create_note(Path::new(&root), Path::new(&parent), &name)
         .map_err(|e| e.to_string())?;
     log::info!("create_note: {}", path.display());
+    forget_choices_at(Path::new(&root), &path);
     Ok(path.display().to_string())
 }
 
@@ -819,6 +849,7 @@ pub fn create_untitled_note(root: String, parent: String) -> Result<String, Stri
     let path = crate::fs_ops::create_untitled_note(Path::new(&root), Path::new(&parent))
         .map_err(|e| e.to_string())?;
     log::info!("create_untitled_note: {}", path.display());
+    forget_choices_at(Path::new(&root), &path);
     Ok(path.display().to_string())
 }
 
@@ -836,13 +867,20 @@ pub fn create_note_with_content(
     )
     .map_err(|e| e.to_string())?;
     log::info!("create_note_with_content: {}", path.display());
+    forget_choices_at(Path::new(&root), &path);
     Ok(path.display().to_string())
 }
 
 pub fn rename_note_unique(root: String, path: String, name: String) -> Result<String, String> {
-    let p = crate::fs_ops::rename_note_unique(Path::new(&root), Path::new(&path), &name)
+    let root_p = Path::new(&root);
+    let from_rel = rel_to_root(root_p, Path::new(&path)).ok();
+    let p = crate::fs_ops::rename_note_unique(root_p, Path::new(&path), &name)
         .map_err(|e| e.to_string())?;
     log::info!("rename_note_unique: {} -> {}", path, p.display());
+    // A rename like any other: what was recorded and chosen for the note goes with it.
+    if let (Some(from), Ok(to)) = (from_rel, rel_to_root(root_p, &p)) {
+        record_moves(root_p, &[(from, to)]);
+    }
     Ok(p.display().to_string())
 }
 
@@ -850,6 +888,7 @@ pub fn create_folder(root: String, parent: String, name: String) -> Result<Strin
     let dir = crate::fs_ops::create_folder(Path::new(&root), Path::new(&parent), &name)
         .map_err(|e| e.to_string())?;
     log::info!("create_folder: {}", dir.display());
+    forget_choices_at(Path::new(&root), &dir);
     Ok(dir.display().to_string())
 }
 
@@ -999,6 +1038,8 @@ pub fn delete_node(root: String, path: String) -> Result<(), String> {
     {
         return Err("that is not a note".into());
     }
+    // Resolved while it is still there to resolve.
+    let rel = rel_to_root(root_p, target).ok();
     keep_state_of(root_p, target)?;
     if target.is_dir() {
         crate::fs_ops::patiently(|| std::fs::remove_dir_all(target)).map_err(|e| e.to_string())?;
@@ -1006,6 +1047,10 @@ pub fn delete_node(root: String, path: String) -> Result<(), String> {
         crate::fs_ops::patiently(|| std::fs::remove_file(target)).map_err(|e| e.to_string())?;
     }
     log::info!("delete_node: {}", path);
+    // Its publish choices go with it: something made at the same place later is not it.
+    if let Some(rel) = rel {
+        forget_choices(root_p, &[rel]);
+    }
     Ok(())
 }
 
@@ -1155,8 +1200,21 @@ pub fn save_attachment(
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(data.as_bytes())
         .map_err(|e| format!("base64 decode failed: {e}"))?;
-    crate::fs_ops::save_attachment(Path::new(&root), Path::new(&note), &bytes, &ext)
-        .map_err(|e| e.to_string())
+    let root_p = Path::new(&root);
+    let folder = Path::new(&note).parent().map(|p| p.join("assets"));
+    let fresh_folder = folder.as_ref().is_some_and(|f| !f.exists());
+    let link = crate::fs_ops::save_attachment(root_p, Path::new(&note), &bytes, &ext)
+        .map_err(|e| e.to_string())?;
+    // What was made: the file, or the folder too when it was made for it.
+    if let Some(folder) = folder {
+        let made = if fresh_folder {
+            folder
+        } else {
+            folder.join(link.rsplit('/').next().unwrap_or(&link))
+        };
+        forget_choices_at(root_p, &made);
+    }
+    Ok(link)
 }
 
 /// Off the main thread: the index is held for the whole of a first-open rebuild, and a search made
@@ -2515,6 +2573,14 @@ pub fn restore_deleted(root: String, rel: String) -> Result<RestoredNote, String
         .map_err(|e| e.message().to_string())?
         .ok_or_else(|| format!("'{rel}' is not in this folder's history"))?;
 
+    // The outermost folder bringing it back will make, if its folder went away too.
+    let mut made_folder = None;
+    let mut above = root_p.join(&rel).parent().map(Path::to_path_buf);
+    while let Some(dir) = above.filter(|d| !d.exists() && d.starts_with(root_p) && d != root_p) {
+        above = dir.parent().map(Path::to_path_buf);
+        made_folder = Some(dir);
+    }
+
     // Found free, then taken before it is written (a sync client, another program): the next free
     // place instead — bringing something back never costs what is there.
     let first = crate::fs_ops::place_restored(root_p, &rel).map_err(|e| e.to_string())?;
@@ -2527,7 +2593,13 @@ pub fn restore_deleted(root: String, rel: String) -> Result<RestoredNote, String
     })
     .map_err(|e| e.to_string())?;
     log::info!("restore_deleted: {} (as deleted: {as_deleted})", dest.display());
-    Ok(RestoredNote { rel: rel_to_root(root_p, &dest)?, as_deleted })
+    let landed = rel_to_root(root_p, &dest)?;
+    // Back as a note made there now: it follows its folder's publish setting, as does a folder
+    // made to hold it.
+    let mut made = vec![landed.clone()];
+    made.extend(made_folder.and_then(|d| rel_to_root(root_p, &d).ok()));
+    forget_choices(root_p, &made);
+    Ok(RestoredNote { rel: landed, as_deleted })
 }
 
 #[cfg(test)]
@@ -3241,6 +3313,87 @@ mod tests {
         after.sort();
         assert_eq!(after, before);
         assert!(set_publish_choice(root, "../x.md".into(), Some(true)).is_err());
+    }
+
+    #[test]
+    fn gate_l2_8_a_folder_renamed_onto_a_deleted_ones_place_keeps_its_own_choice() {
+        // Both alphabetical orders: the moved folder sorting before the deleted one, and after.
+        for (deleted, moved) in [("public", "drafts"), ("alpha", "zeta")] {
+            let tmp = TempDir::new().unwrap();
+            let root = tmp.path().to_string_lossy().to_string();
+            record_note(tmp.path(), &format!("{deleted}/post.md"), "# Post");
+            record_note(tmp.path(), &format!("{moved}/diary.md"), "# Diary");
+            set_publish_choice(root.clone(), deleted.into(), Some(true)).unwrap();
+            set_publish_choice(root.clone(), moved.into(), Some(false)).unwrap();
+            delete_node(root.clone(), tmp.path().join(deleted).to_string_lossy().to_string()).unwrap();
+            rename_node(root.clone(), tmp.path().join(moved).to_string_lossy().to_string(), deleted.into())
+                .unwrap();
+            assert_eq!(
+                publish_choices(root.clone()).unwrap(),
+                vec![crate::publish_scope::Choice { path: deleted.into(), include: false }],
+                "{moved} -> {deleted}"
+            );
+            let preview = publish_preview(root).unwrap();
+            assert!(preview.notes.is_empty(), "{moved} -> {deleted}: {preview:?}");
+        }
+    }
+
+    #[test]
+    fn gate_l2_8_a_note_made_where_a_deleted_one_was_follows_its_folder() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path().to_string_lossy().to_string();
+        let note = record_note(tmp.path(), "a.md", "# A");
+        set_publish_choice(root.clone(), "a.md".into(), Some(true)).unwrap();
+        delete_node(root.clone(), note).unwrap();
+        assert!(publish_choices(root.clone()).unwrap().is_empty(), "the choice went with the note");
+        create_note(root.clone(), root.clone(), "a".into()).unwrap();
+        record_note(tmp.path(), "a.md", "# Another A");
+        assert!(publish_choices(root.clone()).unwrap().is_empty());
+        assert!(publish_preview(root).unwrap().nothing_chosen);
+    }
+
+    #[test]
+    fn something_made_drops_a_choice_left_where_it_now_is() {
+        use base64::Engine;
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path().to_string_lossy().to_string();
+        let note = record_note(tmp.path(), "a.md", "# A");
+        // Left behind by things removed outside the app.
+        for rel in ["b.md", "box", "assets", "gone", "gone/n.md"] {
+            set_publish_choice(root.clone(), rel.into(), Some(true)).unwrap();
+        }
+        create_note_with_content(root.clone(), root.clone(), "b".into(), "# B".into()).unwrap();
+        create_folder(root.clone(), root.clone(), "box".into()).unwrap();
+        let png = base64::engine::general_purpose::STANDARD.encode(b"png");
+        save_attachment(root.clone(), note, png, "png".into()).unwrap();
+        record_note(tmp.path(), "gone/n.md", "# N");
+        std::fs::remove_dir_all(tmp.path().join("gone")).unwrap();
+        restore_deleted(root.clone(), "gone/n.md".into()).unwrap();
+        let left = publish_choices(root).unwrap();
+        assert!(left.is_empty(), "each came into existence with no choice: {left:?}");
+    }
+
+    #[test]
+    fn gate_l2_8_making_a_note_in_a_folder_with_no_history_starts_none() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path().to_string_lossy().to_string();
+        create_note(root.clone(), root.clone(), "a".into()).unwrap();
+        create_folder(root.clone(), root, "box".into()).unwrap();
+        assert!(!tmp.path().join(".git").exists());
+    }
+
+    #[test]
+    fn a_note_named_from_its_title_keeps_its_choice() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path().to_string_lossy().to_string();
+        let note = record_note(tmp.path(), "Untitled.md", "# Trip");
+        set_publish_choice(root.clone(), "Untitled.md".into(), Some(true)).unwrap();
+        rename_note_unique(root.clone(), note, "Trip".into()).unwrap();
+        assert_eq!(
+            publish_choices(root.clone()).unwrap(),
+            vec![crate::publish_scope::Choice { path: "Trip.md".into(), include: true }]
+        );
+        assert_eq!(publish_preview(root).unwrap().notes, vec!["Trip.md"]);
     }
 
     #[test]

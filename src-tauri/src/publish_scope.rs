@@ -113,21 +113,51 @@ fn slashed(p: &Path) -> String {
     crate::git_engine::slashed(p)
 }
 
-/// Carries the choices of moved notes and folders to where they went.
+/// Drops every choice at or under `path`; says whether any went. The whole folder (`""`) is
+/// never a place something comes into existence, so it drops nothing.
+fn drop_under(choices: &mut Vec<Choice>, path: &str) -> bool {
+    if path.is_empty() {
+        return false;
+    }
+    let before = choices.len();
+    choices.retain(|c| !covers(path, &c.path));
+    choices.len() != before
+}
+
+/// Drops every choice at or under each of `paths`. A path that comes into existence has no
+/// explicit choice of its own (only a move carries one), so this runs for what went away and for
+/// what was just made: what is there next follows its folder. Writes nothing when nothing
+/// matches, and makes no repository.
+pub fn vacate(repo: &Repository, paths: &[PathBuf]) -> Result<(), git2::Error> {
+    if repo.refname_to_id(PUBLIC_REF).is_err() {
+        return Ok(());
+    }
+    update(repo, "Publish choice cleared", |choices| {
+        paths.iter().fold(false, |changed, p| drop_under(choices, &slashed(p)) | changed)
+    })
+}
+
+/// Carries the choices of moved notes and folders to where they went. A choice left at the
+/// destination by something that went away is dropped first, so the carried one is the only one.
 pub fn follow_moves(repo: &Repository, moves: &[(PathBuf, PathBuf)]) -> Result<(), git2::Error> {
     update(repo, "Publish choice follows a move", |choices| {
         let mut changed = false;
         for (from, to) in moves {
             let (from, to) = (slashed(from), slashed(to));
-            for c in choices.iter_mut() {
-                if c.path.eq_ignore_ascii_case(&from) {
-                    c.path = to.clone();
-                    changed = true;
-                } else if covers(&from, &c.path) && !from.is_empty() {
-                    c.path = format!("{to}{}", &c.path[from.len()..]);
-                    changed = true;
-                }
+            if from.is_empty() || to.is_empty() {
+                continue;
             }
+            // Taken out before the destination is cleared: a rename that only changes case has a
+            // destination covering its source.
+            let (mut moving, mut rest): (Vec<Choice>, Vec<Choice>) =
+                std::mem::take(choices).into_iter().partition(|c| covers(&from, &c.path));
+            changed |= drop_under(&mut rest, &to);
+            for c in &mut moving {
+                c.path = format!("{to}{}", &c.path[from.len()..]);
+                changed = true;
+            }
+            rest.append(&mut moving);
+            *choices = rest;
         }
         changed
     })
@@ -451,6 +481,67 @@ mod tests {
         assert!(!is_included("blog/x.md", &got));
         assert!(is_included("notes/b.md", &got));
         assert!(!is_included("notes/a.md", &got));
+    }
+
+    #[test]
+    fn gate_l2_8_a_moved_choice_wins_over_one_left_at_the_destination() {
+        // Both alphabetical orders: the stale choice sorting before the moved one, and after.
+        for (stale, moved) in [("public", "drafts"), ("alpha", "zeta")] {
+            let (_d, repo) = repo();
+            set(&repo, stale, Some(true)).unwrap();
+            set(&repo, moved, Some(false)).unwrap();
+            follow_moves(&repo, &[(PathBuf::from(moved), PathBuf::from(stale))]).unwrap();
+            let got = read(&repo, PUBLIC_REF).unwrap();
+            assert!(!is_included(&format!("{stale}/diary.md"), &got), "{moved} -> {stale}: {got:?}");
+            assert_eq!(got, vec![Choice { path: stale.into(), include: false }]);
+        }
+    }
+
+    #[test]
+    fn gate_l2_8_a_folder_moved_onto_stale_choices_below_carries_only_its_own() {
+        let (_d, repo) = repo();
+        set(&repo, "target/a.md", Some(true)).unwrap();
+        set(&repo, "target/sub", Some(true)).unwrap();
+        set(&repo, "targets/keep.md", Some(true)).unwrap();
+        set(&repo, "src", Some(false)).unwrap();
+        follow_moves(&repo, &[(PathBuf::from("src"), PathBuf::from("target"))]).unwrap();
+        let got = read(&repo, PUBLIC_REF).unwrap();
+        assert!(!is_included("target/a.md", &got));
+        assert!(!is_included("target/sub/x.md", &got));
+        assert!(is_included("targets/keep.md", &got), "a name that only starts the same is not under it");
+    }
+
+    #[test]
+    fn a_rename_that_only_changes_case_keeps_the_choice() {
+        let (_d, repo) = repo();
+        set(&repo, "Blog", Some(true)).unwrap();
+        set(&repo, "Blog/draft.md", Some(false)).unwrap();
+        follow_moves(&repo, &[(PathBuf::from("Blog"), PathBuf::from("blog"))]).unwrap();
+        let got = read(&repo, PUBLIC_REF).unwrap();
+        assert!(is_included("blog/post.md", &got));
+        assert!(!is_included("blog/draft.md", &got));
+        assert_eq!(got.len(), 2, "{got:?}");
+    }
+
+    #[test]
+    fn vacating_drops_choices_at_and_under_a_path_only() {
+        let (_d, repo) = repo();
+        set(&repo, "a", Some(true)).unwrap();
+        set(&repo, "A/x.md", Some(false)).unwrap();
+        set(&repo, "ab", Some(true)).unwrap();
+        vacate(&repo, &[PathBuf::from("a")]).unwrap();
+        assert_eq!(read(&repo, PUBLIC_REF).unwrap(), vec![Choice { path: "ab".into(), include: true }]);
+    }
+
+    #[test]
+    fn gate_l2_8_vacating_nothing_writes_nothing() {
+        let (_d, repo) = repo();
+        vacate(&repo, &[PathBuf::from("a.md")]).unwrap();
+        assert!(repo.refname_to_id(PUBLIC_REF).is_err(), "no choices yet: nothing is started");
+        set(&repo, "a.md", Some(true)).unwrap();
+        let tip = repo.refname_to_id(PUBLIC_REF).unwrap();
+        vacate(&repo, &[PathBuf::from("b.md"), PathBuf::from("a.md/x"), PathBuf::from("")]).unwrap();
+        assert_eq!(repo.refname_to_id(PUBLIC_REF).unwrap(), tip);
     }
 
     #[test]
