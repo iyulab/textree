@@ -23,6 +23,7 @@ pub(crate) mod git_transport;
 pub(crate) mod remote;
 pub(crate) mod pathsafe;
 pub(crate) mod publish;
+pub(crate) mod publish_scope;
 pub(crate) mod publish_secret;
 pub(crate) mod search;
 pub(crate) mod secret_store;

@@ -1,0 +1,13 @@
+[
+  { "why": "nothing chosen is private", "choices": [], "rel": "a.md", "included": false },
+  { "why": "the whole folder", "choices": [{ "path": "", "include": true }], "rel": "x/y/a.md", "included": true },
+  { "why": "a folder covers what is under it", "choices": [{ "path": "blog", "include": true }], "rel": "blog/2026/a.md", "included": true },
+  { "why": "a folder does not cover a sibling with the same prefix", "choices": [{ "path": "blog", "include": true }], "rel": "blogger/a.md", "included": false },
+  { "why": "a note left out inside an included folder", "choices": [{ "path": "blog", "include": true }, { "path": "blog/draft.md", "include": false }], "rel": "blog/draft.md", "included": false },
+  { "why": "a subfolder left out, a note in it included again", "choices": [{ "path": "", "include": true }, { "path": "work", "include": false }, { "path": "work/press.md", "include": true }], "rel": "work/press.md", "included": true },
+  { "why": "the subfolder rule still holds for its other notes", "choices": [{ "path": "", "include": true }, { "path": "work", "include": false }, { "path": "work/press.md", "include": true }], "rel": "work/memo.md", "included": false },
+  { "why": "case does not matter", "choices": [{ "path": "Blog", "include": true }], "rel": "blog/A.md", "included": true },
+  { "why": "the folder itself", "choices": [{ "path": "blog", "include": true }], "rel": "blog", "included": true },
+  { "why": "a folder name with an accent", "choices": [{ "path": "café", "include": true }], "rel": "café/a.md", "included": true },
+  { "why": "an accented prefix is not a folder", "choices": [{ "path": "caf", "include": true }], "rel": "café/a.md", "included": false }
+]
