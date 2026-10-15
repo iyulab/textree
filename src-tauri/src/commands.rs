@@ -1211,6 +1211,32 @@ fn resolve_canopy(app: &AppHandle) -> Result<crate::publish::CanopyInvocation, S
         .into())
 }
 
+/// The chosen notes, as last added, written to a temporary folder for the renderer.
+struct Staged {
+    _dir: tempfile::TempDir,
+    source: PathBuf,
+    assembly: crate::publish_assembly::Assembly,
+    prepared: crate::git_engine::VaultRepo,
+}
+
+fn stage(vault: &Path) -> Result<Staged, String> {
+    let prepared =
+        history_repo(vault)?.ok_or("nothing in this folder has been added as a version yet")?;
+    let assembly = crate::publish_assembly::assemble(&prepared, vault)?;
+    if assembly.nothing_chosen {
+        return Err("nothing in this folder is chosen for publishing yet".into());
+    }
+    if assembly.notes.is_empty() {
+        return Err(
+            "none of the notes chosen for publishing has been added as a version yet".into(),
+        );
+    }
+    let dir = tempfile::tempdir().map_err(|e| e.to_string())?;
+    let source = dir.path().join("site-source");
+    crate::publish_assembly::write_out(&assembly, &source).map_err(|e| e.to_string())?;
+    Ok(Staged { _dir: dir, source, assembly, prepared })
+}
+
 /// Publishes the open vault to a static site by spawning canopy. Read-only over the source:
 /// the vault `.md` is never mutated; only `out_dir` (which must lie outside the vault) is written.
 pub fn publish_site(
@@ -1222,7 +1248,16 @@ pub fn publish_site(
     let vault = PathBuf::from(&vault_path);
     let out = PathBuf::from(&out_dir);
     let canopy = resolve_canopy(&app)?;
-    let result = crate::publish::run_publish(&vault, &out, &options, &canopy, crate::publish::RENDER_TIMEOUT)?;
+    let staged = stage(&vault)?;
+    let result = crate::publish::run_publish(
+        &vault,
+        &staged.source,
+        &out,
+        &options,
+        &canopy,
+        crate::publish::RENDER_TIMEOUT,
+    )?;
+    crate::publish_assembly::record_published(&staged.prepared, &staged.assembly)?;
     log::info!("publish_site: {} ({} pages)", result.out_dir, result.page_count);
     Ok(result)
 }
@@ -1239,7 +1274,10 @@ pub fn publish_to_cloud(
     let canopy = resolve_canopy(&app)?;
     let token = crate::publish_secret::get_token()
         .ok_or("no publish token is set — add one in Settings")?;
-    let result = crate::cloud_publish::publish_to_cloud(&vault, &options, &canopy, &token)?;
+    let staged = stage(&vault)?;
+    let result =
+        crate::cloud_publish::publish_to_cloud(&vault, &staged.source, &options, &canopy, &token)?;
+    crate::publish_assembly::record_published(&staged.prepared, &staged.assembly)?;
     log::info!("publish_to_cloud: {} ({} pages)", result.url, result.page_count);
     Ok(result)
 }

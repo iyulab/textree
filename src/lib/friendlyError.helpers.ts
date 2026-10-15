@@ -75,6 +75,14 @@ const RULES: Rule[] = [
       "That name can't be used. Avoid the characters / \\ : * ? \" < > |, a leading dot, a dot or space at the end, and Windows reserved names (CON, PRN, AUX, NUL, COM1-9, LPT1-9).",
   },
   {
+    match: ["nothing in this folder is chosen for publishing yet"],
+    summary: "Nothing in this notes folder is chosen for publishing yet. Choose notes or folders to include first.",
+  },
+  {
+    match: ["has been added as a version yet"],
+    summary: "Notes go out as their last added version, and none of the chosen notes has one yet. Add a version first.",
+  },
+  {
     match: ["canopy failed", "failed to start canopy"],
     summary:
       "The publishing tool couldn't finish. The publish bundle may be missing — see the release notes.",

@@ -38,6 +38,16 @@ describe("friendlyError", () => {
     expect(r.summary).toMatch(/already exists/i);
   });
 
+  it("explains that nothing is chosen for publishing yet", () => {
+    const r = friendlyError("nothing in this folder is chosen for publishing yet");
+    expect(r.summary).toMatch(/choose notes or folders/i);
+  });
+
+  it("explains that the chosen notes have no added version yet", () => {
+    const r = friendlyError("none of the notes chosen for publishing has been added as a version yet");
+    expect(r.summary).toMatch(/add a version first/i);
+  });
+
   it("maps a canopy publish failure to a publishing-tool summary", () => {
     const r = friendlyError("canopy failed: oniguruma not found");
     expect(r.summary).toMatch(/publish/i);

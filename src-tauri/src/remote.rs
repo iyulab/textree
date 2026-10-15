@@ -448,6 +448,10 @@ fn own_references(repo: &Repository) -> Result<Vec<(String, Oid)>, git2::Error> 
     for reference in repo.references_glob(&format!("{OWN}*"))? {
         let reference = reference?;
         if let (Ok(name), Some(id)) = (reference.name(), reference.target()) {
+            // What was published is derived from the notes and is kept per machine.
+            if name == crate::publish_assembly::PUBLISHED_REF {
+                continue;
+            }
             out.push((name.to_string(), id));
         }
     }
@@ -1405,5 +1409,33 @@ More.
         assert!(matches!(next.notes, Step::Join { .. }), "{:?}", next.notes);
         assert!(next.unrecorded_here.is_empty());
         assert!(matches!(b.apply(&next), Taken::Done { .. }));
+    }
+
+    #[test]
+    fn the_published_state_stays_on_this_machine() {
+        let (_tmp, remote, a, _b) = setup();
+        a.record("a.md", "# A");
+        let repo = a.repo();
+        let tree = repo
+            .find_commit(repo.refname_to_id(NOTES_REF).unwrap())
+            .unwrap()
+            .tree_id();
+        let sig = git2::Signature::now("t", "t@example.com").unwrap();
+        crate::git_engine::commit_tree_on(
+            repo,
+            crate::publish_assembly::PUBLISHED_REF,
+            tree,
+            None,
+            "p",
+            &sig,
+            &sig,
+        )
+        .unwrap();
+        a.send(&remote);
+        // Backed up is read from what the remote was last seen to hold.
+        a.take(&remote);
+        let bare = git2::Repository::open(&remote).unwrap();
+        assert!(bare.find_reference(crate::publish_assembly::PUBLISHED_REF).is_err());
+        assert!(backed_up(repo).unwrap());
     }
 }

@@ -1,8 +1,6 @@
 //! What a publish sends, built from the last version added of each note — never from the files
 //! as they are in the folder. Only chosen notes go out, with only the files they link to.
 
-#![allow(dead_code)] // consumed by the publish wiring in a later step
-
 use crate::git_engine::{self, VaultRepo, NOTES_REF};
 use crate::note_refs::{self, Target};
 use crate::publish_scope;
@@ -165,6 +163,46 @@ pub fn assemble(prepared: &VaultRepo, root: &Path) -> Result<Assembly, String> {
         .filter(|n| !hidden(n) && publish_scope::is_included(n, &choices) && !recorded.contains(n))
         .collect();
     Ok(out)
+}
+
+/// Where the state last published from this machine is kept. It is never sent to a remote.
+pub const PUBLISHED_REF: &str = "refs/textree/published";
+
+/// Writes the assembled files under `dir`, creating folders as needed.
+pub fn write_out(assembly: &Assembly, dir: &Path) -> std::io::Result<()> {
+    for (rel, bytes) in &assembly.files {
+        let mut path = dir.to_path_buf();
+        path.extend(rel.split('/'));
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(&path, bytes)?;
+    }
+    Ok(())
+}
+
+/// Records what was published as a revision whose only parent is the previous publish — so the
+/// published history never reaches back into the notes' history.
+pub fn record_published(prepared: &VaultRepo, assembly: &Assembly) -> Result<(), String> {
+    let repo = prepared.repo();
+    let err = |e: git2::Error| e.message().to_string();
+    let mut tree: Option<git2::Oid> = None;
+    for (rel, bytes) in &assembly.files {
+        let blob = repo.blob(bytes).map_err(err)?;
+        let base = match tree {
+            Some(id) => Some(repo.find_tree(id).map_err(err)?),
+            None => None,
+        };
+        tree = Some(
+            git_engine::tree_with_file(repo, base.as_ref(), Path::new(rel), Some(blob))
+                .map_err(err)?,
+        );
+    }
+    let Some(tree) = tree else { return Ok(()) };
+    let (author, committer) = git_engine::commit_identities(repo).map_err(err)?;
+    git_engine::commit_tree_on(repo, PUBLISHED_REF, tree, None, "Published", &author, &committer)
+        .map_err(err)?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -339,6 +377,44 @@ mod tests {
         let a = assembled(tmp.path());
         assert_eq!(paths(&a), vec!["a.md", "shared/img.png"]);
         assert_eq!(a.withheld, vec!["private/photo.png"]);
+    }
+
+    #[test]
+    fn gate_l2_9_the_published_state_shares_no_history_with_the_notes() {
+        let tmp = tempfile::tempdir().unwrap();
+        record(tmp.path(), "a.md", b"# A");
+        choose(tmp.path(), "", true);
+        let prepared = crate::git_engine::prepare(tmp.path()).unwrap();
+        record_published(&prepared, &assembled(tmp.path())).unwrap();
+        record(tmp.path(), "a.md", b"# A again");
+        record_published(&prepared, &assembled(tmp.path())).unwrap();
+        let repo = prepared.repo();
+        let published = repo.refname_to_id(PUBLISHED_REF).unwrap();
+        let notes = repo.refname_to_id(crate::git_engine::NOTES_REF).unwrap();
+        let mut walk = repo.revwalk().unwrap();
+        walk.push(published).unwrap();
+        let ours: Vec<git2::Oid> = walk.map(Result::unwrap).collect();
+        assert_eq!(ours.len(), 2, "first publish has no parent, the second only the first");
+        let mut notes_walk = repo.revwalk().unwrap();
+        notes_walk.push(notes).unwrap();
+        for id in notes_walk.map(Result::unwrap) {
+            assert!(!ours.contains(&id));
+        }
+        assert!(repo.merge_base(published, notes).is_err());
+    }
+
+    #[test]
+    fn written_out_the_site_holds_exactly_what_was_assembled() {
+        let tmp = tempfile::tempdir().unwrap();
+        record(tmp.path(), "blog/post.md", b"![c](img.png)");
+        record(tmp.path(), "blog/img.png", b"png");
+        record(tmp.path(), "private.md", b"# no");
+        choose(tmp.path(), "blog", true);
+        let out = tempfile::tempdir().unwrap();
+        write_out(&assembled(tmp.path()), out.path()).unwrap();
+        assert_eq!(std::fs::read(out.path().join("blog/post.md")).unwrap(), b"![c](img.png)");
+        assert_eq!(std::fs::read(out.path().join("blog/img.png")).unwrap(), b"png");
+        assert!(!out.path().join("private.md").exists());
     }
 
     #[test]

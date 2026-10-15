@@ -131,13 +131,14 @@ pub fn upload_bundle(
 /// Renders the vault locally (temp output, read-only over the source), zips it, and uploads.
 pub fn publish_to_cloud(
     vault: &Path,
+    source: &Path,
     options: &PublishOptions,
     canopy: &CanopyInvocation,
     token: &str,
 ) -> Result<PublishToCloudResult, String> {
     let tmp = tempfile::tempdir().map_err(|e| e.to_string())?;
     let out = tmp.path().join("site"); // a fresh dir outside the vault (run_publish validates this)
-    run_publish(vault, &out, options, canopy, crate::publish::RENDER_TIMEOUT)?;
+    run_publish(vault, source, &out, options, canopy, crate::publish::RENDER_TIMEOUT)?;
     let zip = zip_vault_output(&out)?;
     upload_bundle(&api_base(), token, zip, UPLOAD_TIMEOUT)
     // tmp (and the rendered output) is removed when `tmp` drops here.

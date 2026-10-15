@@ -308,6 +308,7 @@ fn spawn_bounded(mut cmd: Command, timeout: Duration) -> Result<Output, String> 
 /// The source vault is read-only throughout (canopy never writes into it).
 pub fn run_publish(
     vault: &Path,
+    source: &Path,
     out: &Path,
     options: &PublishOptions,
     canopy: &CanopyInvocation,
@@ -331,7 +332,7 @@ pub fn run_publish(
 
     let mut cmd = Command::new(&canopy.program);
     cmd.args(&canopy.prefix_args);
-    cmd.args(canopy_args(vault, out, options, tokens_file.as_ref().map(|f| f.path())));
+    cmd.args(canopy_args(source, out, options, tokens_file.as_ref().map(|f| f.path())));
     // Run the canopy CLI without flashing a console window (Windows).
     tauri_kit_sidecar::hide_console(&mut cmd);
 
@@ -580,7 +581,7 @@ mod tests {
         std::fs::write(vault.join(".env"), "SECRET=1\n").unwrap();
         let out = tmp.path().join("site");
 
-        let result = run_publish(&vault, &out, &PublishOptions { site_title: None, tokens_css: None }, &canopy, RENDER_TIMEOUT)
+        let result = run_publish(&vault, &vault, &out, &PublishOptions { site_title: None, tokens_css: None }, &canopy, RENDER_TIMEOUT)
             .expect("publish should succeed via the assembled sidecar");
 
         assert!(result.page_count >= 1, "expected at least one published page");
@@ -620,7 +621,7 @@ mod tests {
             prefix_args: vec![cli.into_os_string()],
         };
 
-        let result = run_publish(&vault, &out, &options, &canopy, RENDER_TIMEOUT).expect("publish should succeed");
+        let result = run_publish(&vault, &vault, &out, &options, &canopy, RENDER_TIMEOUT).expect("publish should succeed");
 
         assert!(result.page_count > 0, "at least one page emitted");
         assert!(out.join("note.html").is_file(), "the note rendered to html");
