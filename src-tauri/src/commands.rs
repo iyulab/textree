@@ -1432,7 +1432,8 @@ fn linked_files(root: &Path, note_rel: &str, body: &[u8]) -> Vec<String> {
         let Some(rel) = crate::note_refs::resolve(note_rel, &t) else {
             continue;
         };
-        if is_note_path(&rel) || rel.split('/').any(|s| s.starts_with('.')) || out.contains(&rel) {
+        if is_note_path(&rel) || rel.split('/').any(|s| s.starts_with('.')) || out.iter().any(|seen: &String| seen.eq_ignore_ascii_case(&rel))
+        {
             continue;
         }
         let mut path = root.to_path_buf();
@@ -1507,14 +1508,26 @@ pub fn commit_notes(
         entries.push((in_repo, content));
         for file in linked {
             let file_in_repo = prepared.path_in_repo(Path::new(&file));
+            let named = file_in_repo.to_string_lossy();
             if repo.is_path_ignored(&file_in_repo).unwrap_or(false)
-                || entries.iter().any(|(p, _)| p == &file_in_repo)
+                || entries
+                    .iter()
+                    .any(|(p, _)| p.to_string_lossy().eq_ignore_ascii_case(&named))
             {
                 continue;
             }
             let mut path = root_p.to_path_buf();
             path.extend(file.split('/'));
-            entries.push((file_in_repo, std::fs::read(&path).map_err(|e| e.to_string())?));
+            // A link may lead out of the folder through a junction or symlink.
+            if !is_within(root_p, &path) {
+                log::warn!("commit_notes: linked file is outside the vault, left out: {file}");
+                continue;
+            }
+            // A linked file is a companion: one that cannot be read must not stop the note.
+            match crate::fs_ops::patiently(|| std::fs::read(&path)) {
+                Ok(bytes) => entries.push((file_in_repo, bytes)),
+                Err(e) => log::warn!("commit_notes: linked file left out, cannot read {file}: {e}"),
+            }
         }
     }
 
@@ -2865,6 +2878,107 @@ mod tests {
                 .unwrap()
                 .is_some()
         );
+    }
+
+    fn recorded_paths(root: &Path) -> Vec<String> {
+        let prepared = crate::git_engine::open_existing(root).unwrap().unwrap();
+        let mut recorded =
+            crate::git_engine::tip_paths(prepared.repo(), crate::git_engine::NOTES_REF).unwrap();
+        recorded.sort();
+        recorded
+    }
+
+    fn add_version(root: &Path, notes: Vec<String>) -> Result<Option<String>, String> {
+        commit_notes(root.to_string_lossy().to_string(), notes, "v".into())
+    }
+
+    #[test]
+    fn an_ignored_linked_file_is_left_out_and_the_version_goes_through() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        std::fs::write(tmp.path().join(".gitignore"), "secret.png\n").unwrap();
+        std::fs::write(tmp.path().join("secret.png"), b"x").unwrap();
+        let note = seed_note(tmp.path(), "a.md", "![](secret.png)");
+        assert!(add_version(tmp.path(), vec![note]).unwrap().is_some());
+        assert_eq!(recorded_paths(tmp.path()), vec!["a.md"]);
+    }
+
+    #[test]
+    fn a_file_linked_by_two_notes_is_recorded_once() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        std::fs::write(tmp.path().join("p.png"), b"x").unwrap();
+        let a = seed_note(tmp.path(), "a.md", "![](p.png)");
+        let b = seed_note(tmp.path(), "b.md", "![](p.png)");
+        add_version(tmp.path(), vec![a, b]).unwrap();
+        assert_eq!(recorded_paths(tmp.path()), vec!["a.md", "b.md", "p.png"]);
+    }
+
+    #[test]
+    fn a_linked_folder_is_left_out() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        std::fs::create_dir_all(tmp.path().join("sub")).unwrap();
+        let note = seed_note(tmp.path(), "a.md", "[x](sub/)");
+        assert!(add_version(tmp.path(), vec![note]).unwrap().is_some());
+        assert_eq!(recorded_paths(tmp.path()), vec!["a.md"]);
+    }
+
+    #[test]
+    fn a_path_that_is_not_a_note_brings_no_links() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        std::fs::write(tmp.path().join("a.png"), b"x").unwrap();
+        let txt = seed_note(tmp.path(), "notes.txt", "![](a.png)");
+        add_version(tmp.path(), vec![txt]).unwrap();
+        assert_eq!(recorded_paths(tmp.path()), vec!["notes.txt"]);
+    }
+
+    #[test]
+    fn links_differing_only_in_case_record_one_file() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        std::fs::create_dir_all(tmp.path().join("assets")).unwrap();
+        std::fs::write(tmp.path().join("assets/x.png"), b"x").unwrap();
+        let note = seed_note(tmp.path(), "a.md", "![](assets/x.png) ![](Assets/x.png)");
+        add_version(tmp.path(), vec![note]).unwrap();
+        assert_eq!(recorded_paths(tmp.path()), vec!["a.md", "assets/x.png"]);
+    }
+
+    #[test]
+    fn a_linked_file_that_cannot_be_read_does_not_stop_the_version() {
+        // A file opened without sharing is refused to readers on Windows (os error 32).
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::OpenOptionsExt;
+            let tmp = tempfile::TempDir::new().unwrap();
+            std::fs::write(tmp.path().join("locked.png"), b"x").unwrap();
+            let _held = std::fs::OpenOptions::new()
+                .read(true)
+                .share_mode(0)
+                .open(tmp.path().join("locked.png"))
+                .unwrap();
+            let note = seed_note(tmp.path(), "a.md", "![](locked.png)");
+            assert!(add_version(tmp.path(), vec![note]).unwrap().is_some());
+            assert_eq!(recorded_paths(tmp.path()), vec!["a.md"]);
+        }
+    }
+
+    #[test]
+    fn a_link_through_a_junction_to_outside_the_folder_is_left_out() {
+        let outside = tempfile::TempDir::new().unwrap();
+        std::fs::write(outside.path().join("o.png"), b"x").unwrap();
+        let tmp = tempfile::TempDir::new().unwrap();
+        let link = tmp.path().join("out");
+        #[cfg(windows)]
+        let made = std::process::Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(&link)
+            .arg(outside.path())
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+        #[cfg(unix)]
+        let made = std::os::unix::fs::symlink(outside.path(), &link).is_ok();
+        assert!(made, "could not create the junction/symlink for this test");
+        let note = seed_note(tmp.path(), "a.md", "![](out/o.png)");
+        assert!(add_version(tmp.path(), vec![note]).unwrap().is_some());
+        assert_eq!(recorded_paths(tmp.path()), vec!["a.md"]);
     }
 
     /// Records `rel` under `root` and returns its absolute path.
