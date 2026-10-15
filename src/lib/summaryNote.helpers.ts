@@ -10,18 +10,14 @@ export interface SummaryNoteMeta {
   bodyTruncated: boolean;
 }
 
-/** The parent folder that receives the summary note (absolute path):
+/** The folder that receives the summary note, relative to the vault (`""` = the vault itself):
  *  folder scope -> the folder itself; file scope -> the file's containing folder;
- *  vault scope (path null) -> the vault root. */
-export function summaryNoteParent(
-  scopeKind: 'file' | 'folder' | 'vault',
-  scopePath: string | null,
-  root: string,
-): string {
-  if (scopeKind === 'vault' || scopePath === null) return root;
+ *  vault scope (path null) -> the vault. */
+export function summaryNoteParent(scopeKind: 'file' | 'folder' | 'vault', scopePath: string | null): string {
+  if (scopeKind === 'vault' || scopePath === null) return '';
   if (scopeKind === 'folder') return scopePath;
-  const i = Math.max(scopePath.lastIndexOf('/'), scopePath.lastIndexOf('\\'));
-  return i >= 0 ? scopePath.slice(0, i) : root;
+  const i = scopePath.lastIndexOf('/');
+  return i >= 0 ? scopePath.slice(0, i) : '';
 }
 
 /** File-name stem for the summary note, sanitized. Falls back to "Summary" when the label

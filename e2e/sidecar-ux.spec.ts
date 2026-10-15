@@ -195,11 +195,36 @@ async function reopenWithSettings(vault: string, files: Record<string, string>):
   return dir;
 }
 
+test("settings kept before notes were named relative to the folder keep their favorites and order", async () => {
+  const vault = createTempVault({ "alpha.md": "a\n", "zeta.md": "z\n" });
+  try {
+    const dir = await reopenWithSettings(vault, {
+      format: "1",
+      "favorites.json": JSON.stringify([join(vault, "zeta.md")]),
+      "order.json": JSON.stringify({ [vault]: [join(vault, "zeta.md"), join(vault, "alpha.md")] }),
+    });
+    // The order kept still holds: zeta before alpha, against the alphabet.
+    await expect(async () => {
+      const names = await page.getByRole("treeitem").allTextContents();
+      expect(names.findIndex((n) => n.includes("zeta"))).toBeLessThan(names.findIndex((n) => n.includes("alpha")));
+    }).toPass({ timeout: 5_000 });
+    expect(JSON.parse(readFileSync(join(dir, "favorites.json"), "utf8"))).toEqual(["zeta.md"]);
+    expect(JSON.parse(readFileSync(join(dir, "order.json"), "utf8"))).toEqual({ "": ["zeta.md", "alpha.md"] });
+    expect(readFileSync(join(dir, "format"), "utf8")).toBe("2");
+    // And it is still a favorite: un-starring it empties the list.
+    await page.getByRole("treeitem", { name: /zeta/ }).click();
+    await runCommand(page, ">favorite");
+    await expect.poll(() => (readSidecar(vault, "favorites.json") as string[] | null)?.length ?? -1).toBe(0);
+  } finally {
+    removeTempVault(vault);
+  }
+});
+
 test("opening a folder marks its settings with the format they are kept in", async () => {
   const vault = createTempVault({ "a.md": "x\n" });
   try {
     await loadVault(page, vault);
-    expect(readFileSync(join(sidecarDir(vault), "format"), "utf8")).toBe("1");
+    expect(readFileSync(join(sidecarDir(vault), "format"), "utf8")).toBe("2");
     await expect(page.getByTestId("settings-notice")).toHaveCount(0);
   } finally {
     removeTempVault(vault);
@@ -210,7 +235,7 @@ test("settings a newer release saved are shown as defaults, said so, and never w
   const vault = createTempVault({ "pinned-note.md": "x\n" });
   const newer = '{"favorites":{"pinned":["pinned-note.md"]}}';
   try {
-    const dir = await reopenWithSettings(vault, { format: "2", "favorites.json": newer });
+    const dir = await reopenWithSettings(vault, { format: "3", "favorites.json": newer });
     await expect(page.getByTestId("settings-notice")).toContainText("saved by a newer Textree");
 
     await page.getByRole("treeitem", { name: /pinned-note/ }).click();
@@ -218,7 +243,7 @@ test("settings a newer release saved are shown as defaults, said so, and never w
     // Nothing reaches the disk, however long it is given.
     await page.waitForTimeout(500);
     expect(readFileSync(join(dir, "favorites.json"), "utf8")).toBe(newer);
-    expect(readFileSync(join(dir, "format"), "utf8")).toBe("2");
+    expect(readFileSync(join(dir, "format"), "utf8")).toBe("3");
   } finally {
     removeTempVault(vault);
   }

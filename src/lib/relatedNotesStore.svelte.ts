@@ -29,7 +29,8 @@ class RelatedNotesStore {
    * @param vaultRoot  Absolute vault path (passed to the IPC).
    * @param notePath   Vault-relative POSIX path of the open note (used to exclude self).
    * @param noteBody   Current body text; the first 800 characters serve as the semantic query.
-   * @param scopePath  Absolute folder path to scope the search, or null for the whole vault.
+   * @param scopePath  Folder to scope the search, relative to the vault (`""` = all of it), or null
+   *                   for the whole vault.
    */
   async load(
     vaultRoot: string,

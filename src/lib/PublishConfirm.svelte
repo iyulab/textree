@@ -4,7 +4,6 @@
   import { friendlyError, type FriendlyError } from "./friendlyError.helpers";
   import { publishScope } from "./publishScope.svelte";
   import { versionName } from "./addVersion.helpers";
-  import { joinPath } from "./vaultPaths.helpers";
   import {
     canPublish,
     missingLine,
@@ -67,7 +66,7 @@
     choosing = true;
     actionFailure = null;
     try {
-      await publishScope.choose(root, true);
+      await publishScope.choose("", true);
       load();
     } catch (e) {
       actionFailure = friendlyError(e);
@@ -81,7 +80,7 @@
   /** Adds one version of the chosen notes that have none yet, then shows what goes out again. */
   async function addVersions() {
     if (!preview || adding) return;
-    const paths = preview.neverRecorded.map((rel) => joinPath(root, rel));
+    const paths = preview.neverRecorded;
     adding = true;
     actionFailure = null;
     try {

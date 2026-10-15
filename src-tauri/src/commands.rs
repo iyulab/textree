@@ -457,7 +457,7 @@ pub struct SidecarState {
 /// opened — before anything reads them.
 pub fn prepare_sidecar(root: String) -> Result<SidecarState, String> {
     let dir = personal_dir(Path::new(&root))?;
-    let current = crate::state_dir::bring_up_to_date(&dir, atomic_bytes_beside)
+    let current = crate::state_dir::bring_up_to_date(&dir, &root, atomic_bytes_beside)
         .map_err(|e| e.to_string())?;
     Ok(SidecarState { read_only: !current })
 }

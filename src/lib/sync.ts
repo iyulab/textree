@@ -7,8 +7,7 @@
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { listTree, readNote, type TreeNode } from "./ipc";
 import { decideChangeAction, decideRescanAction } from "./sync.helpers";
-import { absOut } from "./vaultPathsAdapter";
-import { samePath } from "./vaultPaths.helpers";
+import { samePath, sameVault } from "./vaultPaths.helpers";
 
 export type FsChangeKind = "created" | "modified" | "removed";
 
@@ -27,7 +26,7 @@ interface FsEvent {
 export interface SyncHandlers {
   /** Current vault root (null if none). */
   root: () => string | null;
-  /** Body path of the currently open note (null if none). */
+  /** Body path of the currently open note, relative to the vault (null if none). */
   activePath: () => string | null;
   /** Current text of the open note as the user sees it (live editor doc). */
   activeDoc: () => string;
@@ -51,8 +50,8 @@ export interface SyncHandlers {
 async function handleChange(handlers: SyncHandlers, event: FsEvent): Promise<void> {
   const root = handlers.root();
   // A change in a folder no longer open says nothing about this one, even for a note of the same name.
-  if (!root || !samePath(event.root, root)) return;
-  const payload: FsChange = { kind: event.kind, path: absOut(root, event.rel) };
+  if (!root || !sameVault(event.root, root)) return;
+  const payload: FsChange = { kind: event.kind, path: event.rel };
 
   // 1) Refresh the tree on any change (reflect create/remove/rename).
   try {

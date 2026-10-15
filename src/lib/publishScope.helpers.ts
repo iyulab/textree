@@ -36,14 +36,3 @@ export function explicitChoice(rel: string, choices: PublishChoice[]): PublishCh
   const r = asciiLower(rel);
   return choices.find((c) => asciiLower(c.path) === r) ?? null;
 }
-
-/**
- * `abs` relative to the notes folder `root`, `/`-separated; "" for the folder itself, null when
- * `abs` is outside it. Accepts backslashes and matches the prefix ASCII case-insensitively.
- */
-export function relativeTo(root: string, abs: string): string | null {
-  const r = root.replace(/\\/g, "/").replace(/\/+$/, "");
-  const a = abs.replace(/\\/g, "/");
-  if (asciiLower(a) === asciiLower(r)) return "";
-  return asciiLower(a).startsWith(`${asciiLower(r)}/`) ? a.slice(r.length + 1) : null;
-}

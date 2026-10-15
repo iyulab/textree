@@ -108,26 +108,14 @@ export function removeView(list: ViewDefinition[], name: string): ViewDefinition
 }
 
 /**
- * Normalize a path for prefix comparison: forward slashes, no trailing slash, lowercased.
- * Lowercasing keeps drive-letter / path case differences (Windows is case-insensitive) from being
- * misread as a different location — false positives here would nag on every normal vault open.
+ * Stored view keys are folders relative to the vault. Keys kept from before paths were relative were
+ * absolute; the ones under this vault were made relative when the settings were brought up to date,
+ * so any still absolute name a folder elsewhere — the vault was moved, or the settings came from
+ * another device — and those views would seem to vanish. This returns them so the caller can say so
+ * (instead of dropping them quietly). Content-safe: it only reports; it never rewrites or deletes.
  */
-function normPath(p: string): string {
-  return p.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
-}
-
-/**
- * Stored view keys are absolute folder paths. When a vault is moved or opened on another device,
- * those keys no longer sit under the current root, so the views appear to silently vanish. This
- * returns the keys that don't belong to `root` so the caller can surface them (instead of dropping
- * them quietly). Content-safe: it only reports; it never rewrites or deletes the saved views.
- */
-export function findForeignViewFolders(storedKeys: string[], root: string): string[] {
-  const r = normPath(root);
-  return storedKeys.filter((k) => {
-    const nk = normPath(k);
-    return nk !== r && !nk.startsWith(`${r}/`);
-  });
+export function findForeignViewFolders(storedKeys: string[]): string[] {
+  return storedKeys.filter((k) => /^([A-Za-z]:)?[\\/]/.test(k));
 }
 
 /**

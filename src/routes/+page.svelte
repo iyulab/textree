@@ -106,7 +106,6 @@
   import { initialNoteSaveState, NoteSave, type LeaveOutcome, type Remap } from "$lib/noteSave";
   import { tree as treeView } from "$lib/tree.svelte";
   import {
-    baseName,
     noteStem,
     parentDir,
     pathInside,
@@ -131,7 +130,7 @@
     activePath: () => activePath,
     write: writeNote,
     // refresh links from the saved note (relative key, no re-read)
-    saved: (path, text) => backlinks.updateSource(toRelative(path), text),
+    saved: (path, text) => backlinks.updateSource(path, text),
     edited: () => {
       publishNotice = null; // an edit supersedes the last publish notice (the site is now stale)
     },
@@ -142,7 +141,7 @@
     // top of the vault — the edits matter more than the place.
     keepCopy: (vault, path, text) =>
       createNoteWithContent(vault, parentDir(path), noteStem(path), text)
-        .catch(() => createNoteWithContent(vault, vault, noteStem(path), text))
+        .catch(() => createNoteWithContent(vault, "", noteStem(path), text))
         .then((created) => {
           reloadPublishChoices();
           return created;
@@ -187,7 +186,7 @@
   // folder opens, after an exchange, and after anything done to one.
   let alternatives = $state<NoteAlternative[]>([]);
   let comparing = $state<string | null>(null);
-  let altNotice = $derived(noticeFor(alternatives, activePath ? toRelative(activePath) : null));
+  let altNotice = $derived(noticeFor(alternatives, activePath));
   let comparingAlternative = $derived(
     comparing === null ? null : (alternatives.find((a) => a.id === comparing) ?? null),
   );
@@ -516,6 +515,7 @@
     }
     if (overtaken()) return false;
     const setAside = await nav.load(path, readOnly); // load favorites/order settings
+    treeView.load(path); // folders collapsed as this device left them
     const viewsSetAside = await views.load(path, readOnly); // saved folder views (views.json)
     if (viewsSetAside) setAside.push(viewsSetAside);
     try {
@@ -549,7 +549,7 @@
     if (!root) return;
     localStorage.setItem(LAST_VAULT_KEY, root);
     if (!activePath) {
-      const first = findFirstOpenableNote(tree, root, nav.order);
+      const first = findFirstOpenableNote(tree, "", nav.order);
       if (first) await handleSelect(first);
     }
   }
@@ -950,8 +950,8 @@
   /** Parent directory for a new item. Explicit override (createParent) takes priority; otherwise
    *  a container = inside it, a leaf = sibling (parent), no selection = root. */
   function targetParent(): string {
-    if (createParent) return createParent;
-    if (!selectedNode) return root as string;
+    if (createParent !== null) return createParent;
+    if (!selectedNode) return ""; // the top of the vault
     if (selectedNode.kind === "container") return selectedNode.path;
     return parentDir(selectedNode.path); // leaf selected → create as sibling
   }
@@ -1189,7 +1189,7 @@
       // When its folder went with it, the note comes back at the top of the vault instead — the
       // edits matter more than the place.
       const created = await createNoteWithContent(vault, parentDir(path), stem, text).catch(() =>
-        createNoteWithContent(vault, vault, stem, text),
+        createNoteWithContent(vault, "", stem, text),
       );
       reloadPublishChoices();
       const moved = !pathInside(created, path);
@@ -1237,14 +1237,13 @@
 
   /** Last folder name of the vault root path (for the compact sidebar header). Full path is in the title. */
   function vaultName(p: string): string {
-    return baseName(p.replace(/[/\\]+$/, "")) || p;
+    return p.replace(/[/\\]+$/, "").split(/[/\\]/).pop() || p;
   }
 
   /** Ancestor folders of the open note (breadcrumb). Excludes the filename and the duplicate folder of a container note. */
   function breadcrumb(): string[] {
     if (!root || !activePath) return [];
-    const rel = activePath.slice(root.length).replace(/^[/\\]+/, "");
-    const parts = rel.split(/[/\\]/).filter(Boolean);
+    const parts = activePath.split("/").filter(Boolean);
     const file = parts.pop() ?? "";
     const stem = file.replace(/\.md$/i, "");
     // Container note (folder/folder.md): if the last folder equals the file stem, it is a duplicate → remove.
@@ -1287,20 +1286,7 @@
 
   let fileIndex = $derived<FileEntry[]>(flattenTree(tree));
 
-  // The app's tree/IPC paths are absolute; wikilinks use vault-relative POSIX paths so the text
-  // written into `.md` (`[[note]]`) stays portable (data sovereignty) and matches canopy's model.
-  // These helpers convert at the boundary, tolerant of mixed `/`/`\` separators.
-  function toRelative(abs: string): string {
-    const a = abs.replace(/\\/g, "/");
-    const r = (root ?? "").replace(/\\/g, "/").replace(/\/+$/, "");
-    return r && a.startsWith(`${r}/`) ? a.slice(r.length + 1) : a;
-  }
-  function toAbsolute(rel: string): string {
-    const r = (root ?? "").replace(/\\/g, "/").replace(/\/+$/, "");
-    return r ? `${r}/${rel}` : rel;
-  }
-
-  /** Collect every note's absolute `.md` path: leaf=own path, container=its folder note. */
+  /** Collect every note's `.md` path: leaf=own path, container=its folder note. */
   function collectNotePaths(nodes: TreeNode[], acc: string[] = []): string[] {
     for (const n of nodes) {
       if (n.kind === "leaf") acc.push(n.path);
@@ -1311,15 +1297,13 @@
   }
 
   /** Wikilink resolution targets (vault-relative) — passed to the editor; resolve against the live tree. */
-  let notePaths = $derived<string[]>(collectNotePaths(tree).map(toRelative));
+  let notePaths = $derived<string[]>(collectNotePaths(tree));
 
-  /** Find the tree node for an absolute `.md` path (leaf path or folder note), separator-tolerant. */
-  function findNodeByNotePath(nodes: TreeNode[], abs: string): TreeNode | null {
-    const norm = (p: string | null) => (p ?? "").replace(/\\/g, "/");
-    const want = norm(abs);
+  /** Find the tree node for a note's `.md` path (leaf path or folder note). */
+  function findNodeByNotePath(nodes: TreeNode[], notePath: string): TreeNode | null {
     for (const n of nodes) {
-      if (norm(n.body_path) === want || (n.kind === "leaf" && norm(n.path) === want)) return n;
-      const found = n.children?.length ? findNodeByNotePath(n.children, abs) : null;
+      if (n.body_path === notePath || (n.kind === "leaf" && n.path === notePath)) return n;
+      const found = n.children?.length ? findNodeByNotePath(n.children, notePath) : null;
       if (found) return found;
     }
     return null;
@@ -1330,7 +1314,7 @@
    * read, selection follow) so navigation behaves exactly like clicking the note in the tree.
    */
   async function handleWikiLink(relPath: string, heading: string | undefined) {
-    const node = findNodeByNotePath(tree, toAbsolute(relPath));
+    const node = findNodeByNotePath(tree, relPath);
     if (!node) return;
     await handleSelect(node); // clears pendingHeading, then opens (recreates the editor)
     // Set after handleSelect so the editor recreation picks it up and scrolls once on load.
@@ -1340,19 +1324,17 @@
   /**
    * Rebuild the vault-wide backlink index by reading every note's body once. Frontend scan (no new
    * IPC); the simplicity beats a Rust link graph at this scale: simplicity wins until it measurably does not.
-   * Reads use absolute paths (the IPC contract); the index is keyed by vault-relative paths.
    * A failed read degrades that note to empty rather than aborting the whole index.
    */
   async function rebuildBacklinks() {
     const r = root;
     if (!r) return;
-    const absPaths = collectNotePaths(tree);
-    const relPaths = absPaths.map(toRelative);
-    const resolve = buildWikiResolver(relPaths).resolve;
+    const paths = collectNotePaths(tree);
+    const resolve = buildWikiResolver(paths).resolve;
     const notes = await Promise.all(
-      absPaths.map(async (abs, i) => ({
-        path: relPaths[i],
-        body: await readNote(r, abs).catch(() => ""),
+      paths.map(async (path) => ({
+        path,
+        body: await readNote(r, path).catch(() => ""),
       })),
     );
     backlinks.rebuild(notes, resolve);
@@ -1374,7 +1356,7 @@
     const scope = semanticScopePath;
     const r = root;
     if (r && path) {
-      void relatedNotes.load(r, toRelative(path), body, scope);
+      void relatedNotes.load(r, path, body, scope);
     } else {
       relatedNotes.clear();
     }
@@ -1433,8 +1415,8 @@
       else layout.setMode("note");
     },
     // Create at root: parentOverride=root targets the root regardless of selectedNode state.
-    newNoteAtRoot: () => { if (root) void createNewNote(root); },
-    newFolderAtRoot: () => { if (root) startMode("new-folder", root); },
+    newNoteAtRoot: () => { if (root) void createNewNote(""); },
+    newFolderAtRoot: () => { if (root) startMode("new-folder", ""); },
     hasSelection: () => selectedNode !== null,
     renameSelected: () => { beginTreeRename(selectedNode); },
     deleteSelected: () => { void deleteSelected(); },
@@ -1506,36 +1488,22 @@
     return null;
   }
 
-  /** TreeNode.path → POSIX relative path from the vault root (same form as search hit path). */
-  function relPosixOf(absPath: string, rootDir: string): string {
-    const rel = absPath.startsWith(rootDir) ? absPath.slice(rootDir.length) : absPath;
-    return rel.replace(/^[\\/]+/, "").replace(/\\/g, "/");
+  /** The tree node a note's `.md` path opens: the note itself, or the folder whose own note it is. */
+  function nodePathOfNote(notePath: string): string {
+    return findNodeByNotePath(tree, notePath)?.path ?? notePath;
   }
 
-  /**
-   * Palette content search → resolve each hit's POSIX relative path to the actual TreeNode.path.
-   * Reconstructing the path as a string (guessing the separator) would diverge from the mixed
-   * separators the backend emits (forward-slash root + OS join), making findNode exact-match fail →
-   * map to the actual node path to make it robust. Folder notes (folder/folder.md) map to the
-   * container node (loads the body on selection).
-   */
+  /** Palette content search: hits name notes; a folder's own note opens as its folder. */
   async function searchContentFromPalette(query: string): Promise<SearchHit[]> {
     if (!root) return [];
-    const r = root;
     const hits = await searchContent(query);
-    const byRel = new Map<string, string>();
-    for (const e of fileIndex) {
-      const rel = relPosixOf(e.path, r);
-      byRel.set(rel, e.path);
-      if (e.kind === "container") byRel.set(`${rel}/${e.name}.md`, e.path);
-    }
-    return hits.map((h) => ({ ...h, path: byRel.get(h.path) ?? h.path }));
+    return hits.map((h) => ({ ...h, path: nodePathOfNote(h.path) }));
   }
 
   /**
    * Scope path for semantic search — the folder the user is currently working in.
    * Priority: selected folder → parent of the open note → null (whole vault).
-   * Passed as an absolute path; the backend scopes the search to documents under it.
+   * Relative to the vault (`""` at the top of it); the backend scopes the search to documents under it.
    */
   let semanticScopePath = $derived<string | null>(
     selectedNode?.kind === "container"
@@ -1579,23 +1547,10 @@
   }
 
   /** Palette file selection → find the matching TreeNode and delegate to handleSelect.
-   *  Accepts both absolute TreeNode paths (file/command mode) and vault-relative POSIX
-   *  paths (semantic search hits from the sidecar) so all modes converge here. */
+   *  Takes a node's path (file/command/content modes) or a note's `.md` path (semantic hits, a
+   *  folder's own note among them) so all modes converge here. */
   function openFileFromPalette(path: string): void {
-    // Try exact absolute match first (file / content modes).
-    let node = findNode(tree, path);
-    if (!node && root) {
-      // Semantic hits arrive as vault-relative POSIX paths — resolve to absolute via byRel map.
-      const r = root.replace(/\\/g, "/").replace(/\/+$/, "");
-      const byRel = new Map<string, string>();
-      for (const e of fileIndex) {
-        const rel = relPosixOf(e.path, root);
-        byRel.set(rel, e.path);
-        if (e.kind === "container") byRel.set(`${rel}/${e.name}.md`, e.path);
-      }
-      const abs = byRel.get(path) ?? (path.startsWith(r) ? path : null);
-      if (abs) node = findNode(tree, abs);
-    }
+    const node = findNode(tree, path) ?? findNodeByNotePath(tree, path);
     if (node) {
       void handleSelect(node);
       nav.pushRecent(node.path);
@@ -1610,8 +1565,8 @@
   function reorderSelected(delta: number): void {
     if (!root || !selectedNode) return;
     const path = selectedNode.path;
-    const parentPath = parentDir(path); // for a root-level node, equals root
-    const parentNode = parentPath === root ? null : findNode(tree, parentPath);
+    const parentPath = parentDir(path); // "" for a node at the top of the vault
+    const parentNode = parentPath === "" ? null : findNode(tree, parentPath);
     const siblings = parentNode ? parentNode.children : tree;
     const ordered = mergeOrder(siblings, nav.order[parentPath] ?? [], (n) => n.path);
     const idx = ordered.findIndex((n) => n.path === path);
@@ -1837,13 +1792,13 @@
         ondrop={(e) => {
           e.preventDefault();
           const s = e.dataTransfer?.getData(DRAG_MIME);
-          if (s && root) handleMove(s, root);
+          if (s && root) handleMove(s, "");
         }}
       >
         <TreeView
           top
           nodes={tree}
-          parentPath={root!}
+          parentPath={""}
           onselect={handleSelect}
           onmove={handleMove}
           onadopt={handleAdopt}
@@ -2185,7 +2140,7 @@
             {/if}
           </div>
           <Backlinks
-            links={backlinks.for(activePath ? toRelative(activePath) : null)}
+            links={backlinks.for(activePath)}
             onOpen={(p) => handleWikiLink(p, undefined)}
           />
           <RelatedNotes
@@ -2221,7 +2176,7 @@
         }}
       />
     {/if}
-    {#if comparingAlternative && root && activePath && comparingAlternative.rel === toRelative(activePath)}
+    {#if comparingAlternative && root && activePath && comparingAlternative.rel === activePath}
       {#key comparingAlternative.id}
         <Alternatives
           {root}
