@@ -20,7 +20,7 @@
 
 use std::collections::BTreeSet;
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use git2::{Diff, DiffOptions, ErrorCode, Index, IndexEntry, IndexTime, Oid, Repository, Tree};
 
@@ -324,10 +324,11 @@ fn unrecorded_among(
     let to_tree = repo.find_commit(to)?.tree()?;
     let mut out = Vec::new();
     for path in changed(repo, from_tree.as_ref(), &to_tree)? {
-        let Some(in_vault) = vault.path_in_vault(Path::new(&path)) else {
+        // A path that cannot be a note's place is refused by `apply`, not weighed here.
+        let Some(place) = place_of(vault, root, &path) else {
             continue;
         };
-        let on_disk = read_if_present(&root.join(&in_vault)).ok().flatten();
+        let on_disk = read_if_present(&place.file).ok().flatten();
         if on_disk != blob_at(repo, Some(&to_tree), &path)?
             && on_disk != blob_at(repo, from_tree.as_ref(), &path)?
         {
@@ -552,23 +553,26 @@ pub fn apply(
         None => None,
     };
     let to_tree = repo.find_commit(to).map_err(err)?.tree().map_err(err)?;
-    let mut changes: Vec<(String, PathBuf)> = Vec::new();
+    // Every note the reference moves over, not only this folder's: the reference is the whole
+    // repository's, so a sibling folder's notes left unwritten would be recorded as received
+    // without ever being on disk — and that folder's next exchange would find nothing to take.
+    let mut changes: Vec<(String, Place)> = Vec::new();
     for path in changed(repo, from_tree.as_ref(), &to_tree).map_err(err)? {
-        if let Some(in_vault) = vault.path_in_vault(Path::new(&path)) {
-            changes.push((path, root.join(in_vault)));
-        }
+        let place = place_of(vault, root, &path)
+            .ok_or_else(|| format!("{path}: this cannot be the place of a note, so nothing was taken in"))?;
+        changes.push((path, place));
     }
     // One order for every caller that holds several notes at once, so two of them cannot each
     // wait for the other.
-    changes.sort_by(|a, b| a.1.cmp(&b.1));
-    let _turns: Vec<_> = changes.iter().map(|(_, file)| locks.turn(file)).collect();
+    changes.sort_by(|a, b| a.1.file.cmp(&b.1.file));
+    let _turns: Vec<_> = changes.iter().map(|(_, place)| locks.turn(&place.file)).collect();
 
     let mut writes = Vec::new();
     let mut kept_back = Vec::new();
-    for (path, file) in &changes {
+    for (path, place) in &changes {
         let recorded = blob_at(repo, from_tree.as_ref(), path).map_err(err)?;
         let arriving = blob_at(repo, Some(&to_tree), path).map_err(err)?;
-        let on_disk = read_if_present(file).map_err(|e| e.to_string())?;
+        let on_disk = read_if_present(&place.file).map_err(|e| e.to_string())?;
         if on_disk == arriving {
             continue;
         }
@@ -576,15 +580,17 @@ pub fn apply(
             kept_back.push(path.clone());
             continue;
         }
-        writes.push((path.clone(), file.clone(), on_disk.is_some(), arriving));
+        writes.push((path.clone(), place.clone(), on_disk.is_some(), arriving));
     }
     if !kept_back.is_empty() {
         return Ok(Taken::KeptBack { notes: kept_back });
     }
 
+    // Said back only for this folder: it is the one the person is looking at.
     let mut written = Vec::new();
     let mut removed = Vec::new();
-    for (path, file, present, arriving) in writes {
+    for (path, place, present, arriving) in writes {
+        let Place { file, top, here } = place;
         match arriving {
             Some(content) => {
                 if let Some(dir) = file.parent() {
@@ -592,20 +598,24 @@ pub fn apply(
                 }
                 // Not registered as the app's own write: an open note has to see it and reload.
                 let wrote = if present {
-                    crate::commands::atomic_write_bytes(root, &file, &content)
+                    crate::commands::atomic_write_bytes(&top, &file, &content)
                 } else {
-                    crate::commands::atomic_create_bytes(root, &file, &content)
+                    crate::commands::atomic_create_bytes(&top, &file, &content)
                 };
                 wrote.map_err(|e| format!("{path}: {e}"))?;
-                written.push(path);
+                if here {
+                    written.push(path);
+                }
             }
             None => {
                 // A note leaving this folder is a deletion here like any other: what it held is
                 // kept where deleted notes are listed, whatever the other side did about it.
-                crate::commands::keep_state_of(root, &file).map_err(|e| format!("{path}: {e}"))?;
+                crate::commands::keep_state_of(&top, &file).map_err(|e| format!("{path}: {e}"))?;
                 crate::fs_ops::patiently(|| std::fs::remove_file(&file))
                     .map_err(|e| format!("{path}: {e}"))?;
-                removed.push(path);
+                if here {
+                    removed.push(path);
+                }
             }
         }
     }
@@ -670,6 +680,47 @@ fn take_in_alternatives(repo: &Repository) -> Result<(), git2::Error> {
         }
     }
     Ok(())
+}
+
+/// Where a note the notes reference holds lives on disk.
+#[derive(Clone)]
+struct Place {
+    file: PathBuf,
+    /// The folder a write to `file` is made from: this folder for its own notes, the
+    /// repository's working tree for a sibling folder's.
+    top: PathBuf,
+    /// Whether `file` is in this folder.
+    here: bool,
+}
+
+/// The place of `path` (relative to the repository), or `None` when it cannot be a note's. What
+/// arrives comes from outside this machine: a path that climbs out, names a drive or a stream,
+/// or reaches into a hidden folder — the repository's own storage among them — is never a place
+/// to write. The app records none of those, so refusing them refuses nothing it sent.
+fn place_of(vault: &VaultRepo, root: &Path, path: &str) -> Option<Place> {
+    let plain = !path.is_empty()
+        && Path::new(path).components().all(|c| match c {
+            Component::Normal(name) => name
+                .to_str()
+                .is_some_and(|name| !name.starts_with('.') && !name.contains(':')),
+            _ => false,
+        });
+    if !plain {
+        return None;
+    }
+    if let Some(in_vault) = vault.path_in_vault(Path::new(path)) {
+        return Some(Place {
+            file: root.join(in_vault),
+            top: root.to_path_buf(),
+            here: true,
+        });
+    }
+    let top = vault.repo().workdir()?.to_path_buf();
+    Some(Place {
+        file: top.join(path),
+        top,
+        here: false,
+    })
 }
 
 fn movement(step: &Step) -> Option<(Option<Oid>, Oid)> {
@@ -1533,5 +1584,102 @@ More.
         let bare = git2::Repository::open(&remote).unwrap();
         assert!(bare.find_reference(crate::publish_assembly::PUBLISHED_REF).is_err());
         assert!(backed_up(repo).unwrap());
+    }
+
+    /// A folder inside `machine`'s repository, opened as its own vault.
+    fn folder(machine: &Machine, name: &str) -> Machine {
+        let root = machine.root.join(name);
+        std::fs::create_dir_all(&root).unwrap();
+        let vault = crate::git_engine::prepare(&root).unwrap();
+        Machine { root, vault }
+    }
+
+    #[test]
+    fn notes_of_a_sibling_folder_are_written_where_that_folder_is() {
+        let (_tmp, remote, a, b) = setup();
+        a.record("x/plan.md", "# Plan");
+        a.record("y/n.md", "# N");
+        a.send(&remote);
+        let x = folder(&b, "x");
+        folder(&b, "y");
+
+        let taken = x.apply(&x.take(&remote));
+        // Only this folder's notes are said; the sibling's are on disk all the same.
+        assert_eq!(
+            taken,
+            Taken::Done {
+                written: vec!["x/plan.md".into()],
+                removed: vec![]
+            }
+        );
+        assert_eq!(b.read("y/n.md").as_deref(), Some("# N"));
+        assert_eq!(b.tip(), a.tip());
+
+        // The sibling, opened next, has nothing left to take: it already matches the record.
+        let y = folder(&b, "y");
+        let next = y.take(&remote);
+        assert!(matches!(next.notes, Step::Nothing), "{:?}", next.notes);
+
+        // A note the other side removes from the sibling leaves it here too, kept among deleted
+        // notes.
+        std::fs::remove_file(a.root.join("y/n.md")).unwrap();
+        let repo = a.repo();
+        let tip = repo.find_commit(a.tip()).unwrap();
+        let mut index = Index::new().unwrap();
+        index.read_tree(&tip.tree().unwrap()).unwrap();
+        index.remove_path(Path::new("y/n.md")).unwrap();
+        let tree = repo.find_tree(index.write_tree_to(repo).unwrap()).unwrap();
+        let (author, committer) = commit_identities(repo).unwrap();
+        repo.commit(Some(NOTES_REF), &author, &committer, "remove", &tree, &[&tip])
+            .unwrap();
+        a.send(&remote);
+        let taken = x.apply(&x.take(&remote));
+        assert_eq!(
+            taken,
+            Taken::Done {
+                written: vec![],
+                removed: vec![]
+            }
+        );
+        assert!(b.read("y/n.md").is_none());
+        let kept = crate::git_engine::tip_tree(b.repo(), SNAPSHOT_REF).unwrap();
+        assert!(kept.get_path(Path::new("y/n.md")).is_ok());
+    }
+
+    #[test]
+    fn an_unrecorded_edit_in_a_sibling_folder_keeps_everything_back() {
+        let (_tmp, remote, a, b) = setup();
+        a.record("x/plan.md", "# Plan");
+        a.record("y/n.md", "# N");
+        a.send(&remote);
+        let x = folder(&b, "x");
+        b.save("y/n.md", "# Written here, never recorded");
+
+        let plan = x.take(&remote);
+        assert_eq!(plan.unrecorded_here, vec!["y/n.md".to_string()]);
+        assert_eq!(
+            x.apply(&plan),
+            Taken::KeptBack {
+                notes: vec!["y/n.md".into()]
+            }
+        );
+        assert!(x.read("plan.md").is_none(), "all of it or none of it");
+        assert_eq!(b.read("y/n.md").as_deref(), Some("# Written here, never recorded"));
+        assert!(id_of(b.repo(), NOTES_REF).is_none());
+    }
+
+    #[test]
+    fn a_path_that_cannot_be_a_note_is_never_written() {
+        let (_tmp, remote, a, b) = setup();
+        a.record("plan.md", "# Plan");
+        a.record(".hidden/n.md", "# Hidden");
+        a.send(&remote);
+
+        let plan = b.take(&remote);
+        let refused = apply(&b.vault, &b.root, &plan, &NoteLocks::default()).unwrap_err();
+        assert!(refused.contains(".hidden/n.md"), "{refused}");
+        assert!(b.read("plan.md").is_none(), "nothing was taken in");
+        assert!(b.read(".hidden/n.md").is_none());
+        assert!(id_of(b.repo(), NOTES_REF).is_none());
     }
 }
