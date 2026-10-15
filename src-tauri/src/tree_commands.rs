@@ -263,6 +263,7 @@ pub async fn save_attachment(
     ext: String,
     locks: State<'_, Arc<NoteLocks>>,
 ) -> Result<String, String> {
+    let note = crate::vault_paths::resolve(&root, &note)?.to_string_lossy().into_owned();
     let folder = folder_of(&note).join("assets");
     creating(&locks, folder, move || commands::save_attachment(root, note, data, ext)).await
 }

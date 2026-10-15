@@ -3,6 +3,7 @@ import type { ChatMessage } from './ask.helpers';
 import type { DownloadSnapshot } from './modelDownload.helpers';
 import type { ByoConfig } from './byoConfig';
 import type { PublishChoice } from './publishScope.helpers';
+import { absOut, relIn } from "./vaultPathsAdapter";
 
 export type NodeKind = "leaf" | "container";
 
@@ -38,7 +39,7 @@ export async function listTree(root: string): Promise<TreeNode[]> {
 }
 
 export async function readNote(root: string, path: string): Promise<string> {
-  return invoke<string>("read_note", { root, path });
+  return invoke<string>("read_note", { root, rel: relIn(root, path) });
 }
 
 /**
@@ -57,7 +58,7 @@ export async function writeNote(
   content: string,
   expected: string,
 ): Promise<WriteOutcome> {
-  return invoke<WriteOutcome>("write_note", { root, path, content, expected });
+  return invoke<WriteOutcome>("write_note", { root, rel: relIn(root, path), content, expected });
 }
 
 /**
@@ -315,7 +316,7 @@ export async function saveAttachment(
   data: string,
   ext: string,
 ): Promise<string> {
-  return invoke<string>("save_attachment", { root, note, data, ext });
+  return invoke<string>("save_attachment", { root, note: relIn(root, note), data, ext });
 }
 
 export async function deleteNode(root: string, path: string): Promise<void> {
@@ -367,7 +368,7 @@ export interface StrandedEdit {
 
 /** Keep an unwritten edit where it outlasts the app. Returns its id. */
 export async function keepStranded(root: string, path: string, text: string, base: string): Promise<string> {
-  return invoke<string>("keep_stranded", { root, path, text, base });
+  return invoke<string>("keep_stranded", { root, rel: relIn(root, path), text, base });
 }
 
 /** Let go of a kept edit once it has landed. */
@@ -377,7 +378,8 @@ export async function forgetStranded(root: string, id: string): Promise<void> {
 
 /** Edits kept for this vault's notes from an earlier run, oldest first. */
 export async function listStranded(root: string): Promise<StrandedEdit[]> {
-  return invoke<StrandedEdit[]>("list_stranded", { root });
+  const kept = await invoke<(Omit<StrandedEdit, "path"> & { rel: string })[]>("list_stranded", { root });
+  return kept.map(({ rel, ...edit }) => ({ ...edit, path: absOut(root, rel) }));
 }
 
 /** Move an unreadable settings file aside, keeping it. Returns the name it is kept under. */

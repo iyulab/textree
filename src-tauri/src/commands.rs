@@ -485,7 +485,8 @@ pub fn set_aside_sidecar(root: String, rel: String) -> Result<String, String> {
 #[serde(rename_all = "camelCase")]
 pub struct StrandedEdit {
     pub id: String,
-    pub path: String,
+    /// The note it was typed into, relative to the folder.
+    pub rel: String,
     pub text: String,
     pub base: String,
 }
@@ -498,14 +499,14 @@ fn stranded_dir(root: &Path) -> Result<PathBuf, String> {
 #[tauri::command]
 pub async fn keep_stranded(
     root: String,
-    path: String,
+    rel: String,
     text: String,
     base: String,
 ) -> Result<String, String> {
     off_main(move || {
+        // From the text alone: the folder may be the very one that stopped answering.
+        crate::vault_paths::plain(&rel)?;
         let root = PathBuf::from(root);
-        let rel = crate::stranded::relative(&root, Path::new(&path))
-            .ok_or_else(|| "path is outside the vault".to_string())?;
         let at = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_millis() as u64)
@@ -535,15 +536,11 @@ pub async fn list_stranded(root: String) -> Result<Vec<StrandedEdit>, String> {
 fn stranded_edits(root: &Path) -> Result<Vec<StrandedEdit>, String> {
     Ok(crate::stranded::list(&stranded_dir(root)?)
         .into_iter()
-        .map(|(id, kept)| {
-            let mut path = root.to_path_buf();
-            path.extend(kept.rel.split('/'));
-            StrandedEdit {
-                id,
-                path: path.to_string_lossy().to_string(),
-                text: kept.text,
-                base: kept.base,
-            }
+        .map(|(id, kept)| StrandedEdit {
+            id,
+            rel: kept.rel,
+            text: kept.text,
+            base: kept.base,
         })
         .collect())
 }
@@ -567,8 +564,12 @@ pub(crate) fn tree_of(root: String) -> Result<Vec<TreeNode>, String> {
 }
 
 #[tauri::command]
-pub async fn read_note(root: String, path: String) -> Result<String, String> {
-    off_main(move || note_text(root, path)).await
+pub async fn read_note(root: String, rel: String) -> Result<String, String> {
+    off_main(move || {
+        let path = crate::vault_paths::resolve(&root, &rel)?;
+        note_text(root, path.to_string_lossy().into_owned())
+    })
+    .await
 }
 
 pub(crate) fn note_text(root: String, path: String) -> Result<String, String> {
@@ -615,7 +616,7 @@ fn stale_base(path: &Path, expected: &str) -> io::Result<Option<WriteOutcome>> {
 #[tauri::command]
 pub async fn write_note(
     root: String,
-    path: String,
+    rel: String,
     content: String,
     expected: String,
     own: State<'_, tauri_kit_watch::OwnWrites>,
@@ -624,7 +625,8 @@ pub async fn write_note(
 ) -> Result<WriteOutcome, String> {
     let (own, locks) = (own.inner().clone(), locks.inner().clone());
     off_main(move || {
-        let (root, path) = (PathBuf::from(root), PathBuf::from(path));
+        let path = crate::vault_paths::resolve(&root, &rel)?;
+        let root = PathBuf::from(root);
         let outcome = save_note(&root, &path, &content, &expected, &own, &locks)?;
         if outcome == WriteOutcome::Written {
             refresh_indexes(&app, root, path);
@@ -2977,7 +2979,7 @@ mod tests {
     }
 
     #[test]
-    fn kept_edits_come_back_as_paths_in_the_folder_they_were_typed_in() {
+    fn kept_edits_come_back_as_the_notes_they_were_typed_into() {
         let tmp = TempDir::new().unwrap();
         let dir = stranded_dir(tmp.path()).unwrap();
         let kept = crate::stranded::Kept {
@@ -2993,7 +2995,7 @@ mod tests {
             back,
             vec![StrandedEdit {
                 id: id.clone(),
-                path: tmp.path().join("sub").join("a.md").to_string_lossy().to_string(),
+                rel: "sub/a.md".into(),
                 text: "typed".into(),
                 base: "before".into(),
             }]

@@ -350,7 +350,7 @@ test("a save never replaces a change it has not seen", async () => {
             window as unknown as {
               __TAURI_INTERNALS__: { invoke: (cmd: string, args: unknown) => Promise<unknown> };
             }
-          ).__TAURI_INTERNALS__.invoke("write_note", { root, path: `${root}/cas.md`, content, expected }),
+          ).__TAURI_INTERNALS__.invoke("write_note", { root, rel: "cas.md", content, expected }),
         [vault, content, expected],
       );
 

@@ -47,6 +47,12 @@ fn parts(rel: &str) -> Result<Vec<&str>, String> {
     Ok(parts)
 }
 
+/// Whether `rel` is made of plain names, from its text alone. For the one place that must not look
+/// at the disk: keeping an edit for a folder that stopped answering would hang on that folder.
+pub fn plain(rel: &str) -> Result<(), String> {
+    parts(rel).map(|_| ())
+}
+
 fn joined(root: &str, parts: &[&str]) -> PathBuf {
     parts.iter().fold(PathBuf::from(root), |p, name| p.join(name))
 }
@@ -114,6 +120,14 @@ mod tests {
     fn a_path_that_does_not_exist_yet_resolves_when_its_folder_is_inside() {
         let (d, root) = vault();
         assert_eq!(resolve(&root, "new/n.md").unwrap(), d.path().join("new").join("n.md"));
+    }
+
+    #[test]
+    fn plain_names_are_judged_from_the_text_alone() {
+        assert_eq!(plain("sub/a.md"), Ok(()));
+        for bad in ["", "../escape.md", "a/../../b.md", "C:/x.md"] {
+            assert_eq!(plain(bad).unwrap_err(), OUTSIDE, "{bad:?}");
+        }
     }
 
     #[test]
