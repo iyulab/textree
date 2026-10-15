@@ -371,7 +371,8 @@ pub fn clear_secret(key: &str) -> Result<(), String> {
     secrets().delete(key).map_err(|e| e.to_string())
 }
 
-/// What one exchange with the remote did.
+/// What one exchange with the remote did. Notes are named relative to the folder, as everywhere
+/// else on the screen's side — not relative to a repository the folder may sit inside.
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Exchange {
@@ -407,17 +408,17 @@ pub fn exchange(
         let plan = plan(vault, root).map_err(err)?;
         match apply(vault, root, &plan, locks)? {
             Taken::Done { written, removed } => {
-                out.received.extend(written);
-                out.removed.extend(removed);
+                out.received.extend(in_folder(vault, written));
+                out.removed.extend(in_folder(vault, removed));
             }
             Taken::Held {
                 overlap,
                 alternatives,
             } => {
-                out.held = overlap;
-                out.alternatives = alternatives;
+                out.held = in_folder(vault, overlap);
+                out.alternatives = in_folder(vault, alternatives);
             }
-            Taken::KeptBack { notes } => out.kept_back = notes,
+            Taken::KeptBack { notes } => out.kept_back = in_folder(vault, notes),
             Taken::Nothing | Taken::Overtaken => {}
         }
         match push(repo, url, credentials.clone()).map_err(err)? {
@@ -433,6 +434,16 @@ pub fn exchange(
         }
     }
     Ok(out)
+}
+
+/// Repository paths as the folder names them. A path outside the folder is another folder's
+/// note sharing the repository, and is not this folder's to name.
+fn in_folder(vault: &VaultRepo, paths: Vec<String>) -> Vec<String> {
+    paths
+        .iter()
+        .filter_map(|p| vault.path_in_vault(Path::new(p)))
+        .map(|p| crate::git_engine::slashed(&p))
+        .collect()
 }
 
 /// After a send the remote holds exactly this machine's references. Recording that under
@@ -733,7 +744,7 @@ mod tests {
             commit_paths(
                 self.repo(),
                 NOTES_REF,
-                &[(PathBuf::from(rel), text.as_bytes().to_vec())],
+                &[(self.vault.path_in_repo(Path::new(rel)), text.as_bytes().to_vec())],
                 "version",
                 &author,
                 &committer,
@@ -1163,6 +1174,43 @@ mod tests {
             b"# From a
 "
         );
+    }
+
+    #[test]
+    fn what_an_exchange_names_is_relative_to_a_folder_inside_a_repository() {
+        let tmp = tempfile::tempdir().unwrap();
+        let remote = tmp.path().join("remote.git");
+        Repository::init_bare(&remote).unwrap();
+        // Each machine opens a folder inside a repository that also holds other things.
+        let machine = |name: &str| {
+            Repository::init(tmp.path().join(name)).unwrap();
+            Machine::new(tmp.path().join(name).join("notes"))
+        };
+        let (a, b) = (machine("a"), machine("b"));
+        let url = Machine::url_of(&remote);
+        let exchange_on =
+            |m: &Machine| exchange(&m.vault, &m.root, &url, None, &NoteLocks::default()).unwrap();
+
+        a.record("sub/manual.md", "# Manual\n");
+        a.record("old.md", "# Old\n");
+        a.send(&remote);
+        let mut received = exchange_on(&b).received;
+        received.sort();
+        assert_eq!(received, vec!["old.md".to_string(), "sub/manual.md".to_string()]);
+        assert_eq!(b.read("sub/manual.md").as_deref(), Some("# Manual\n"));
+
+        b.save("old.md", "# Old\n\nTyped here, not yet a version.\n");
+        a.record("old.md", "# Old\n\nFrom a.\n");
+        a.send(&remote);
+        assert_eq!(exchange_on(&b).kept_back, vec!["old.md".to_string()]);
+        b.record("old.md", "# Old\n\nFrom a.\n");
+
+        a.record("sub/manual.md", "# Manual\n\nFrom a.\n");
+        a.send(&remote);
+        b.record("sub/manual.md", "# Manual\n\nFrom b.\n");
+        let held = exchange_on(&b);
+        assert_eq!(held.held, vec!["sub/manual.md".to_string()]);
+        assert_eq!(held.alternatives, vec!["sub/manual.md".to_string()]);
     }
 
     #[test]

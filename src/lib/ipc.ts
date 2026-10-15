@@ -505,7 +505,7 @@ export interface RemoteConnection {
   username: string;
 }
 
-/** What one exchange with the remote did. */
+/** What one exchange with the remote did. Notes are named relative to the folder. */
 export interface RemoteExchange {
   /** Notes written here because they arrived. */
   received: string[];
