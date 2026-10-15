@@ -11,7 +11,7 @@
 
 use std::cell::RefCell;
 use std::io::{self, Read, Write};
-use std::sync::Once;
+use std::sync::{Once, OnceLock};
 use std::time::Duration;
 
 use base64::Engine;
@@ -21,6 +21,99 @@ use git2::{Error, Remote};
 /// How long connecting, or waiting for the server to start answering, may take. A pack can take
 /// much longer than this to arrive, so the body itself is not bounded by it.
 const WAIT: Duration = Duration::from_secs(30);
+
+/// How long the server may send nothing at all, at any point of an exchange, before it is taken
+/// for gone. A pack may take as long as it takes while it keeps arriving; a connection that has
+/// died without closing (a computer gone to sleep, a dropped route) would otherwise be waited on
+/// for good, and the folder would stop being backed up until the app restarts.
+#[cfg(not(test))]
+const IDLE: Duration = Duration::from_secs(60);
+#[cfg(test)]
+const IDLE: Duration = Duration::from_secs(5);
+
+/// The HTTP client every exchange goes through: ureq's own connectors, with each wait for the
+/// server cut off at [`IDLE`].
+fn agent() -> &'static ureq::Agent {
+    use ureq::unversioned::resolver::DefaultResolver;
+    use ureq::unversioned::transport::{Connector, DefaultConnector};
+    static AGENT: OnceLock<ureq::Agent> = OnceLock::new();
+    AGENT.get_or_init(|| {
+        ureq::Agent::with_parts(
+            ureq::Agent::config_builder().build(),
+            DefaultConnector::new().chain(Idle),
+            DefaultResolver::default(),
+        )
+    })
+}
+
+/// Wraps the connection ureq makes so that no single wait on it outlasts [`IDLE`]. ureq bounds a
+/// whole phase (connecting, the response head, the body); this bounds the silence within one, so
+/// a body that keeps arriving is never cut, and one that stops is.
+#[derive(Debug)]
+struct Idle;
+
+impl ureq::unversioned::transport::Connector<Box<dyn ureq::unversioned::transport::Transport>> for Idle {
+    type Out = IdleTransport;
+
+    fn connect(
+        &self,
+        _details: &ureq::unversioned::transport::ConnectionDetails,
+        chained: Option<Box<dyn ureq::unversioned::transport::Transport>>,
+    ) -> Result<Option<IdleTransport>, ureq::Error> {
+        Ok(chained.map(IdleTransport))
+    }
+}
+
+#[derive(Debug)]
+struct IdleTransport(Box<dyn ureq::unversioned::transport::Transport>);
+
+/// The phase's own deadline, or [`IDLE`] from now when that comes first.
+fn within_idle(timeout: ureq::unversioned::transport::NextTimeout) -> ureq::unversioned::transport::NextTimeout {
+    let idle = ureq::unversioned::transport::time::Duration::from(IDLE);
+    if timeout.after > idle {
+        ureq::unversioned::transport::NextTimeout { after: idle, reason: timeout.reason }
+    } else {
+        timeout
+    }
+}
+
+impl ureq::unversioned::transport::Transport for IdleTransport {
+    fn buffers(&mut self) -> &mut dyn ureq::unversioned::transport::Buffers {
+        self.0.buffers()
+    }
+
+    fn transmit_output(
+        &mut self,
+        amount: usize,
+        timeout: ureq::unversioned::transport::NextTimeout,
+    ) -> Result<(), ureq::Error> {
+        self.0.transmit_output(amount, within_idle(timeout))
+    }
+
+    fn await_input(&mut self, timeout: ureq::unversioned::transport::NextTimeout) -> Result<bool, ureq::Error> {
+        self.0.await_input(within_idle(timeout))
+    }
+
+    fn is_open(&mut self) -> bool {
+        self.0.is_open()
+    }
+
+    fn is_tls(&self) -> bool {
+        self.0.is_tls()
+    }
+}
+
+/// The body of an answer, with a failure partway through said the way every other failure to reach
+/// the remote is.
+struct Answer(Box<dyn Read + Send>);
+
+impl Read for Answer {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        self.0
+            .read(buf)
+            .map_err(|e| io::Error::new(e.kind(), format!("could not reach the remote: {e}")))
+    }
+}
 
 /// What to send a remote to prove who is asking.
 #[derive(Clone)]
@@ -149,7 +242,7 @@ impl HttpStream {
                 let url = format!("{}/info/refs?service={service}", self.base);
                 // No `Git-Protocol` header: a server that honours it answers with a leading
                 // "version 1" line, which libgit2's parser does not accept.
-                let mut req = ureq::get(&url);
+                let mut req = agent().get(&url);
                 if let Some(auth) = &authorization {
                     req = req.header("Authorization", auth);
                 }
@@ -162,7 +255,7 @@ impl HttpStream {
             }
             Some(body) => {
                 let url = format!("{}/{service}", self.base);
-                let mut req = ureq::post(&url)
+                let mut req = agent().post(&url)
                     .header("Content-Type", format!("application/x-{service}-request"))
                     .header("Accept", format!("application/x-{service}-result"));
                 if let Some(auth) = &authorization {
@@ -219,7 +312,7 @@ impl HttpStream {
                 "this address does not serve a git repository over smart HTTP",
             ));
         }
-        Ok(Box::new(response.into_body().into_reader()))
+        Ok(Box::new(Answer(Box::new(response.into_body().into_reader()))))
     }
 }
 
@@ -410,6 +503,86 @@ mod tests {
             .unwrap()
         };
         (repo, id)
+    }
+
+    /// A server that reads one request and answers with `head`, then sends `body` a byte at a time
+    /// with `gap` between bytes — or, with no gap, sends nothing more and keeps the connection open.
+    fn answering(head: &'static [u8], body: &'static [u8], gap: Option<Duration>) -> u16 {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut s) = stream else { return };
+                std::thread::spawn(move || {
+                    let mut buf = [0u8; 4096];
+                    let mut seen: Vec<u8> = Vec::new();
+                    while !seen.windows(4).any(|w| w == b"\r\n\r\n") {
+                        match s.read(&mut buf) {
+                            Ok(0) | Err(_) => return,
+                            Ok(n) => seen.extend_from_slice(&buf[..n]),
+                        }
+                    }
+                    let _ = s.write_all(head);
+                    match gap {
+                        Some(gap) => {
+                            for byte in body {
+                                std::thread::sleep(gap);
+                                if s.write_all(&[*byte]).is_err() {
+                                    return;
+                                }
+                            }
+                        }
+                        None => {
+                            let _ = s.write_all(body);
+                            std::thread::sleep(Duration::from_secs(120));
+                        }
+                    }
+                });
+            }
+        });
+        port
+    }
+
+    #[test]
+    fn a_server_that_stops_sending_partway_is_given_up_on() {
+        let port = answering(b"HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\nxx", b"", None);
+        let started = std::time::Instant::now();
+        let response = agent().get(&format!("http://127.0.0.1:{port}/")).call().unwrap();
+        let mut body = Vec::new();
+        let read = response.into_body().into_reader().read_to_end(&mut body);
+        assert!(read.is_err(), "the body never completes, so reading it must fail");
+        let waited = started.elapsed();
+        assert!(waited >= IDLE && waited < IDLE + Duration::from_secs(10), "gave up after {waited:?}");
+    }
+
+    #[test]
+    fn a_body_that_keeps_arriving_is_not_cut_however_long_it_takes() {
+        // Ten bytes two seconds apart: twenty seconds in all, four times the silence allowed.
+        let port = answering(b"HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\n", b"0123456789", Some(Duration::from_secs(2)));
+        let started = std::time::Instant::now();
+        let response = agent().get(&format!("http://127.0.0.1:{port}/")).call().unwrap();
+        let mut body = String::new();
+        response.into_body().into_reader().read_to_string(&mut body).unwrap();
+        assert_eq!(body, "0123456789");
+        assert!(started.elapsed() > IDLE * 3, "the test must outlast the silence allowed");
+    }
+
+    #[test]
+    fn a_remote_that_stops_answering_ends_the_fetch_and_says_it_could_not_be_reached() {
+        let port = answering(
+            b"HTTP/1.1 200 OK\r\nContent-Type: application/x-git-upload-pack-advertisement\r\nContent-Length: 4000\r\n\r\n001e# service=git-upload-pack\n",
+            b"",
+            None,
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let (repo, _) = recorded(dir.path(), b"x");
+        install();
+        let mut remote = repo.remote_anonymous(&format!("http://127.0.0.1:{port}/repo.git")).unwrap();
+        let started = std::time::Instant::now();
+        let err = with_credentials(None, || remote.fetch(&[NOTES], None, None)).unwrap_err();
+        assert!(started.elapsed() < IDLE + Duration::from_secs(10), "took {:?}", started.elapsed());
+        assert!(err.message().contains("could not reach the remote"), "{}", err.message());
     }
 
     fn bare(root: &Path) {
