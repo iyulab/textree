@@ -16,7 +16,7 @@
  */
 
 import { spawn, spawnSync } from "node:child_process";
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync } from "node:fs";
+import { closeSync, copyFileSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, writeSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -145,6 +145,8 @@ try {
   const outcomes = [];
   for (let round = 1; round <= soak; round++) {
     if (soak > 1) console.log(`\n[e2e:run] ── round ${round}/${soak}`);
+    // The app's log spans every round; a marker says where each began, to line a failure up with it.
+    writeSync(log, `\n[e2e:run] ── round ${round}/${soak} starts ${new Date().toISOString()}\n`);
     const run = spawnSync(`npx playwright test ${playwrightArgs.join(" ")}`, {
       cwd: REPO,
       env,
@@ -162,5 +164,11 @@ try {
 } finally {
   stopApp();
   closeSync(log);
+}
+// The next run starts the log afresh; a failed run's log is what explains it, so it is kept.
+if (exitCode !== 0 && existsSync(APP_LOG)) {
+  const kept = join(dirname(APP_LOG), `app-failed-${new Date().toISOString().replace(/[:.]/g, "-")}.log`);
+  copyFileSync(APP_LOG, kept);
+  console.log(`[e2e:run] the app's log of this failed run is kept at ${kept}`);
 }
 process.exit(exitCode);
