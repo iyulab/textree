@@ -10,7 +10,7 @@ use tauri_kit_sidecar::loopback::{Client, Loopback, LoopbackOptions};
 
 // Every request to the host goes through a `Client`: it carries the per-run token the host serves
 // only to this app, so none can leave the token out.
-use tauri_kit_sidecar::{LineReadiness, Output, Sidecar};
+use tauri_kit_sidecar::{LineReadiness, Output, Sidecar, Sink};
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -83,7 +83,7 @@ fn host_options(log_dir: &Path) -> LoopbackOptions {
     // host-out.log / host-err.log land in app_log_dir so they sit next to textree.log and the
     // "Open log folder" palette command exposes them in one place.
     options.stdout = Some(log_dir.join("host-out.log"));
-    options.stderr = Some(log_dir.join("host-err.log"));
+    options.stderr = log_dir.join("host-err.log").into();
     options
 }
 
@@ -613,7 +613,7 @@ pub fn probe_byo_connection(
     if let Some(key) = api_key.filter(|k| !k.is_empty()) {
         cmd.env("TEXTREE_BYO_API_KEY", key);
     }
-    let mut child = Sidecar::spawn(cmd, Output::Lines { stdout: None, stderr: None })
+    let mut child = Sidecar::spawn(cmd, Output::Lines { stdout: None, stderr: Sink::Discard })
         .map_err(|e| format!("The AI helper could not be started: {e}"))?;
     let line = child.wait_line(PROBE_DEADLINE, |l| l.trim_start().starts_with('{'));
     let _ = child.shutdown(Duration::ZERO);
