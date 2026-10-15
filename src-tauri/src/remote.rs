@@ -37,7 +37,7 @@ const OWN: &str = "refs/textree/";
 /// The message of a revision that joins two sides which changed different notes.
 pub const JOIN_MESSAGE: &str = "Joined changes from another device";
 
-fn tracking_of(local: &str) -> String {
+pub(crate) fn tracking_of(local: &str) -> String {
     format!("{TRACKING}{}", local.strip_prefix(OWN).unwrap_or(local))
 }
 

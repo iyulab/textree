@@ -133,15 +133,33 @@ pub fn follow_moves(repo: &Repository, moves: &[(PathBuf, PathBuf)]) -> Result<(
     })
 }
 
-const TRACKED: &str = "refs/textree-remote/public";
+fn value_of(choices: &[Choice], path: &str) -> Option<bool> {
+    choices.iter().find(|c| c.path.eq_ignore_ascii_case(path)).map(|c| c.include)
+}
 
-/// Where two sides disagree about one path, the note stays out — one device withholding it is enough.
-fn join(mine: &[Choice], other: &[Choice]) -> Vec<Choice> {
-    let mut joined: Vec<Choice> = Vec::new();
-    for c in mine.iter().chain(other.iter()) {
-        match joined.iter_mut().find(|j| j.path.eq_ignore_ascii_case(&c.path)) {
-            Some(j) => j.include = j.include && c.include,
-            None => joined.push(c.clone()),
+/// Joins two sides against what both started from. A side that did not touch a path takes the
+/// other side's value (so a choice one device withdrew stays withdrawn); where both changed it
+/// differently, the note stays out — one device withholding it is enough.
+fn join(base: &[Choice], mine: &[Choice], other: &[Choice]) -> Vec<Choice> {
+    let mut paths: Vec<&str> = Vec::new();
+    for c in mine.iter().chain(other.iter()).chain(base.iter()) {
+        if !paths.iter().any(|p| p.eq_ignore_ascii_case(&c.path)) {
+            paths.push(&c.path);
+        }
+    }
+    let mut joined = Vec::new();
+    for path in paths {
+        let (b, m, o) = (value_of(base, path), value_of(mine, path), value_of(other, path));
+        let (value, from) = if m == b {
+            (o, other)
+        } else if o == b || m == o {
+            (m, mine)
+        } else {
+            (Some(false), mine)
+        };
+        if let Some(include) = value {
+            let spelled = from.iter().chain(mine).chain(other).find(|c| c.path.eq_ignore_ascii_case(path));
+            joined.push(Choice { path: spelled.map_or(path, |c| c.path.as_str()).to_string(), include });
         }
     }
     joined
@@ -151,7 +169,7 @@ fn join(mine: &[Choice], other: &[Choice]) -> Vec<Choice> {
 /// simply behind, keep when it is ahead, and otherwise join the two in one revision. Everything is
 /// read inside one turn, so a choice made here meanwhile is never joined from a stale tip.
 pub fn take_in(repo: &Repository) -> Result<(), git2::Error> {
-    let Ok(theirs) = repo.refname_to_id(TRACKED) else { return Ok(()) };
+    let Ok(theirs) = repo.refname_to_id(&crate::remote::tracking_of(PUBLIC_REF)) else { return Ok(()) };
     let (author, committer) = crate::git_engine::commit_identities(repo)?;
     const MESSAGE: &str = "Publish choices from another device";
     crate::git_engine::advancing(|| {
@@ -162,11 +180,21 @@ pub fn take_in(repo: &Repository) -> Result<(), git2::Error> {
                 crate::git_engine::advance(repo, PUBLIC_REF, theirs, Some(ours), MESSAGE)
             }
             Some(ours) => {
-                let joined = join(&read(repo, PUBLIC_REF)?, &read(repo, TRACKED)?);
+                // The other side is read from the commit taken above, never from the moving reference.
+                let (a, b) = (repo.find_commit(ours)?, repo.find_commit(theirs)?);
+                let base = match repo.merge_base(ours, theirs) {
+                    Ok(id) => choices_in(repo, Some(&repo.find_commit(id)?.tree()?))?,
+                    Err(e) if e.code() == git2::ErrorCode::NotFound => Vec::new(),
+                    Err(e) => return Err(e),
+                };
+                let joined = join(
+                    &base,
+                    &choices_in(repo, Some(&a.tree()?))?,
+                    &choices_in(repo, Some(&b.tree()?))?,
+                );
                 let blob = repo.blob(render(&joined).as_bytes())?;
                 let tree = crate::git_engine::tree_with_file(repo, None, Path::new(FILE), Some(blob))?;
                 let tree = repo.find_tree(tree)?;
-                let (a, b) = (repo.find_commit(ours)?, repo.find_commit(theirs)?);
                 let commit = repo.commit(None, &author, &committer, "Publish choices joined with another device", &tree, &[&a, &b])?;
                 crate::git_engine::advance(repo, PUBLIC_REF, commit, Some(ours), MESSAGE)
             }
@@ -320,6 +348,69 @@ mod tests {
         // Taking in again changes nothing: this side now contains the other.
         take_in(&repo).unwrap();
         assert_eq!(repo.refname_to_id(PUBLIC_REF).unwrap(), joined.id());
+    }
+
+    /// Records the other device's state from `base` as the tracking reference, then rewinds this
+    /// side to `base` and applies `mine` to it.
+    fn diverge(
+        repo: &git2::Repository,
+        theirs_change: impl Fn(&git2::Repository),
+        mine_change: impl Fn(&git2::Repository),
+    ) {
+        let base = repo.refname_to_id(PUBLIC_REF).unwrap();
+        theirs_change(repo);
+        let theirs = repo.refname_to_id(PUBLIC_REF).unwrap();
+        repo.reference("refs/textree-remote/public", theirs, true, "t").unwrap();
+        repo.reference(PUBLIC_REF, base, true, "rewind").unwrap();
+        mine_change(repo);
+        take_in(repo).unwrap();
+    }
+
+    #[test]
+    fn a_choice_withdrawn_on_one_device_stays_withdrawn_after_joining() {
+        let (_d, repo) = repo();
+        set(&repo, "work", Some(true)).unwrap();
+        diverge(
+            &repo,
+            |r| set(r, "other.md", Some(true)).unwrap(),
+            |r| set(r, "work", None).unwrap(),
+        );
+        let got = read(&repo, PUBLIC_REF).unwrap();
+        assert!(!is_included("work/a.md", &got));
+        assert!(is_included("other.md", &got));
+    }
+
+    #[test]
+    fn a_move_on_one_device_is_not_undone_by_the_stale_choice_on_the_other() {
+        let (_d, repo) = repo();
+        set(&repo, "blog", Some(true)).unwrap();
+        diverge(
+            &repo,
+            |r| set(r, "other.md", Some(true)).unwrap(),
+            |r| follow_moves(r, &[(PathBuf::from("blog"), PathBuf::from("site/blog"))]).unwrap(),
+        );
+        let got = read(&repo, PUBLIC_REF).unwrap();
+        assert!(!is_included("blog/x.md", &got));
+        assert!(is_included("site/blog/x.md", &got));
+    }
+
+    #[test]
+    fn choices_with_no_common_start_leave_out_where_they_disagree() {
+        let (_d, repo) = repo();
+        let (author, committer) = crate::git_engine::commit_identities(&repo).unwrap();
+        let root = |choices: Vec<Choice>| {
+            let blob = repo.blob(render(&choices).as_bytes()).unwrap();
+            let t = crate::git_engine::tree_with_file(&repo, None, Path::new(FILE), Some(blob)).unwrap();
+            repo.commit(None, &author, &committer, "root", &repo.find_tree(t).unwrap(), &[]).unwrap()
+        };
+        let theirs = root(vec![Choice { path: "work".into(), include: false }]);
+        let ours = root(vec![Choice { path: "work".into(), include: true }, Choice { path: "a.md".into(), include: true }]);
+        repo.reference("refs/textree-remote/public", theirs, true, "t").unwrap();
+        repo.reference(PUBLIC_REF, ours, true, "o").unwrap();
+        take_in(&repo).unwrap();
+        let got = read(&repo, PUBLIC_REF).unwrap();
+        assert!(!is_included("work/a.md", &got));
+        assert!(is_included("a.md", &got));
     }
 
     #[test]
