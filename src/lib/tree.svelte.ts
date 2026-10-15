@@ -34,6 +34,14 @@ class TreeStore {
       localStorage.setItem(COLLAPSE_KEY, JSON.stringify([...this.collapsed]));
   }
 
+  /** A folder moved or was renamed: it stays collapsed, and so do the folders under it. */
+  follow(remap: (p: string) => string): void {
+    const next = new Set([...this.collapsed].map(remap));
+    if (next.size === this.collapsed.size && [...next].every((p) => this.collapsed.has(p))) return;
+    this.collapsed = next;
+    this.persist();
+  }
+
   collapse(path: string): void {
     if (this.collapsed.has(path)) return;
     const next = new Set(this.collapsed);

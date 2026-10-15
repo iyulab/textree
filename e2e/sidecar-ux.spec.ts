@@ -111,6 +111,46 @@ test("favorite toggle → favorites.json add/remove persists", async () => {
   }
 });
 
+test("renaming keeps what was kept by path: a favorite, and the order inside a renamed folder", async () => {
+  const vault = createTempVault({ "starme.md": "x\n", "blog/alpha.md": "a\n", "blog/bravo.md": "b\n" });
+  try {
+    await loadVault(page, vault);
+    // Favorite a note, then rename it.
+    await page.getByRole("treeitem", { name: /starme/ }).click();
+    await runCommand(page, ">favorite");
+    await page.getByRole("treeitem", { name: /starme/ }).click();
+    await page.getByRole("button", { name: "Rename", exact: true }).click();
+    await page.locator(".tree-rename-input").fill("starred");
+    await page.locator(".tree-rename-input").press("Enter");
+    await expect(page.getByRole("treeitem", { name: /starred/ })).toBeVisible();
+    await expect
+      .poll(() => (readSidecar(vault, "favorites.json") as string[] | null) ?? [])
+      .toEqual([expect.stringMatching(/starred\.md$/)]);
+
+    // Put bravo before alpha inside the folder, then rename the folder.
+    await page.getByRole("treeitem", { name: /alpha/ }).click();
+    await runCommand(page, ">move down");
+    await expect(async () => {
+      const names = await page.getByRole("treeitem").allTextContents();
+      expect(names.findIndex((n) => n.includes("bravo"))).toBeLessThan(names.findIndex((n) => n.includes("alpha")));
+    }).toPass({ timeout: 5_000 });
+    await page.getByRole("treeitem", { name: /^blog/ }).click();
+    await page.getByRole("button", { name: "Rename", exact: true }).click();
+    await page.locator(".tree-rename-input").fill("site");
+    await page.locator(".tree-rename-input").press("Enter");
+    await expect(page.getByRole("treeitem", { name: /^site/ })).toBeVisible();
+    await expect(async () => {
+      const names = await page.getByRole("treeitem").allTextContents();
+      expect(names.findIndex((n) => n.includes("bravo"))).toBeLessThan(names.findIndex((n) => n.includes("alpha")));
+    }).toPass({ timeout: 5_000 });
+    await expect
+      .poll(() => Object.keys((readSidecar(vault, "order.json") as Record<string, string[]> | null) ?? {}).some((k) => /blog$/.test(k)))
+      .toBe(false);
+  } finally {
+    removeTempVault(vault);
+  }
+});
+
 test("tree star: toggle favorite from the row + reflects state + persists", async () => {
   const vault = createTempVault({ "starme.md": "x\n" });
   try {

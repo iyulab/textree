@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { mergeOrder, dedupePushFront, moveInArray, findFirstOpenableNote } from "./nav.helpers";
+import { mergeOrder, dedupePushFront, moveInArray, findFirstOpenableNote, remapOrder, remapPaths } from "./nav.helpers";
 import type { TreeNode } from "./ipc";
 
 const byPath = (p: string) => p;
@@ -85,4 +85,36 @@ test("findFirstOpenableNote: respects per-subfolder order during recursion", () 
   const nodes = [folder("/v/dir", [leaf("/v/dir/a.md"), leaf("/v/dir/b.md")])];
   const order = { "/v/dir": ["/v/dir/b.md", "/v/dir/a.md"] };
   expect(findFirstOpenableNote(nodes, "/v", order)?.path).toBe("/v/dir/b.md");
+});
+
+// ── Following a structure change ─────────────────────────────────────
+
+const V = "D:/vault";
+const renamedFolder = (p: string) =>
+  p === `${V}/blog` || p.startsWith(`${V}/blog/`) ? `${V}/site${p.slice(`${V}/blog`.length)}` : p;
+
+test("favorites and recent follow a renamed folder and the notes under it", () => {
+  const got = remapPaths([`${V}/blog/a.md`, `${V}/other.md`, `${V}/blog`], renamedFolder);
+  expect(got).toEqual([`${V}/site/a.md`, `${V}/other.md`, `${V}/site`]);
+});
+
+test("a list that already holds the destination keeps one entry", () => {
+  expect(remapPaths([`${V}/blog`, `${V}/site`], renamedFolder)).toEqual([`${V}/site`]);
+});
+
+test("the manual order follows: the renamed folder's own order and its place in its parent's", () => {
+  const order = {
+    [V]: [`${V}/zeta.md`, `${V}/blog`, `${V}/alpha.md`],
+    [`${V}/blog`]: [`${V}/blog/b.md`, `${V}/blog/a.md`],
+  };
+  expect(remapOrder(order, renamedFolder)).toEqual({
+    [V]: [`${V}/zeta.md`, `${V}/site`, `${V}/alpha.md`],
+    [`${V}/site`]: [`${V}/site/b.md`, `${V}/site/a.md`],
+  });
+});
+
+test("nothing that the change does not touch is rewritten", () => {
+  const order = { [V]: [`${V}/x.md`] };
+  expect(remapOrder(order, (p) => p)).toEqual(order);
+  expect(remapPaths([`${V}/x.md`], (p) => p)).toEqual([`${V}/x.md`]);
 });

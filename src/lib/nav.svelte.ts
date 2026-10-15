@@ -7,7 +7,7 @@
  */
 
 import { writeSidecar } from "./ipc";
-import { dedupePushFront, RECENT_MAX } from "./nav.helpers";
+import { dedupePushFront, RECENT_MAX, remapOrder, remapPaths } from "./nav.helpers";
 import { readSettings } from "./settingsFile";
 import { isStringList, isStringListMap } from "./settingsFile.helpers";
 import { RetryingWriter } from "./sidecarWriter.helpers";
@@ -79,6 +79,28 @@ class NavStore {
   async setOrder(parent: string, paths: string[]): Promise<void> {
     this.order = { ...this.order, [parent]: paths };
     await this.writer.save("order.json", () => JSON.stringify(this.order));
+  }
+
+  /** A note or folder moved or was renamed: favorites, recent and manual order go with it. */
+  async follow(remap: (p: string) => string): Promise<void> {
+    const favorites = remapPaths(this.favorites, remap);
+    const order = remapOrder(this.order, remap);
+    const recent = remapPaths(this.recent, remap);
+    const changed = (a: unknown, b: unknown) => JSON.stringify(a) !== JSON.stringify(b);
+    if (changed(recent, this.recent)) {
+      this.recent = recent;
+      if (typeof localStorage !== "undefined") localStorage.setItem(RECENT_KEY, JSON.stringify(recent));
+    }
+    const writes: Promise<void>[] = [];
+    if (changed(favorites, this.favorites)) {
+      this.favorites = favorites;
+      writes.push(this.writer.save("favorites.json", () => JSON.stringify(this.favorites)));
+    }
+    if (changed(order, this.order)) {
+      this.order = order;
+      writes.push(this.writer.save("order.json", () => JSON.stringify(this.order)));
+    }
+    await Promise.all(writes);
   }
 
 }

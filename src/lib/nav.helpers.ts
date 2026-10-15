@@ -72,3 +72,25 @@ export function moveInArray<T>(arr: T[], index: number, delta: number): T[] {
   next.splice(to, 0, item);
   return next;
 }
+
+/**
+ * `list` after a structure change: each path where `remap` puts it. A path the change lands on
+ * that was already listed stays once, in its first place.
+ */
+export function remapPaths(list: string[], remap: (p: string) => string): string[] {
+  const out: string[] = [];
+  for (const p of list.map(remap)) if (!out.includes(p)) out.push(p);
+  return out;
+}
+
+/** The manual order after a structure change: parents and the children listed under them. */
+export function remapOrder(
+  order: Record<string, string[]>,
+  remap: (p: string) => string,
+): Record<string, string[]> {
+  const out: Record<string, string[]> = {};
+  for (const [parent, children] of Object.entries(order)) {
+    out[remap(parent)] = remapPaths(children, remap);
+  }
+  return out;
+}

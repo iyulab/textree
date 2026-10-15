@@ -4,6 +4,7 @@ import {
   applyView,
   findForeignViewFolders,
   matchesFilters,
+  remapViews,
   removeView,
   upsertView,
   VIEW_VERSION,
@@ -195,5 +196,26 @@ describe("findForeignViewFolders", () => {
 
   it("returns nothing for an empty key set", () => {
     expect(findForeignViewFolders([], "D:/vault")).toEqual([]);
+  });
+});
+
+describe("remapViews", () => {
+  const moved = (p: string) => (p === "/v/blog" || p.startsWith("/v/blog/") ? "/v/site" + p.slice("/v/blog".length) : p);
+
+  it("a renamed folder keeps its views, and so do the folders under it", () => {
+    const all = {
+      "/v/blog": [view({ folder: "/v/blog", name: "Table" })],
+      "/v/blog/2026": [view({ folder: "/v/blog/2026" })],
+      "/v/other": [view({ folder: "/v/other" })],
+    };
+    const got = remapViews(all, moved);
+    expect(Object.keys(got).sort()).toEqual(["/v/other", "/v/site", "/v/site/2026"]);
+    expect(got["/v/site"][0]).toMatchObject({ folder: "/v/site", name: "Table" });
+    expect(got["/v/site/2026"][0].folder).toBe("/v/site/2026");
+  });
+
+  it("returns the same object when nothing moved", () => {
+    const all = { "/v/other": [view({ folder: "/v/other" })] };
+    expect(remapViews(all, moved)).toBe(all);
   });
 });

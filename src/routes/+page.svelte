@@ -103,7 +103,8 @@
   import BackupDialog from "$lib/BackupDialog.svelte";
   import { backupStore } from "$lib/remoteSync.svelte";
   import { exchangeMessages, isNewFailure, needsAttention } from "$lib/remoteSync.helpers";
-  import { initialNoteSaveState, NoteSave, type LeaveOutcome } from "$lib/noteSave";
+  import { initialNoteSaveState, NoteSave, type LeaveOutcome, type Remap } from "$lib/noteSave";
+  import { tree as treeView } from "$lib/tree.svelte";
   import {
     baseName,
     noteStem,
@@ -747,7 +748,7 @@
     }
     try {
       const vault = root;
-      await save.move(
+      await relocate(
         async () =>
           remapRenamed(node.path, await renameNode(vault, node.path, name), node.kind !== "leaf"),
         node.path,
@@ -790,7 +791,7 @@
       if (activePath !== pathToRename) return; // navigated away during flush → skip
       let newPath = pathToRename;
       const vault = root;
-      await save.move(async () => {
+      await relocate(async () => {
         newPath = await renameNoteUnique(vault, pathToRename, candidate);
         return remapRenamed(pathToRename, newPath, false);
       }, pathToRename);
@@ -801,6 +802,19 @@
     } catch (e) {
       opError = friendlyError(e);
     }
+  }
+
+  /**
+   * A structure change, through the save machine (an open note's edits go where the note went),
+   * then everything kept by path follows it: favorites, recent, manual order, saved views and
+   * collapsed folders.
+   */
+  async function relocate(change: () => Promise<Remap>, from?: string | string[]): Promise<void> {
+    const done: { remap?: Remap } = {};
+    await save.move(async () => (done.remap = await change()), from);
+    if (!done.remap) return;
+    treeView.follow(done.remap);
+    await Promise.all([nav.follow(done.remap), views.follow(done.remap)]);
   }
 
   // ── Inline tree rename (T2) ────────────────────────────────────────
@@ -838,7 +852,7 @@
     try {
       const vault = root;
       // The open note, if it is the renamed one or inside it, stays open at its new path.
-      await save.move(
+      await relocate(
         async () =>
           remapRenamed(node.path, await renameNode(vault, node.path, name), node.kind !== "leaf"),
         node.path,
@@ -981,7 +995,7 @@
     try {
       const vault = root;
       let newDir = leaf;
-      await save.move(async () => {
+      await relocate(async () => {
         newDir = await promoteNode(vault, leaf);
         return remapPromoted(leaf, newDir);
       }, leaf);
@@ -1094,7 +1108,7 @@
     }
     try {
       const vault = root;
-      await save.move(async () => {
+      await relocate(async () => {
         return remapMoved(src, await moveNode(vault, src, destDir));
       }, src);
       reloadPublishChoices();
@@ -1126,7 +1140,7 @@
     }
     try {
       const vault = root;
-      await save.move(async () => {
+      await relocate(async () => {
         return remapAdopted(src, leaf, await adoptNode(vault, src, leaf));
       }, [src, leaf]);
       reloadPublishChoices();

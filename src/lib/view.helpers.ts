@@ -129,3 +129,20 @@ export function findForeignViewFolders(storedKeys: string[], root: string): stri
     return nk !== r && !nk.startsWith(`${r}/`);
   });
 }
+
+/**
+ * Saved views after a structure change: a moved or renamed folder, and every folder under it, keeps
+ * its views. The same object comes back when nothing moved, so a caller can skip writing.
+ */
+export function remapViews(
+  all: Record<string, ViewDefinition[]>,
+  remap: (p: string) => string,
+): Record<string, ViewDefinition[]> {
+  if (Object.keys(all).every((k) => remap(k) === k)) return all;
+  const out: Record<string, ViewDefinition[]> = {};
+  for (const [folder, list] of Object.entries(all)) {
+    const to = remap(folder);
+    out[to] = list.map((v) => (to === folder ? v : { ...v, folder: to }));
+  }
+  return out;
+}

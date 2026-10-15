@@ -21,6 +21,7 @@ import { readSettings } from "./settingsFile";
 import { isViewsMap } from "./settingsFile.helpers";
 import {
   findForeignViewFolders,
+  remapViews,
   removeView,
   upsertView,
   type ViewDefinition,
@@ -75,6 +76,14 @@ class ViewsStore {
     if (next.length) all[folder] = next;
     else delete all[folder];
     this.all = all;
+    await this.persist();
+  }
+
+  /** A folder moved or was renamed: its views, and those of the folders under it, go with it. */
+  async follow(remap: (p: string) => string): Promise<void> {
+    const next = remapViews(this.all, remap);
+    if (next === this.all) return;
+    this.all = next;
     await this.persist();
   }
 
