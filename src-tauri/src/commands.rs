@@ -1,7 +1,6 @@
 use crate::host;
 use crate::note_locks::NoteLocks;
 use crate::note_refs::is_note_path;
-use crate::pathsafe::is_within;
 use crate::search::{IndexHandle, IndexState, SearchHit};
 use crate::vault::{self, TreeNode};
 use crate::watcher::WatcherHandle;
@@ -376,16 +375,8 @@ fn personal_base() -> Option<PathBuf> {
 /// Builds the path of one settings file. Anything other than a plain name component is rejected,
 /// so nothing can address a location outside the directory it is confined to.
 fn sidecar_path(root: &Path, rel: &str) -> Result<PathBuf, String> {
-    if rel.is_empty() {
-        return Err("sidecar path is empty".into());
-    }
-    let rel_path = Path::new(rel);
-    for comp in rel_path.components() {
-        if !matches!(comp, Component::Normal(_)) {
-            return Err("invalid settings path".into());
-        }
-    }
-    Ok(personal_dir(root)?.join(rel_path))
+    crate::vault_paths::plain(rel).map_err(|_| "invalid settings path".to_string())?;
+    Ok(rel.split('/').fold(personal_dir(root)?, |p, name| p.join(name)))
 }
 
 /// The same file as it was kept before settings moved out of the notes folder.
@@ -576,9 +567,9 @@ pub(crate) fn tree_out(root: &str, tree: Vec<TreeNode>) -> Result<Vec<TreeItem>,
             Ok(TreeItem {
                 name: node.name,
                 kind: node.kind,
-                path: crate::vault_paths::rel_out(root, &node.path.to_string_lossy())?,
+                path: crate::vault_paths::rel_out(root, &node.path)?,
                 body_path: match node.body_path {
-                    Some(p) => Some(crate::vault_paths::rel_out(root, &p.to_string_lossy())?),
+                    Some(p) => Some(crate::vault_paths::rel_out(root, &p)?),
                     None => None,
                 },
                 children: tree_out(root, node.children)?,
@@ -609,13 +600,9 @@ pub async fn read_note(root: String, rel: String) -> Result<String, String> {
 }
 
 pub(crate) fn note_text(root: String, path: String) -> Result<String, String> {
-    let root = PathBuf::from(root);
-    let path = PathBuf::from(path);
-    if !is_within(&root, &path) {
-        log::warn!("read_note: rejected unsafe path: {}", path.display());
-        return Err("path is outside the vault".into());
-    }
-    std::fs::read_to_string(&path).map_err(|e| e.to_string())
+    // Resolved inside the vault by the command (`vault_paths`).
+    let _ = root;
+    std::fs::read_to_string(PathBuf::from(path)).map_err(|e| e.to_string())
 }
 
 /// What became of a save.
@@ -687,12 +674,8 @@ pub(crate) fn save_note(
         log::info!("write_note: the folder {} is gone; not written", root.display());
         return Ok(WriteOutcome::Conflict { disk: None });
     }
-    // Not `is_within`: that needs the note to exist, and a note deleted outside the app (with or
-    // without its folder) must come back as "gone" below, not as an error about where it is.
-    if crate::pathsafe::rel_within(root, path).is_none() {
-        log::warn!("write_note: rejected unsafe path: {}", path.display());
-        return Err("path is outside the vault".into());
-    }
+    // `path` was resolved inside the vault by the command (`vault_paths` — a note deleted outside
+    // the app resolves too, and comes back as "gone" below).
     let _turn = locks.turn(path);
     if let Some(conflict) = stale_base(path, expected).map_err(|e| e.to_string())? {
         log::info!("write_note: {} changed since it was loaded; not written", path.display());
@@ -875,14 +858,14 @@ fn forget_choices(root: &Path, rels: &[String]) {
 
 /// [`forget_choices`] for something just made at `created`.
 fn forget_choices_at(root: &Path, created: &Path) {
-    match rel_to_root(root, created) {
+    match crate::vault_paths::rel_out(root, created) {
         Ok(rel) => forget_choices(root, &[rel]),
         Err(e) => log::warn!("forget_choices: {}: {e}", created.display()),
     }
 }
 
 pub fn create_note(root: String, parent: String, name: String) -> Result<String, String> {
-    let path = crate::fs_ops::create_note(Path::new(&root), Path::new(&parent), &name)
+    let path = crate::fs_ops::create_note(Path::new(&parent), &name)
         .map_err(|e| e.to_string())?;
     log::info!("create_note: {}", path.display());
     forget_choices_at(Path::new(&root), &path);
@@ -890,7 +873,7 @@ pub fn create_note(root: String, parent: String, name: String) -> Result<String,
 }
 
 pub fn create_untitled_note(root: String, parent: String) -> Result<String, String> {
-    let path = crate::fs_ops::create_untitled_note(Path::new(&root), Path::new(&parent))
+    let path = crate::fs_ops::create_untitled_note(Path::new(&parent))
         .map_err(|e| e.to_string())?;
     log::info!("create_untitled_note: {}", path.display());
     forget_choices_at(Path::new(&root), &path);
@@ -903,9 +886,7 @@ pub fn create_note_with_content(
     name: String,
     content: String,
 ) -> Result<String, String> {
-    let path = crate::fs_ops::create_note_with_content(
-        Path::new(&root),
-        Path::new(&parent),
+    let path = crate::fs_ops::create_note_with_content(Path::new(&parent),
         &name,
         &content,
     )
@@ -917,19 +898,19 @@ pub fn create_note_with_content(
 
 pub fn rename_note_unique(root: String, path: String, name: String) -> Result<String, String> {
     let root_p = Path::new(&root);
-    let from_rel = rel_to_root(root_p, Path::new(&path)).ok();
-    let p = crate::fs_ops::rename_note_unique(root_p, Path::new(&path), &name)
+    let from_rel = crate::vault_paths::rel_out(root_p, Path::new(&path)).ok();
+    let p = crate::fs_ops::rename_note_unique(Path::new(&path), &name)
         .map_err(|e| e.to_string())?;
     log::info!("rename_note_unique: {} -> {}", path, p.display());
     // A rename like any other: what was recorded and chosen for the note goes with it.
-    if let (Some(from), Ok(to)) = (from_rel, rel_to_root(root_p, &p)) {
+    if let (Some(from), Ok(to)) = (from_rel, crate::vault_paths::rel_out(root_p, &p)) {
         record_moves(root_p, &[(from, to)]);
     }
     Ok(p.display().to_string())
 }
 
 pub fn create_folder(root: String, parent: String, name: String) -> Result<String, String> {
-    let dir = crate::fs_ops::create_folder(Path::new(&root), Path::new(&parent), &name)
+    let dir = crate::fs_ops::create_folder(Path::new(&parent), &name)
         .map_err(|e| e.to_string())?;
     log::info!("create_folder: {}", dir.display());
     forget_choices_at(Path::new(&root), &dir);
@@ -939,8 +920,8 @@ pub fn create_folder(root: String, parent: String, name: String) -> Result<Strin
 pub fn promote_node(root: String, path: String) -> Result<String, String> {
     let root_p = Path::new(&root);
     // Resolved first: promoting replaces the file this names.
-    let from_rel = rel_to_root(root_p, Path::new(&path)).ok();
-    let dir = crate::fs_ops::promote_leaf(root_p, Path::new(&path)).map_err(|e| e.to_string())?;
+    let from_rel = crate::vault_paths::rel_out(root_p, Path::new(&path)).ok();
+    let dir = crate::fs_ops::promote_leaf(Path::new(&path)).map_err(|e| e.to_string())?;
     // The folder is new: it inherits no include left at its name (the note's own choice is
     // carried below).
     forget_choices_at(root_p, &dir);
@@ -954,22 +935,11 @@ pub fn promote_node(root: String, path: String) -> Result<String, String> {
 /// The vault-relative path of the note a folder is named after.
 fn folder_note_rel(root: &Path, dir: &Path) -> Option<String> {
     let stem = dir.file_name().and_then(|s| s.to_str())?;
-    let dir_rel = rel_to_root(root, dir).ok()?;
+    let dir_rel = crate::vault_paths::rel_out(root, dir).ok()?;
     Some(format!("{dir_rel}/{stem}.md"))
 }
 
 /// Vault-root-relative, `/`-separated path of an existing target (for manifest portability).
-fn rel_to_root(root: &Path, target: &Path) -> Result<String, String> {
-    let root_c = root.canonicalize().map_err(|e| e.to_string())?;
-    let target_c = target.canonicalize().map_err(|e| e.to_string())?;
-    target_c
-        .strip_prefix(&root_c)
-        .ok()
-        .and_then(|p| p.to_str())
-        .map(|s| s.replace('\\', "/"))
-        .ok_or_else(|| "target is not within the vault".to_string())
-}
-
 /// Every file at or under `target`, as (path on disk, path within the repository) pairs.
 fn files_under(
     prepared: &crate::git_engine::VaultRepo,
@@ -987,7 +957,7 @@ fn files_under(
             }
             continue;
         }
-        let Ok(rel) = rel_to_root(root, &current) else {
+        let Ok(rel) = crate::vault_paths::rel_out(root, &current) else {
             continue;
         };
         found.push((current, prepared.path_in_repo(Path::new(&rel))));
@@ -1066,12 +1036,10 @@ pub(crate) fn keep_state_of(root: &Path, target: &Path) -> Result<(), String> {
 pub fn delete_node(root: String, path: String) -> Result<(), String> {
     let root_p = Path::new(&root);
     let target = Path::new(&path);
-    if !is_within(root_p, target) {
-        return Err("path is outside the vault".into());
-    }
     if std::fs::canonicalize(target).ok() == std::fs::canonicalize(root_p).ok() {
         return Err("the folder itself cannot be deleted".into());
     }
+    crate::vault_paths::rel_out(root_p, target)?;
     // Nothing whose name begins with a dot, at any depth. The tree never offers these, but this
     // is where paths are checked, and the cost of the check being somewhere else is total: asked
     // to delete the repository, this would read all of it into a commit, write that commit inside
@@ -1086,7 +1054,7 @@ pub fn delete_node(root: String, path: String) -> Result<(), String> {
         return Err("that is not a note".into());
     }
     // Resolved while it is still there to resolve.
-    let rel = rel_to_root(root_p, target).ok();
+    let rel = crate::vault_paths::rel_out(root_p, target).ok();
     keep_state_of(root_p, target)?;
     if target.is_dir() {
         crate::fs_ops::patiently(|| std::fs::remove_dir_all(target)).map_err(|e| e.to_string())?;
@@ -1182,7 +1150,7 @@ pub fn rename_node(root: String, path: String, name: String) -> Result<String, S
     let target = Path::new(&path);
     // Read before the move: resolving a path needs it to still be where it is. A folder also
     // carries a note named after it, and that note is renamed too — two moves, one revision.
-    let from_rel = rel_to_root(root_p, target).ok();
+    let from_rel = crate::vault_paths::rel_out(root_p, target).ok();
     // Only a note the folder really has: a pair for one it lacks would clear whatever choice the
     // destination name holds (a different note of that name inside the folder).
     let folder_note = target
@@ -1191,10 +1159,10 @@ pub fn rename_node(root: String, path: String, name: String) -> Result<String, S
         .flatten()
         .filter(|old| target.join(format!("{old}.md")).is_file());
 
-    let p = crate::fs_ops::rename_node(root_p, target, &name).map_err(|e| e.to_string())?;
+    let p = crate::fs_ops::rename_node(target, &name).map_err(|e| e.to_string())?;
     log::info!("rename_node: {} -> {}", path, name);
 
-    if let (Some(from), Ok(to)) = (from_rel, rel_to_root(root_p, &p)) {
+    if let (Some(from), Ok(to)) = (from_rel, crate::vault_paths::rel_out(root_p, &p)) {
         let mut pairs = vec![(from, to.clone())];
         if let Some(old_name) = folder_note {
             pairs.push((format!("{to}/{old_name}.md"), format!("{to}/{name}.md")));
@@ -1206,11 +1174,11 @@ pub fn rename_node(root: String, path: String, name: String) -> Result<String, S
 
 pub fn move_node(root: String, path: String, dest: String) -> Result<String, String> {
     let root_p = Path::new(&root);
-    let from_rel = rel_to_root(root_p, Path::new(&path)).ok();
-    let p = crate::fs_ops::move_node(root_p, Path::new(&path), Path::new(&dest))
+    let from_rel = crate::vault_paths::rel_out(root_p, Path::new(&path)).ok();
+    let p = crate::fs_ops::move_node(Path::new(&path), Path::new(&dest))
         .map_err(|e| e.to_string())?;
     log::info!("move_node: {} -> {}", path, dest);
-    if let (Some(from), Ok(to)) = (from_rel, rel_to_root(root_p, &p)) {
+    if let (Some(from), Ok(to)) = (from_rel, crate::vault_paths::rel_out(root_p, &p)) {
         record_moves(root_p, &[(from, to)]);
     }
     Ok(p.display().to_string())
@@ -1219,11 +1187,11 @@ pub fn move_node(root: String, path: String, dest: String) -> Result<String, Str
 pub fn adopt_node(root: String, path: String, leaf: String) -> Result<String, String> {
     let root_p = Path::new(&root);
     let leaf_p = Path::new(&leaf);
-    let from_rel = rel_to_root(root_p, Path::new(&path)).ok();
+    let from_rel = crate::vault_paths::rel_out(root_p, Path::new(&path)).ok();
     // The leaf is resolved before it is promoted, because promoting replaces the file it names.
-    let leaf_before = rel_to_root(root_p, leaf_p).ok();
+    let leaf_before = crate::vault_paths::rel_out(root_p, leaf_p).ok();
 
-    let p = crate::fs_ops::adopt_into_leaf(root_p, Path::new(&path), leaf_p)
+    let p = crate::fs_ops::adopt_into_leaf(Path::new(&path), leaf_p)
         .map_err(|e| e.to_string())?;
     // The folder the promotion made is new: it inherits no include left at its name. Cleared
     // before the moves are carried, so the choices they bring in are kept.
@@ -1238,7 +1206,7 @@ pub fn adopt_node(root: String, path: String, leaf: String) -> Result<String, St
     {
         pairs.push((before, after));
     }
-    if let (Some(from), Ok(to)) = (from_rel, rel_to_root(root_p, &p)) {
+    if let (Some(from), Ok(to)) = (from_rel, crate::vault_paths::rel_out(root_p, &p)) {
         pairs.push((from, to));
     }
     record_moves(root_p, &pairs);
@@ -1259,7 +1227,7 @@ pub fn save_attachment(
     let root_p = Path::new(&root);
     let folder = Path::new(&note).parent().map(|p| p.join("assets"));
     let fresh_folder = folder.as_ref().is_some_and(|f| !f.exists());
-    let link = crate::fs_ops::save_attachment(root_p, Path::new(&note), &bytes, &ext)
+    let link = crate::fs_ops::save_attachment(Path::new(&note), &bytes, &ext)
         .map_err(|e| e.to_string())?;
     // What was made: the file, or the folder too when it was made for it.
     if let Some(folder) = folder {
@@ -1467,14 +1435,10 @@ pub fn set_publish_choice(
     choice: Option<bool>,
 ) -> Result<Vec<crate::publish_scope::Choice>, String> {
     let root_p = Path::new(&root);
-    // Stays inside the folder, and is recorded as the folder spells it (`a/./b` is `a/b`). The
-    // note may be gone by now, so it need not exist.
-    let rel = if rel.is_empty() {
-        rel
-    } else {
-        crate::pathsafe::rel_within(root_p, &root_p.join(&rel))
-            .ok_or_else(|| "path is outside the vault".to_string())?
-    };
+    // Plain names inside the folder; the note may be gone by now, so it need not exist.
+    if !rel.is_empty() {
+        crate::vault_paths::plain(&rel)?;
+    }
     let prepared = crate::git_engine::prepare(root_p).map_err(|e| e.message().to_string())?;
     let in_repo = crate::git_engine::slashed(&prepared.path_in_repo(Path::new(&rel)));
     crate::publish_scope::set(prepared.repo(), in_repo.trim_end_matches('/'), choice)
@@ -1664,11 +1628,7 @@ pub fn commit_notes(
     let mut entries: Vec<(PathBuf, Vec<u8>)> = Vec::with_capacity(paths.len());
     for raw in &paths {
         let target = Path::new(raw);
-        if !is_within(root_p, target) {
-            log::warn!("commit_notes: rejected unsafe path: {}", target.display());
-            return Err("path is outside the vault".into());
-        }
-        let rel = rel_to_root(root_p, target)?;
+        let rel = crate::vault_paths::rel_out(root_p, target)?;
         if target.is_dir() {
             // Reading a directory fails with an operating-system error that says nothing about
             // what went wrong. The caller expands a selection into files before asking.
@@ -1699,13 +1659,11 @@ pub fn commit_notes(
             {
                 continue;
             }
-            let mut path = root_p.to_path_buf();
-            path.extend(file.split('/'));
             // A link may lead out of the folder through a junction or symlink.
-            if !is_within(root_p, &path) {
+            let Ok(path) = crate::vault_paths::resolve(&root, &file) else {
                 log::warn!("commit_notes: linked file is outside the vault, left out: {file}");
                 continue;
-            }
+            };
             // Too large to publish, so not worth a copy in the history either: looked at before
             // anything is read.
             if std::fs::metadata(&path)
@@ -1804,8 +1762,7 @@ fn history_repo(root: &Path) -> Result<Option<crate::git_engine::VaultRepo>, Str
 /// before deciding whether to bring it back.
 pub fn note_versions(root: String, path: String) -> Result<Vec<NoteVersion>, String> {
     let root_p = Path::new(&root);
-    let rel = crate::pathsafe::rel_within(root_p, Path::new(&path))
-        .ok_or_else(|| "path is outside the vault".to_string())?;
+    let rel = crate::vault_paths::rel_out(root_p, &path)?;
     let Some(prepared) = history_repo(root_p)? else {
         return Ok(Vec::new());
     };
@@ -1827,8 +1784,7 @@ pub fn note_versions(root: String, path: String) -> Result<Vec<NoteVersion>, Str
 /// What a note held at one recorded state. Reads objects only — the file on disk is not touched.
 pub fn note_version_text(root: String, path: String, id: String) -> Result<String, String> {
     let root_p = Path::new(&root);
-    let rel = crate::pathsafe::rel_within(root_p, Path::new(&path))
-        .ok_or_else(|| "path is outside the vault".to_string())?;
+    let rel = crate::vault_paths::rel_out(root_p, &path)?;
     let prepared = history_repo(root_p)?
         .ok_or_else(|| format!("'{rel}' is not part of that recorded state"))?;
     let in_repo = prepared.path_in_repo(Path::new(&rel));
@@ -2363,10 +2319,7 @@ pub fn move_state_out_of_vault(root: String) -> Result<MoveOut, String> {
 pub fn restore_version(root: String, path: String, id: String) -> Result<(), String> {
     let root_p = Path::new(&root);
     let target = Path::new(&path);
-    if !is_within(root_p, target) {
-        return Err("path is outside the vault".into());
-    }
-    let rel = rel_to_root(root_p, target)?;
+    let rel = crate::vault_paths::rel_out(root_p, target)?;
     let prepared = history_repo(root_p)?
         .ok_or_else(|| format!("'{rel}' is not part of that recorded state"))?;
     let in_repo = prepared.path_in_repo(Path::new(&rel));
@@ -2453,11 +2406,7 @@ pub fn list_alternatives(root: String) -> Result<Vec<NoteAlternative>, String> {
 /// Starts an alternative of a note from its last recorded version.
 pub fn start_alternative(root: String, path: String) -> Result<NoteAlternative, String> {
     let root_p = Path::new(&root);
-    let target = Path::new(&path);
-    if !is_within(root_p, target) {
-        return Err("path is outside the vault".into());
-    }
-    let rel = rel_to_root(root_p, target)?;
+    let rel = crate::vault_paths::rel_out(root_p, &path)?;
     let prepared = writable_history(root_p)?;
     let repo = prepared.repo();
     let (author, committer) =
@@ -2511,10 +2460,7 @@ pub fn add_alternative_version(
 pub fn use_alternative(root: String, path: String, id: String) -> Result<(), String> {
     let root_p = Path::new(&root);
     let target = Path::new(&path);
-    if !is_within(root_p, target) {
-        return Err("path is outside the vault".into());
-    }
-    let rel = rel_to_root(root_p, target)?;
+    let rel = crate::vault_paths::rel_out(root_p, target)?;
     let prepared = writable_history(root_p)?;
     let repo = prepared.repo();
     let alternative = crate::alternatives::get(repo, &id).map_err(|e| e.message().to_string())?;
@@ -2667,11 +2613,11 @@ pub fn restore_deleted(root: String, rel: String) -> Result<RestoredNote, String
     })
     .map_err(|e| e.to_string())?;
     log::info!("restore_deleted: {} (as deleted: {as_deleted})", dest.display());
-    let landed = rel_to_root(root_p, &dest)?;
+    let landed = crate::vault_paths::rel_out(root_p, &dest)?;
     // Back as a note made there now: no include left there applies to it or to a folder made to
     // hold it; a leave-out still does.
     let mut made = vec![landed.clone()];
-    made.extend(made_folder.and_then(|d| rel_to_root(root_p, &d).ok()));
+    made.extend(made_folder.and_then(|d| crate::vault_paths::rel_out(root_p, &d).ok()));
     forget_choices(root_p, &made);
     Ok(RestoredNote { rel: landed, as_deleted })
 }
@@ -3406,13 +3352,18 @@ mod tests {
     }
 
     #[test]
-    fn a_choice_is_recorded_under_the_path_as_the_folder_spells_it() {
+    fn a_choice_is_recorded_under_plain_names_only() {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path().to_string_lossy().to_string();
         seed_note(tmp.path(), "sub/a.md", "# A");
-        let got = set_publish_choice(root.clone(), "sub/./a.md".into(), Some(true)).unwrap();
+        // Paths arrive as the tree names them; another spelling of one is refused, as everywhere.
+        for odd in ["sub/./a.md", "sub/gone/", "sub\\a.md"] {
+            assert!(set_publish_choice(root.clone(), odd.into(), Some(true)).is_err(), "{odd}");
+        }
+        let got = set_publish_choice(root.clone(), "sub/a.md".into(), Some(true)).unwrap();
         assert_eq!(got, vec![crate::publish_scope::Choice { path: "sub/a.md".into(), include: true }]);
-        let got = set_publish_choice(root, "sub/gone/".into(), Some(false)).unwrap();
+        // A note gone by now can still be chosen for.
+        let got = set_publish_choice(root, "sub/gone".into(), Some(false)).unwrap();
         assert!(got.contains(&crate::publish_scope::Choice { path: "sub/gone".into(), include: false }), "{got:?}");
     }
 

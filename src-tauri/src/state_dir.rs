@@ -233,6 +233,7 @@ mod tests {
     fn a_name_that_only_begins_like_the_folder_is_not_under_it() {
         assert_eq!(relative_to("C:/notes", "C:/notes2/a.md"), None);
         assert_eq!(relative_to("C:/notes", "C:/NOTES/a.md").as_deref(), Some("a.md"));
+        // public-text: allow — a name in a script without case is what this line is about
         assert_eq!(relative_to("C:/노트", "C:/노트/a.md").as_deref(), Some("a.md"));
     }
 

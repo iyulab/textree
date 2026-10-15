@@ -73,9 +73,13 @@ pub fn folder(root: &str, rel: &str) -> Result<PathBuf, String> {
     }
 }
 
-/// The vault-relative path of a path an operation handed back, or a refusal when it is not inside.
-pub fn rel_out(root: &str, abs: &str) -> Result<String, String> {
-    rel_of(root, Path::new(abs)).ok_or_else(|| OUTSIDE.to_string())
+/// The vault-relative path of a path this side built on the vault (an operation handed it back, or
+/// a command resolved it), or a refusal when it is not inside — made of plain names, as [`resolve`]
+/// takes them.
+pub fn rel_out(root: impl AsRef<Path>, abs: impl AsRef<Path>) -> Result<String, String> {
+    let rel = rel_of(&root.as_ref().to_string_lossy(), abs.as_ref()).ok_or_else(|| OUTSIDE.to_string())?;
+    parts(&rel)?;
+    Ok(rel)
 }
 
 /// The vault-relative path of `abs`, a path this side built on the same vault path.

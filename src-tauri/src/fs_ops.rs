@@ -4,9 +4,9 @@
 //! reflected to the filesystem immediately. Deleting keeps the deleted state in the history
 //! first (see `keep_state_of` in commands), so nothing deleted is beyond reach.
 
-use crate::pathsafe::{is_valid_name, is_within};
+use crate::pathsafe::is_valid_name;
 use std::io;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri_kit_fs::{claim_free_path, free_path, NameKind};
 
@@ -35,22 +35,19 @@ fn err(msg: impl Into<String>) -> io::Error {
 }
 
 /// Validates that the parent directory is a real directory inside the vault, and the new name is safe.
-fn check_parent_and_name(root: &Path, parent: &Path, name: &str) -> io::Result<()> {
+fn check_parent_and_name(parent: &Path, name: &str) -> io::Result<()> {
     if !is_valid_name(name) {
         return Err(err("invalid name"));
     }
     if !parent.is_dir() {
         return Err(err("parent is not a directory"));
     }
-    if !is_within(root, parent) {
-        return Err(err("path is outside the vault"));
-    }
     Ok(())
 }
 
 /// Creates the `parent/stem.md` leaf note. Errors if it already exists.
-pub fn create_note(root: &Path, parent: &Path, stem: &str) -> io::Result<PathBuf> {
-    check_parent_and_name(root, parent, stem)?;
+pub fn create_note(parent: &Path, stem: &str) -> io::Result<PathBuf> {
+    check_parent_and_name(parent, stem)?;
     let path = parent.join(format!("{stem}.md"));
     write_new(&path, b"").map_err(|e| match e.kind() {
         io::ErrorKind::AlreadyExists => err("an item with the same name already exists"),
@@ -62,12 +59,9 @@ pub fn create_note(root: &Path, parent: &Path, stem: &str) -> io::Result<PathBuf
 /// Creates an empty `Untitled.md` leaf in `parent`, auto-numbering on collision
 /// (`Untitled`, `Untitled (1)`, …). The name is generated and always
 /// valid, so unlike `create_note` there is no explicit name to validate.
-pub fn create_untitled_note(root: &Path, parent: &Path) -> io::Result<PathBuf> {
+pub fn create_untitled_note(parent: &Path) -> io::Result<PathBuf> {
     if !parent.is_dir() {
         return Err(err("parent is not a directory"));
-    }
-    if !is_within(root, parent) {
-        return Err(err("path is outside the vault"));
     }
     write_unique(parent, "Untitled.md", b"")
 }
@@ -77,19 +71,18 @@ pub fn create_untitled_note(root: &Path, parent: &Path) -> io::Result<PathBuf> {
 /// file ([`write_new`]), so no existing data is at risk and no atomic_write / self_write is needed
 /// (the watcher reflects the new file into the tree).
 pub fn create_note_with_content(
-    root: &Path,
     parent: &Path,
     stem: &str,
     content: &str,
 ) -> io::Result<PathBuf> {
-    check_parent_and_name(root, parent, stem)?;
+    check_parent_and_name(parent, stem)?;
     write_unique(parent, &format!("{stem}.md"), content.as_bytes())
 }
 
 /// Creates the `parent/name/` container and its folder note `parent/name/name.md`.
 /// Also creates the folder note so it becomes an immediately editable container note (design §3.1).
-pub fn create_folder(root: &Path, parent: &Path, name: &str) -> io::Result<PathBuf> {
-    check_parent_and_name(root, parent, name)?;
+pub fn create_folder(parent: &Path, name: &str) -> io::Result<PathBuf> {
+    check_parent_and_name(parent, name)?;
     let dir = parent.join(name);
     if dir.exists() {
         return Err(err("an item with the same name already exists"));
@@ -101,10 +94,7 @@ pub fn create_folder(root: &Path, parent: &Path, name: &str) -> io::Result<PathB
 
 /// Promotes the leaf note `dir/foo.md` into the container `dir/foo/foo.md` (design §3.3).
 /// An operation that makes room to create children. Returns the new container directory.
-pub fn promote_leaf(root: &Path, leaf_md: &Path) -> io::Result<PathBuf> {
-    if !is_within(root, leaf_md) {
-        return Err(err("path is outside the vault"));
-    }
+pub fn promote_leaf(leaf_md: &Path) -> io::Result<PathBuf> {
     if leaf_md.extension().and_then(|e| e.to_str()) != Some("md") || !leaf_md.is_file() {
         return Err(err("not a leaf note (.md file)"));
     }
@@ -139,12 +129,9 @@ fn write_unique(dir: &Path, file_name: &str, bytes: &[u8]) -> io::Result<PathBuf
 
 /// Renames a node. A leaf `.md` renames the file; a container renames the directory and its
 /// folder note together (node identity = file/folder name, design §3.5). Returns the new path.
-pub fn rename_node(root: &Path, target: &Path, new_name: &str) -> io::Result<PathBuf> {
+pub fn rename_node(target: &Path, new_name: &str) -> io::Result<PathBuf> {
     if !is_valid_name(new_name) {
         return Err(err("invalid name"));
-    }
-    if !is_within(root, target) {
-        return Err(err("path is outside the vault"));
     }
     let parent = target.parent().ok_or_else(|| err("no parent directory"))?;
 
@@ -195,12 +182,9 @@ pub fn rename_node(root: &Path, target: &Path, new_name: &str) -> io::Result<Pat
 /// …). Used by the T4 H1→filename sync of *unnamed* notes — distinct from
 /// `rename_node`, whose explicit-rename collision is a hard error (never auto-numbered). Never
 /// overwrites an existing file. Returns the new path.
-pub fn rename_note_unique(root: &Path, target: &Path, desired_name: &str) -> io::Result<PathBuf> {
+pub fn rename_note_unique(target: &Path, desired_name: &str) -> io::Result<PathBuf> {
     if !is_valid_name(desired_name) {
         return Err(err("invalid name"));
-    }
-    if !is_within(root, target) {
-        return Err(err("path is outside the vault"));
     }
     if target.extension().and_then(|e| e.to_str()) != Some("md") || !target.is_file() {
         return Err(err("rename target is not a leaf note"));
@@ -212,11 +196,8 @@ pub fn rename_note_unique(root: &Path, target: &Path, desired_name: &str) -> io:
 }
 
 /// Moves a node to a different folder (changes its parent). Returns the new path.
-pub fn move_node(root: &Path, src: &Path, dest_dir: &Path) -> io::Result<PathBuf> {
-    if !is_within(root, src) {
-        return Err(err("source path is outside the vault"));
-    }
-    if !dest_dir.is_dir() || !is_within(root, dest_dir) {
+pub fn move_node(src: &Path, dest_dir: &Path) -> io::Result<PathBuf> {
+    if !dest_dir.is_dir() {
         return Err(err("invalid destination folder"));
     }
     let name = src
@@ -241,20 +222,17 @@ pub fn move_node(root: &Path, src: &Path, dest_dir: &Path) -> io::Result<PathBuf
 /// "Drop X onto note Y = make X a child of Y". Bundles promote+move into a single operation, and
 /// on move failure rolls back the promotion best-effort so no partial state (a lone folder) is left.
 /// Returns the new path of the moved `src`.
-pub fn adopt_into_leaf(root: &Path, src: &Path, leaf_md: &Path) -> io::Result<PathBuf> {
+pub fn adopt_into_leaf(src: &Path, leaf_md: &Path) -> io::Result<PathBuf> {
     // Pre-mutation validation: disallowed if leaf equals src or is its descendant (move into self).
-    if !is_within(root, src) || !is_within(root, leaf_md) {
-        return Err(err("path is outside the vault"));
-    }
     let src_c = src.canonicalize()?;
     let leaf_c = leaf_md.canonicalize()?;
     if leaf_c == src_c || leaf_c.starts_with(&src_c) {
         return Err(err("cannot move into itself or a descendant"));
     }
     // Promote (promote_leaf validates the .md leaf condition).
-    let new_dir = promote_leaf(root, leaf_md)?;
+    let new_dir = promote_leaf(leaf_md)?;
     // Move; on failure roll back the promotion (right after promotion new_dir holds only the folder note).
-    match move_node(root, src, &new_dir) {
+    match move_node(src, &new_dir) {
         Ok(p) => Ok(p),
         Err(move_err) => {
             let stem = new_dir
@@ -285,14 +263,10 @@ pub fn adopt_into_leaf(root: &Path, src: &Path, leaf_md: &Path) -> io::Result<Pa
 /// the body (always forward-slash, e.g. `assets/Pasted-1718....png`) — consistent because the .md
 /// and `assets/` share a parent.
 pub fn save_attachment(
-    root: &Path,
     note_body: &Path,
     bytes: &[u8],
     ext: &str,
 ) -> io::Result<String> {
-    if !is_within(root, note_body) {
-        return Err(err("path is outside the vault"));
-    }
     // Attachments are placed only relative to the note body (.md) — prevents creating assets/ next to an arbitrary path (server-side contract).
     if note_body.extension().and_then(|e| e.to_str()) != Some("md") {
         return Err(err("attachment target is not a note (.md)"));
@@ -324,36 +298,12 @@ pub fn save_attachment(
 /// Nothing is written here and nothing existing is replaced: a name already in use is numbered
 /// alongside rather than overwritten, so bringing something back can never cost what is there.
 ///
-/// SECURITY precondition: callers MUST pre-validate every component of `rel`
-/// (Component::Normal + is_valid_name) — this function trusts it for the destination.
+/// Callers still check the names themselves against the vault's naming policy (`is_valid_name`).
 pub(crate) fn place_restored(root: &Path, rel: &str) -> io::Result<PathBuf> {
-    // Nothing is created until the destination has been vouched for, in both of the ways it
-    // has to be: every component a plain name, and the part of the path that already exists
-    // genuinely inside the vault.
-    let relative = Path::new(rel);
-    let mut any = false;
-    for comp in relative.components() {
-        match comp {
-            Component::Normal(_) => any = true,
-            _ => return Err(err("path is outside the vault")),
-        }
-    }
-    if !any {
-        return Err(err("empty path"));
-    }
-    let dest = root.join(relative);
+    // Nothing is created until the destination has been vouched for: every part a plain name, and
+    // nothing on the way — a folder that is a link to somewhere else — leading out of the vault.
+    let dest = crate::vault_paths::resolve(&root.to_string_lossy(), rel).map_err(err)?;
     let parent = dest.parent().ok_or_else(|| err("no parent directory"))?;
-    // Plain names are not enough on their own: a folder on the way can be a link to somewhere
-    // else entirely, and only the filesystem knows that. The deepest folder that already exists
-    // is the one that can be asked, and everything below it is about to be made inside it — so
-    // it is asked first, before any of them are.
-    let mut standing = parent;
-    while !standing.exists() {
-        standing = standing.parent().ok_or_else(|| err("no parent directory"))?;
-    }
-    if !is_within(root, standing) {
-        return Err(err("path is outside the vault"));
-    }
     std::fs::create_dir_all(parent)?;
     let file_name = dest
         .file_name()
@@ -467,7 +417,7 @@ mod tests {
             drop(held);
         });
 
-        let renamed = rename_node(root, &root.join("box"), "crate").unwrap();
+        let renamed = rename_node(&root.join("box"), "crate").unwrap();
         release.join().unwrap();
 
         assert_eq!(renamed, root.join("crate"));
@@ -485,7 +435,7 @@ mod tests {
         let root = tmp.path();
         let _held = folder_with_a_held_note(root);
 
-        let refused = rename_node(root, &root.join("box"), "crate").unwrap_err();
+        let refused = rename_node(&root.join("box"), "crate").unwrap_err();
         assert!(matches!(refused.raw_os_error(), Some(5 | 32)), "{refused:?}");
         assert!(root.join("box").join("box.md").is_file(), "nothing moved");
         assert!(!root.join("crate").exists());
@@ -504,7 +454,7 @@ mod tests {
             drop(held);
         });
 
-        let moved = move_node(root, &root.join("a.md"), &root.join("to")).unwrap();
+        let moved = move_node(&root.join("a.md"), &root.join("to")).unwrap();
         release.join().unwrap();
         assert_eq!(std::fs::read_to_string(moved).unwrap(), "a");
     }
@@ -573,7 +523,7 @@ mod tests {
     #[test]
     fn create_note_makes_md_file() {
         let tmp = TempDir::new().unwrap();
-        let p = create_note(tmp.path(), tmp.path(), "new-note").unwrap();
+        let p = create_note(tmp.path(), "new-note").unwrap();
         assert_eq!(p, tmp.path().join("new-note.md"));
         assert!(p.is_file());
     }
@@ -581,16 +531,16 @@ mod tests {
     #[test]
     fn create_note_rejects_duplicate_and_bad_name() {
         let tmp = TempDir::new().unwrap();
-        create_note(tmp.path(), tmp.path(), "a").unwrap();
-        assert!(create_note(tmp.path(), tmp.path(), "a").is_err());
-        assert!(create_note(tmp.path(), tmp.path(), "../escape").is_err());
-        assert!(create_note(tmp.path(), tmp.path(), ".hidden").is_err());
+        create_note(tmp.path(), "a").unwrap();
+        assert!(create_note(tmp.path(), "a").is_err());
+        assert!(create_note(tmp.path(), "../escape").is_err());
+        assert!(create_note(tmp.path(), ".hidden").is_err());
     }
 
     #[test]
     fn create_folder_makes_dir_and_folder_note() {
         let tmp = TempDir::new().unwrap();
-        let dir = create_folder(tmp.path(), tmp.path(), "journal").unwrap();
+        let dir = create_folder(tmp.path(), "journal").unwrap();
         assert!(dir.is_dir());
         assert!(dir.join("journal.md").is_file(), "the folder note should be created");
     }
@@ -600,7 +550,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let leaf = tmp.path().join("foo.md");
         std::fs::write(&leaf, "body text").unwrap();
-        let dir = promote_leaf(tmp.path(), &leaf).unwrap();
+        let dir = promote_leaf(&leaf).unwrap();
         assert_eq!(dir, tmp.path().join("foo"));
         assert!(!leaf.exists(), "the original leaf file is moved");
         let body = dir.join("foo.md");
@@ -616,7 +566,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let leaf = tmp.path().join("old.md");
         std::fs::write(&leaf, "body text").unwrap();
-        let new = rename_node(tmp.path(), &leaf, "new").unwrap();
+        let new = rename_node(&leaf, "new").unwrap();
         assert_eq!(new, tmp.path().join("new.md"));
         assert!(!leaf.exists());
         assert_eq!(std::fs::read_to_string(new).unwrap(), "body text");
@@ -630,7 +580,7 @@ mod tests {
         std::fs::write(dir.join("diary.md"), "diary body").unwrap();
         std::fs::write(dir.join("2026.md"), "child").unwrap();
 
-        let new_dir = rename_node(tmp.path(), &dir, "journal").unwrap();
+        let new_dir = rename_node(&dir, "journal").unwrap();
         assert_eq!(new_dir, tmp.path().join("journal"));
         assert!(new_dir.join("journal.md").is_file(), "the folder note is renamed too");
         assert_eq!(
@@ -650,7 +600,7 @@ mod tests {
         std::fs::write(dir.join("diary.md"), "diary body").unwrap();
         std::fs::write(dir.join("journal.md"), "a child called journal").unwrap();
 
-        assert!(rename_node(tmp.path(), &dir, "journal").is_err());
+        assert!(rename_node(&dir, "journal").is_err());
         assert_eq!(std::fs::read_to_string(dir.join("journal.md")).unwrap(), "a child called journal");
         assert_eq!(std::fs::read_to_string(dir.join("diary.md")).unwrap(), "diary body");
         assert!(!tmp.path().join("journal").exists(), "the folder is put back");
@@ -664,7 +614,7 @@ mod tests {
 
         assert_eq!(write_new(&taken, b"").unwrap_err().kind(), io::ErrorKind::AlreadyExists);
         assert_eq!(std::fs::read_to_string(&taken).unwrap(), "someone else's");
-        assert!(create_note(tmp.path(), tmp.path(), "taken").is_err());
+        assert!(create_note(tmp.path(), "taken").is_err());
         assert_eq!(std::fs::read_to_string(&taken).unwrap(), "someone else's");
 
         let made = write_unique(tmp.path(), "taken.md", b"mine").unwrap();
@@ -713,7 +663,7 @@ mod tests {
         std::fs::write(dir.join(".obsidian").join("app.json"), "{}").unwrap();
         std::fs::write(dir.join("drawing.canvas"), "{\"nodes\":[]}").unwrap();
 
-        let new_dir = rename_node(tmp.path(), &dir, "project").unwrap();
+        let new_dir = rename_node(&dir, "project").unwrap();
         assert!(new_dir.join("project.md").is_file(), "folder note renamed");
         assert_eq!(
             std::fs::read_to_string(new_dir.join(".obsidian").join("app.json")).unwrap(),
@@ -749,8 +699,8 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         std::fs::write(tmp.path().join("a.md"), "").unwrap();
         std::fs::write(tmp.path().join("b.md"), "").unwrap();
-        assert!(rename_node(tmp.path(), &tmp.path().join("a.md"), "b").is_err());
-        assert!(rename_node(tmp.path(), &tmp.path().join("a.md"), "..").is_err());
+        assert!(rename_node(&tmp.path().join("a.md"), "b").is_err());
+        assert!(rename_node(&tmp.path().join("a.md"), "..").is_err());
     }
 
     #[test]
@@ -761,7 +711,7 @@ mod tests {
         let folder = tmp.path().join("box");
         std::fs::create_dir(&folder).unwrap();
 
-        let dest = move_node(tmp.path(), &note, &folder).unwrap();
+        let dest = move_node(&note, &folder).unwrap();
         assert_eq!(dest, folder.join("noteX.md"));
         assert!(!note.exists());
         assert!(dest.is_file());
@@ -774,9 +724,9 @@ mod tests {
         let child = parent.join("c");
         std::fs::create_dir_all(&child).unwrap();
         // Cannot move p into its descendant c.
-        assert!(move_node(tmp.path(), &parent, &child).is_err());
+        assert!(move_node(&parent, &child).is_err());
         // Cannot move p into itself.
-        assert!(move_node(tmp.path(), &parent, &parent).is_err());
+        assert!(move_node(&parent, &parent).is_err());
     }
 
     #[test]
@@ -787,7 +737,7 @@ mod tests {
         let folder = tmp.path().join("box");
         std::fs::create_dir(&folder).unwrap();
         std::fs::write(folder.join("dup.md"), "").unwrap(); // already exists
-        assert!(move_node(tmp.path(), &note, &folder).is_err());
+        assert!(move_node(&note, &folder).is_err());
     }
 
     #[test]
@@ -798,7 +748,7 @@ mod tests {
         std::fs::write(&a, "alpha").unwrap();
         std::fs::write(&b, "beta").unwrap();
 
-        let moved = adopt_into_leaf(tmp.path(), &a, &b).unwrap();
+        let moved = adopt_into_leaf(&a, &b).unwrap();
         // b is promoted to a container and the folder note is preserved.
         let b_dir = tmp.path().join("b");
         assert!(b_dir.is_dir());
@@ -820,7 +770,7 @@ mod tests {
         let src = box_dir.join("b.md"); // triggers the collision (b/b.md already exists on move)
         std::fs::write(&src, "clash").unwrap();
 
-        assert!(adopt_into_leaf(tmp.path(), &src, &leaf).is_err());
+        assert!(adopt_into_leaf(&src, &leaf).is_err());
         // Rollback verification: leaf restored, promotion folder removed, src preserved.
         assert!(leaf.is_file(), "the leaf should be restored");
         assert!(!tmp.path().join("b").exists(), "the promotion folder should be rolled back");
@@ -835,7 +785,7 @@ mod tests {
         std::fs::write(&note, "body text").unwrap();
         let bytes = b"\x89PNG\r\n\x1a\n fake png";
 
-        let rel = save_attachment(tmp.path(), &note, bytes, "png").unwrap();
+        let rel = save_attachment(&note, bytes, "png").unwrap();
         assert!(rel.starts_with("assets/"), "the relative link is under assets/");
         assert!(rel.ends_with(".png"));
         // The actual file exists on disk in the same folder's assets/ and its content matches.
@@ -851,9 +801,9 @@ mod tests {
         let note = tmp.path().join("n.md");
         std::fs::write(&note, "").unwrap();
         // Allows normalization of uppercase / leading dot.
-        assert!(save_attachment(tmp.path(), &note, b"x", ".JPEG").unwrap().ends_with(".jpeg"));
+        assert!(save_attachment(&note, b"x", ".JPEG").unwrap().ends_with(".jpeg"));
         // Rejects non-images.
-        assert!(save_attachment(tmp.path(), &note, b"x", "exe").is_err());
+        assert!(save_attachment(&note, b"x", "exe").is_err());
     }
 
     #[test]
@@ -861,8 +811,8 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let note = tmp.path().join("n.md");
         std::fs::write(&note, "").unwrap();
-        let a = save_attachment(tmp.path(), &note, b"a", "png").unwrap();
-        let b = save_attachment(tmp.path(), &note, b"b", "png").unwrap();
+        let a = save_attachment(&note, b"a", "png").unwrap();
+        let b = save_attachment(&note, b"b", "png").unwrap();
         assert_ne!(a, b, "the two attachments must be different files (no overwriting)");
         let count = std::fs::read_dir(tmp.path().join("assets")).unwrap().count();
         assert_eq!(count, 2);
@@ -874,17 +824,8 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let img = tmp.path().join("pic.png");
         std::fs::write(&img, "x").unwrap();
-        assert!(save_attachment(tmp.path(), &img, b"y", "png").is_err());
+        assert!(save_attachment(&img, b"y", "png").is_err());
         assert!(!tmp.path().join("assets").exists(), "assets is not created on rejection");
-    }
-
-    #[test]
-    fn save_attachment_rejects_outside_vault() {
-        let tmp = TempDir::new().unwrap();
-        let outside = TempDir::new().unwrap();
-        let note = outside.path().join("ext.md");
-        std::fs::write(&note, "").unwrap();
-        assert!(save_attachment(tmp.path(), &note, b"x", "png").is_err());
     }
 
     #[test]
@@ -895,7 +836,7 @@ mod tests {
         let body = dir.join("bar.md"); // folder note
         std::fs::write(&body, "diary body").unwrap();
 
-        let rel = save_attachment(tmp.path(), &body, b"img", "gif").unwrap();
+        let rel = save_attachment(&body, b"img", "gif").unwrap();
         assert!(rel.starts_with("assets/"), "for a folder note too, the relative link is assets/");
         let name = rel.strip_prefix("assets/").unwrap();
         assert!(dir.join("assets").join(name).is_file(), "assets sits next to the folder note (bar/assets)");
@@ -912,7 +853,7 @@ mod tests {
         let leaf = src.join("child.md");
         std::fs::write(&leaf, "child").unwrap();
 
-        assert!(adopt_into_leaf(tmp.path(), &src, &leaf).is_err());
+        assert!(adopt_into_leaf(&src, &leaf).is_err());
         assert!(leaf.is_file(), "no mutation on rejection");
         assert!(!src.join("child").exists(), "not promoted");
     }
@@ -922,25 +863,16 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
 
-        let p1 = create_untitled_note(root, root).unwrap();
+        let p1 = create_untitled_note(root).unwrap();
         assert_eq!(p1.file_name().unwrap().to_str().unwrap(), "Untitled.md");
         assert!(p1.is_file());
         assert_eq!(std::fs::read_to_string(&p1).unwrap(), "");
 
-        let p2 = create_untitled_note(root, root).unwrap();
+        let p2 = create_untitled_note(root).unwrap();
         assert_eq!(p2.file_name().unwrap().to_str().unwrap(), "Untitled (1).md");
 
-        let p3 = create_untitled_note(root, root).unwrap();
+        let p3 = create_untitled_note(root).unwrap();
         assert_eq!(p3.file_name().unwrap().to_str().unwrap(), "Untitled (2).md");
-    }
-
-    #[test]
-    fn create_untitled_note_rejects_parent_outside_vault() {
-        let tmp = TempDir::new().unwrap();
-        let root = tmp.path().join("vault");
-        std::fs::create_dir(&root).unwrap();
-        // parent is the vault's parent → outside
-        assert!(create_untitled_note(&root, tmp.path()).is_err());
     }
 
     #[test]
@@ -950,7 +882,7 @@ mod tests {
         let src = root.join("Untitled.md");
         std::fs::write(&src, "# Meeting\n").unwrap();
 
-        let dest = rename_note_unique(root, &src, "Meeting").unwrap();
+        let dest = rename_note_unique(&src, "Meeting").unwrap();
         assert_eq!(dest.file_name().unwrap().to_str().unwrap(), "Meeting.md");
         assert!(dest.is_file());
         assert!(!src.exists());
@@ -965,24 +897,21 @@ mod tests {
         let src = root.join("Untitled.md");
         std::fs::write(&src, "new\n").unwrap();
 
-        let dest = rename_note_unique(root, &src, "Notes").unwrap();
+        let dest = rename_note_unique(&src, "Notes").unwrap();
         assert_eq!(dest.file_name().unwrap().to_str().unwrap(), "Notes (1).md");
         assert!(root.join("Notes.md").is_file()); // existing note untouched
         assert_eq!(std::fs::read_to_string(&dest).unwrap(), "new\n");
     }
 
     #[test]
-    fn rename_note_unique_rejects_invalid_name_and_outside_vault() {
+    fn rename_note_unique_rejects_an_invalid_name() {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
         let src = root.join("Untitled.md");
         std::fs::write(&src, "x\n").unwrap();
 
-        assert!(rename_note_unique(root, &src, "a/b").is_err()); // separator rejected by is_valid_name
+        assert!(rename_note_unique(&src, "a/b").is_err()); // separator rejected by is_valid_name
         assert!(src.exists()); // not renamed on rejection
-        // target outside the vault
-        let outside = tmp.path().parent().unwrap().join("x.md");
-        assert!(rename_note_unique(root, &outside, "ok").is_err());
     }
 
     #[test]
@@ -992,11 +921,11 @@ mod tests {
         // A directory is not a leaf .md note.
         let dir = root.join("folder");
         std::fs::create_dir(&dir).unwrap();
-        assert!(rename_note_unique(root, &dir, "x").is_err());
+        assert!(rename_note_unique(&dir, "x").is_err());
         // A non-.md file is not a leaf note.
         let txt = root.join("note.txt");
         std::fs::write(&txt, "x").unwrap();
-        assert!(rename_note_unique(root, &txt, "x").is_err());
+        assert!(rename_note_unique(&txt, "x").is_err());
     }
 
     #[test]
@@ -1006,31 +935,28 @@ mod tests {
         let root = tmp.path();
         std::fs::write(root.join("a.md"), "a\n").unwrap();
         std::fs::write(root.join("b.md"), "b\n").unwrap();
-        assert!(rename_node(root, &root.join("a.md"), "b").is_err());
+        assert!(rename_node(&root.join("a.md"), "b").is_err());
     }
 
     #[test]
     fn create_note_with_content_writes_and_auto_numbers() {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
-        let p1 = create_note_with_content(root, root, "Summary of X", "# hi\n").unwrap();
+        let p1 = create_note_with_content(root, "Summary of X", "# hi\n").unwrap();
         assert_eq!(p1, root.join("Summary of X.md"));
         assert_eq!(std::fs::read_to_string(&p1).unwrap(), "# hi\n");
         // Second save with the same base name auto-numbers instead of overwriting.
-        let p2 = create_note_with_content(root, root, "Summary of X", "# other\n").unwrap();
+        let p2 = create_note_with_content(root, "Summary of X", "# other\n").unwrap();
         assert_eq!(p2, root.join("Summary of X (1).md"));
         assert_eq!(std::fs::read_to_string(&p1).unwrap(), "# hi\n"); // original untouched
     }
 
     #[test]
-    fn create_note_with_content_rejects_bad_name_and_outside_parent() {
+    fn create_note_with_content_rejects_a_bad_name() {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path().join("vault");
         std::fs::create_dir(&root).unwrap();
         // separator in the stem -> is_valid_name rejects
-        assert!(create_note_with_content(&root, &root, "a/b", "x").is_err());
-        // parent outside the vault
-        let outside = tmp.path().parent().unwrap();
-        assert!(create_note_with_content(&root, outside, "a", "x").is_err());
+        assert!(create_note_with_content(&root, "a/b", "x").is_err());
     }
 }

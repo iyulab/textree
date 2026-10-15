@@ -25,8 +25,6 @@ test("expand/collapse children via container chevron + persist", async () => {
     "folder/child2.md": "b\n",
   });
   try {
-    // Reset so the tree collapsed state is not polluted by the previous test.
-    await page.evaluate(() => localStorage.removeItem("textree-tree-collapsed"));
     await loadVault(page, vault);
 
     // Default: expanded → children visible.
@@ -49,7 +47,6 @@ test("expand/collapse children via container chevron + persist", async () => {
     await page.getByRole("button", { name: "Expand", exact: true }).click();
     await expect(page.getByRole("treeitem", { name: /child1/ })).toBeVisible();
   } finally {
-    await page.evaluate(() => localStorage.removeItem("textree-tree-collapsed"));
     removeTempVault(vault);
   }
 });
@@ -60,7 +57,6 @@ test("keyboard: ↑↓ move · ←→ collapse/expand · Enter open", async () =
     "folder/child2.md": "b\n",
   });
   try {
-    await page.evaluate(() => localStorage.removeItem("textree-tree-collapsed"));
     await loadVault(page, vault);
 
     const folder = page.getByRole("treeitem", { name: /folder/ });
@@ -85,7 +81,6 @@ test("keyboard: ↑↓ move · ←→ collapse/expand · Enter open", async () =
     await page.keyboard.press("Enter");
     await expect(page.locator(".note-name")).toHaveText("child1");
   } finally {
-    await page.evaluate(() => localStorage.removeItem("textree-tree-collapsed"));
     removeTempVault(vault);
   }
 });
@@ -120,7 +115,6 @@ test("keyboard move: Ctrl+X cut → Ctrl+V move into folder", async () => {
     "target-folder/existing.md": "b\n",
   });
   try {
-    await page.evaluate(() => localStorage.removeItem("textree-tree-collapsed"));
     await loadVault(page, vault);
 
     await page.getByRole("treeitem", { name: /move-note/ }).focus();
@@ -134,7 +128,6 @@ test("keyboard move: Ctrl+X cut → Ctrl+V move into folder", async () => {
       .toBe(true);
     expect(existsSync(join(vault, "move-note.md"))).toBe(false);
   } finally {
-    await page.evaluate(() => localStorage.removeItem("textree-tree-collapsed"));
     removeTempVault(vault);
   }
 });
@@ -159,7 +152,6 @@ test("keyboard adopt: Ctrl+V on leaf → promote then child", async () => {
 test("breadcrumb: show ancestor folder of a nested note", async () => {
   const vault = createTempVault({ "folder/child1.md": "a\n" });
   try {
-    await page.evaluate(() => localStorage.removeItem("textree-tree-collapsed"));
     await loadVault(page, vault);
 
     await page.getByRole("treeitem", { name: /child1/ }).click();

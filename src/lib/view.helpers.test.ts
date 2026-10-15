@@ -165,8 +165,10 @@ describe("findForeignViewFolders", () => {
   });
 
   it("flags keys still naming a folder by where it was on disk (vault moved / other device)", () => {
-    const keys = ["C:/old-vault/diary", "diary", "D:\\vault2\\x", "/home/me/notes"];
-    expect(findForeignViewFolders(keys)).toEqual(["C:/old-vault/diary", "D:\\vault2\\x", "/home/me/notes"]);
+    // public-text: allow — absolute folder paths are what this case is about
+    const keys = ["C:/old-vault/diary", "diary", "D:\\vault2\\x", "/srv/notes"];
+    // public-text: allow — absolute folder paths are what this case is about
+    expect(findForeignViewFolders(keys)).toEqual(["C:/old-vault/diary", "D:\\vault2\\x", "/srv/notes"]);
   });
 
   it("returns nothing for an empty key set", () => {
