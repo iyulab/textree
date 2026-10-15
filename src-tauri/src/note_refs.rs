@@ -114,31 +114,37 @@ fn percent_decoded(s: &str) -> String {
 #[allow(dead_code)] // Task 4 (selective publishing) consumes this.
 pub fn resolve(note: &str, target: &str) -> Option<String> {
     let target = target.split(['#', '?']).next().unwrap_or("");
-    if target.is_empty() {
+    // Checked before and after decoding: `%2F%2F` must not slip past the first check.
+    if target.is_empty() || is_network_prefix(target) {
         return None;
     }
-    // A scheme (`https:`, `mailto:`) or a drive letter: not a path inside the folder.
-    if let Some(colon) = target.find(':') {
-        if !target[..colon].contains('/') {
-            return None;
-        }
+    let decoded = percent_decoded(target).replace('\\', "/");
+    if is_network_prefix(&decoded) {
+        return None;
     }
-    let target = percent_decoded(target);
     let mut parts: Vec<&str> = Vec::new();
-    if !target.starts_with('/') {
+    if !decoded.starts_with('/') {
         parts.extend(note.split('/'));
         parts.pop(); // the note's own name
     }
-    for segment in target.split('/') {
+    for segment in decoded.split('/') {
         match segment {
             "" | "." => {}
             ".." => {
                 parts.pop()?;
             }
+            // A colon starts a scheme (`https:`, `mailto:`) or a drive (`C:`), and Windows forbids
+            // `:` in file names, so nothing legitimate is lost. NUL cannot appear in a path at all.
+            s if s.contains([':', '\0']) => return None,
             s => parts.push(s),
         }
     }
     (!parts.is_empty()).then(|| parts.join("/"))
+}
+
+/// A protocol-relative address (`//host/x`) or a UNC path: never a folder path.
+fn is_network_prefix(s: &str) -> bool {
+    s.starts_with("//") || s.starts_with("\\\\")
 }
 
 #[cfg(test)]
@@ -184,6 +190,20 @@ mod tests {
         assert_eq!(resolve("post.md", "mailto:a@example.com"), None);
         assert_eq!(resolve("post.md", "#section"), None);
         assert_eq!(resolve("post.md", "C:/Windows/a.png"), None);
+    }
+
+    #[test]
+    fn web_drive_and_separator_tricks_never_leave_the_folder() {
+        assert_eq!(resolve("post.md", "//example.com/a.png"), None);
+        assert_eq!(resolve("post.md", "%2F%2Fexample.com/a.png"), None);
+        assert_eq!(resolve("post.md", "/C:/Windows/a.png"), None);
+        assert_eq!(resolve("post.md", "./C:/x"), None);
+        assert_eq!(resolve("post.md", "C%3A/Windows/a.png"), None);
+        assert_eq!(resolve("post.md", "..\\..\\secret.txt"), None);
+        assert_eq!(resolve("post.md", "..%5Csecret.txt"), None);
+        assert_eq!(resolve("post.md", "%2e%2e/x"), None);
+        assert_eq!(resolve("post.md", "a%00.png"), None);
+        assert_eq!(resolve("blog/post.md", "img\\a.png").as_deref(), Some("blog/img/a.png"));
     }
 
     #[test]
