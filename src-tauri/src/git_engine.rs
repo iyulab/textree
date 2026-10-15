@@ -776,7 +776,7 @@ fn lost_race(e: &git2::Error) -> bool {
 /// one place a deleted note or an earlier state can be brought back from. Git's own answer is
 /// the one used here: the update names the value it expects to replace, and is refused if the
 /// reference moved meanwhile.
-fn advance(
+pub(crate) fn advance(
     repo: &Repository,
     reference: &str,
     commit: Oid,

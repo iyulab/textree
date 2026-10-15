@@ -133,6 +133,47 @@ pub fn follow_moves(repo: &Repository, moves: &[(PathBuf, PathBuf)]) -> Result<(
     })
 }
 
+const TRACKED: &str = "refs/textree-remote/public";
+
+/// Where two sides disagree about one path, the note stays out — one device withholding it is enough.
+fn join(mine: &[Choice], other: &[Choice]) -> Vec<Choice> {
+    let mut joined: Vec<Choice> = Vec::new();
+    for c in mine.iter().chain(other.iter()) {
+        match joined.iter_mut().find(|j| j.path.eq_ignore_ascii_case(&c.path)) {
+            Some(j) => j.include = j.include && c.include,
+            None => joined.push(c.clone()),
+        }
+    }
+    joined
+}
+
+/// Takes in the choices a remote holds: adopt when this side has none, move forward when it is
+/// simply behind, keep when it is ahead, and otherwise join the two in one revision. Everything is
+/// read inside one turn, so a choice made here meanwhile is never joined from a stale tip.
+pub fn take_in(repo: &Repository) -> Result<(), git2::Error> {
+    let Ok(theirs) = repo.refname_to_id(TRACKED) else { return Ok(()) };
+    let (author, committer) = crate::git_engine::commit_identities(repo)?;
+    const MESSAGE: &str = "Publish choices from another device";
+    crate::git_engine::advancing(|| {
+        match repo.refname_to_id(PUBLIC_REF).ok() {
+            None => crate::git_engine::advance(repo, PUBLIC_REF, theirs, None, MESSAGE),
+            Some(ours) if ours == theirs || repo.graph_descendant_of(ours, theirs)? => Ok(()),
+            Some(ours) if repo.graph_descendant_of(theirs, ours)? => {
+                crate::git_engine::advance(repo, PUBLIC_REF, theirs, Some(ours), MESSAGE)
+            }
+            Some(ours) => {
+                let joined = join(&read(repo, PUBLIC_REF)?, &read(repo, TRACKED)?);
+                let blob = repo.blob(render(&joined).as_bytes())?;
+                let tree = crate::git_engine::tree_with_file(repo, None, Path::new(FILE), Some(blob))?;
+                let tree = repo.find_tree(tree)?;
+                let (a, b) = (repo.find_commit(ours)?, repo.find_commit(theirs)?);
+                let commit = repo.commit(None, &author, &committer, "Publish choices joined with another device", &tree, &[&a, &b])?;
+                crate::git_engine::advance(repo, PUBLIC_REF, commit, Some(ours), MESSAGE)
+            }
+        }
+    })
+}
+
 /// The choices as seen from a notes folder at `vault_in_repo` (`""` when it is the repository root).
 pub fn for_vault(choices: &[Choice], vault_in_repo: &str) -> Vec<Choice> {
     if vault_in_repo.is_empty() {
@@ -253,6 +294,53 @@ mod tests {
         assert!(got.contains(&Choice { path: "secret".into(), include: false }));
         assert!(got.contains(&Choice { path: "b.md".into(), include: true }));
         assert!(got.contains(&Choice { path: "a.md".into(), include: true }));
+    }
+
+    #[test]
+    fn choices_from_another_device_are_taken_in_and_disagreement_leaves_out() {
+        let (_d, repo) = repo();
+        set(&repo, "", Some(true)).unwrap();
+        let base = repo.refname_to_id(PUBLIC_REF).unwrap();
+        // The other device left "work" out and included "press.md"; this one included "work".
+        set(&repo, "press.md", Some(true)).unwrap();
+        set(&repo, "work", Some(false)).unwrap();
+        let theirs = repo.refname_to_id(PUBLIC_REF).unwrap();
+        repo.reference("refs/textree-remote/public", theirs, true, "t").unwrap();
+        repo.reference(PUBLIC_REF, base, true, "rewind").unwrap();
+        set(&repo, "work", Some(true)).unwrap();
+        let ours = repo.refname_to_id(PUBLIC_REF).unwrap();
+
+        take_in(&repo).unwrap();
+        let joined = repo.find_commit(repo.refname_to_id(PUBLIC_REF).unwrap()).unwrap();
+        assert_eq!(joined.parent_ids().collect::<Vec<_>>(), vec![ours, theirs]);
+        let got = read(&repo, PUBLIC_REF).unwrap();
+        assert!(is_included("press.md", &got));
+        assert!(!is_included("work/a.md", &got));
+
+        // Taking in again changes nothing: this side now contains the other.
+        take_in(&repo).unwrap();
+        assert_eq!(repo.refname_to_id(PUBLIC_REF).unwrap(), joined.id());
+    }
+
+    #[test]
+    fn taking_in_adopts_moves_forward_and_ignores_a_missing_remote() {
+        let (_d, repo) = repo();
+        take_in(&repo).unwrap(); // no tracking ref: nothing happens
+        assert!(repo.refname_to_id(PUBLIC_REF).is_err());
+        set(&repo, "a.md", Some(true)).unwrap();
+        let first = repo.refname_to_id(PUBLIC_REF).unwrap();
+        set(&repo, "b.md", Some(true)).unwrap();
+        let second = repo.refname_to_id(PUBLIC_REF).unwrap();
+        repo.reference("refs/textree-remote/public", second, true, "t").unwrap();
+        repo.reference(PUBLIC_REF, first, true, "rewind").unwrap();
+        take_in(&repo).unwrap(); // behind: fast-forward
+        assert_eq!(repo.refname_to_id(PUBLIC_REF).unwrap(), second);
+        repo.reference("refs/textree-remote/public", first, true, "t").unwrap();
+        take_in(&repo).unwrap(); // ahead: kept
+        assert_eq!(repo.refname_to_id(PUBLIC_REF).unwrap(), second);
+        repo.find_reference(PUBLIC_REF).unwrap().delete().unwrap();
+        take_in(&repo).unwrap(); // none here: adopt
+        assert_eq!(repo.refname_to_id(PUBLIC_REF).unwrap(), first);
     }
 
     #[test]

@@ -403,6 +403,7 @@ pub fn exchange(
     let mut out = Exchange::default();
     for _ in 0..2 {
         fetch(repo, url, credentials.clone()).map_err(err)?;
+        crate::publish_scope::take_in(repo).map_err(err)?;
         let plan = plan(vault, root).map_err(err)?;
         match apply(vault, root, &plan, locks)? {
             Taken::Done { written, removed } => {
@@ -781,6 +782,22 @@ mod tests {
         let a = Machine::new(tmp.path().join("a"));
         let b = Machine::new(tmp.path().join("b"));
         (tmp, remote, a, b)
+    }
+
+    #[test]
+    fn publish_choices_changed_on_both_machines_do_not_stop_sending() {
+        let (_tmp, remote, a, b) = setup();
+        a.record("a.md", "# A");
+        a.send(&remote);
+        b.take(&remote);
+        crate::publish_scope::set(a.repo(), "a.md", Some(true)).unwrap();
+        crate::publish_scope::set(b.repo(), "a.md", Some(false)).unwrap();
+        assert_eq!(a.send(&remote), Sent::Done);
+        let url = Machine::url_of(&remote);
+        let out = exchange(&b.vault, &b.root, &url, None, &NoteLocks::default()).unwrap();
+        assert!(out.sent);
+        let got = crate::publish_scope::read(b.repo(), crate::publish_scope::PUBLIC_REF).unwrap();
+        assert!(!crate::publish_scope::is_included("a.md", &got));
     }
 
     #[test]
