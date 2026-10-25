@@ -13,16 +13,16 @@ jobs:
     runs-on: windows-latest
     environment: production
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: 22
 
       # Speeds up recurring builds. cache-on-failure saves the cache even when the job fails, so a
       # cold first run that overruns the Key Vault token TTL (~60-90 min) recovers fast on re-trigger.
       - name: Cache Rust build
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           workspaces: src-tauri
           cache-on-failure: true
@@ -43,7 +43,7 @@ jobs:
       # tauri.conf.json bundle.resources requires both resources/canopy AND resources/host to
       # exist, so the verify-publish build below fails on a missing resource path otherwise.
       - name: Setup .NET
-        uses: actions/setup-dotnet@v6
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
         with:
           dotnet-version: '10.0.x'
 
@@ -59,29 +59,19 @@ jobs:
       - name: Verify bundled host present
         run: cargo test --manifest-path src-tauri/Cargo.toml -- --ignored run_host_present_via_assembled_sidecar
 
-      - name: Azure login (OIDC)
-        uses: azure/login@v3
+      # Prepares the job for signing: Azure login (OIDC) and a pinned AzureSignTool, then puts
+      # `code-sign-file.cmd` on PATH — the sign hook in src-tauri/tauri.sign.conf.json. Each call takes a
+      # Key Vault token from `az` for that one file, so no token is left in the environment for the
+      # steps that follow. Run right before the build: the login cannot be renewed after about an hour.
+      - name: Prepare code signing
+        uses: iyulab/code-sign@c4c68c25295ce0010a396d54cdb017fd248c5cce # main
         with:
-          client-id: 293d5452-469f-4988-93c9-0aee0f2d0846
-          tenant-id: 66683f75-fa9e-4325-84e1-9253c1fc8cb7
-          allow-no-subscriptions: true
-
-      - name: Install AzureSignTool
-        run: dotnet tool install --global AzureSignTool
-
-      - name: Acquire Key Vault access token
-        shell: pwsh
-        run: |
-          $token = az account get-access-token --resource https://vault.azure.net --query accessToken -o tsv
-          echo "::add-mask::$token"
-          echo "AZURE_KV_TOKEN=$token" >> $env:GITHUB_ENV
+          description: Textree
+          description-url: https://github.com/iyulab/textree
 
       - name: Build, sign, and release
-        uses: tauri-apps/tauri-action@v0
+        uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0
         env:
-          AZURE_KV_URL: https://kv-codesign-iyulab.vault.azure.net/
-          AZURE_KV_CERT: globalsign-ev-codesign
-          AZURE_TIMESTAMP_URL: http://timestamp.globalsign.com/tsa/r6advanced1
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -91,4 +81,17 @@ jobs:
           releaseName: 'Textree ${{ github.ref_name }}'
           releaseDraft: true  # GitHub "latest" excludes drafts; auto-update sees this only after a human publishes
           prerelease: false
-          args: --target x86_64-pc-windows-msvc
+          args: --target x86_64-pc-windows-msvc --config src-tauri/tauri.sign.conf.json
+
+      # makensis ignores a failing sign command, so a broken signature would otherwise ship unnoticed.
+      - name: Verify the installer is signed
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem -Recurse -Path src-tauri/target -Filter '*-setup.exe' | Sort-Object LastWriteTime | Select-Object -Last 1
+          if (-not $installer) { throw 'no installer was built' }
+          $sig = Get-AuthenticodeSignature $installer.FullName
+          Write-Host "$($installer.Name): $($sig.Status) — $($sig.SignerCertificate.Subject)"
+          if ($sig.Status -ne 'Valid') {
+            if (Test-Path $env:CODE_SIGN_LOG) { Get-Content $env:CODE_SIGN_LOG }
+            throw "the installer's signature is $($sig.Status)"
+          }
