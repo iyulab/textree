@@ -54,7 +54,7 @@ export async function startTestRemote(token = "right-token"): Promise<TestRemote
       const out = spawnSync("git", [`--git-dir=${bare}`, ...args], { encoding: "utf8" });
       return out.status === 0 ? out.stdout.trim() : "";
     },
-    close: () => closeServer(server).then(() => rmSync(root, { recursive: true, force: true })),
+    close: () => closeServer(server).then(() => rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 })),
   };
 }
 
