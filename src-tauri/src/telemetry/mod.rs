@@ -30,14 +30,14 @@ static SHELL: LazyLock<Layer> = LazyLock::new(|| Layer::new("textree-desktop", F
 /// Set once the log folder is known (`start`); a failure before that is not recorded.
 static REPORTER: OnceLock<Reporter> = OnceLock::new();
 
-/// Raw connection string from runtime env first (dev/E2E injection), then the compile-time
-/// embedded value (official builds). Cached. `None`/blank ⇒ telemetry disabled everywhere.
+/// Raw connection string from runtime env first (dev/E2E builds only — `dev_env`; a shipped build
+/// must not let the environment choose where its reports go), then the compile-time embedded value
+/// (official builds). Cached. `None`/blank ⇒ telemetry disabled everywhere.
 fn raw_connection() -> Option<String> {
     static CACHE: OnceLock<Option<String>> = OnceLock::new();
     CACHE
         .get_or_init(|| {
-            std::env::var(ENV_VAR)
-                .ok()
+            crate::dev_env::var(ENV_VAR)
                 .filter(|s| !s.trim().is_empty())
                 .or_else(|| option_env!("TEXTREE_TELEMETRY_CONNECTION").map(str::to_string))
                 .filter(|s| !s.trim().is_empty())

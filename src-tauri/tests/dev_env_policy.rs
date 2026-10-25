@@ -31,7 +31,8 @@ fn shipped_part(source: &str) -> &str {
     }
 }
 
-/// Names of `TEXTREE_*` variables read straight from the process environment.
+/// What each direct read of the process environment names: a string literal, or (for a constant)
+/// the constant's name. Reads through `dev_env` are the sanctioned way and are skipped.
 fn direct_reads(source: &str) -> Vec<String> {
     let mut found = Vec::new();
     for line in source.lines() {
@@ -39,29 +40,34 @@ fn direct_reads(source: &str) -> Vec<String> {
         if code.starts_with("//") {
             continue;
         }
-        for read in ["env::var(\"TEXTREE_", "env::var_os(\"TEXTREE_"] {
-            if let Some(at) = code.find(read) {
-                if code[..at].ends_with("dev_") {
+        for read in ["env::var(", "env::var_os("] {
+            let mut from = 0;
+            while let Some(at) = code[from..].find(read) {
+                let start = from + at;
+                from = start + read.len();
+                if code[..start].ends_with("dev_") {
                     continue; // `dev_env::var(…)` — the sanctioned way
                 }
-                let rest = &code[at + read.len() - "TEXTREE_".len()..];
-                let name = rest.split('"').next().unwrap_or_default();
-                found.push(name.to_string());
+                let arg = code[from..].split(')').next().unwrap_or_default().trim();
+                found.push(arg.trim_matches('"').to_string());
             }
         }
     }
     found
 }
 
+/// Reads that are not an override: the person's own home folder, found the way the OS names it.
+const NOT_AN_OVERRIDE: [&str; 2] = ["USERPROFILE", "HOME"];
+
 #[test]
-fn detects_a_direct_read_and_skips_a_test_module_and_comments() {
+fn detects_a_direct_read_by_literal_or_constant_and_skips_a_test_module_and_comments() {
     let source = "\
-fn a() { let _ = std::env::var(\"TEXTREE_HOST_EXE\"); }
+fn a() { let _ = std::env::var(\"TEXTREE_HOST_EXE\"); let _ = std::env::var(ENV_VAR); }
 // std::env::var(\"TEXTREE_APP_BASE\")
 #[cfg(test)]
 mod tests { fn b() { let _ = std::env::var(\"TEXTREE_API_BASE\"); } }
 ";
-    assert_eq!(direct_reads(shipped_part(source)), vec!["TEXTREE_HOST_EXE"]);
+    assert_eq!(direct_reads(shipped_part(source)), vec!["TEXTREE_HOST_EXE", "ENV_VAR"]);
 }
 
 #[test]
@@ -78,7 +84,7 @@ fn no_shipped_code_reads_a_textree_variable_without_dev_env() {
         }
         let source = fs::read_to_string(&file).unwrap();
         for name in direct_reads(shipped_part(&source)) {
-            if !READ_UNDER_OWN_CFG.contains(&name.as_str()) {
+            if !READ_UNDER_OWN_CFG.contains(&name.as_str()) && !NOT_AN_OVERRIDE.contains(&name.as_str()) {
                 offenders.push(format!("{}: {name}", file.strip_prefix(&src).unwrap().display()));
             }
         }
