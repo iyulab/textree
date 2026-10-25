@@ -127,12 +127,12 @@ public sealed class LocalTextGenerator : ITextGenerator, IAsyncDisposable
 
         // Borrow iron-prow's local bridge: the lightweight 2-decorator path (NOT AddLMSupplyLocal,
         // whose selection/registry/resilience gateway is inert for a single local provider).
-        // GeneratorChatClient wraps our already-loaded IGeneratorModel (IGeneratorModel : ITextGenerator,
-        // compile-proven) as an IChatClient; LocalSafetyChatClient adds length-bounding + a readiness gate,
+        // AsChatClient() wraps our already-loaded IGeneratorModel as an IChatClient (LMSupply.Generator's
+        // own); LocalSafetyChatClient adds length-bounding + a readiness gate,
         // and the outermost degeneration stop ends a small model that has fallen into a repeated
         // word/phrase loop instead of letting it stream a wall of repetition up to the token cap.
         using var chat = new LocalSafetyChatClient(
-            new GeneratorChatClient(model),
+            model.AsChatClient(),
             new LocalSafetyOptions { DefaultMaxOutputTokens = 512 }, // belt-and-suspenders; we always set a cap below
             new LazyReadinessProbe(() => Ready, new[] { ModelId }))
             .WithDegenerationStop();
