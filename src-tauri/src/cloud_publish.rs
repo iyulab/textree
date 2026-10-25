@@ -22,9 +22,10 @@ const DEFAULT_API_BASE: &str = "https://api.textree.me";
 /// server so a publish can never wedge forever. Mirrors the `ask` chat timeout (host.rs).
 const UPLOAD_TIMEOUT: Duration = Duration::from_secs(120);
 
-/// The publish API base — `TEXTREE_API_BASE` override (dev/E2E/staging) or the production default.
+/// The publish API base — `TEXTREE_API_BASE` override (dev/E2E/staging builds only, `dev_env`) or
+/// the production default.
 pub fn api_base() -> String {
-    std::env::var("TEXTREE_API_BASE").unwrap_or_else(|_| DEFAULT_API_BASE.to_string())
+    crate::dev_env::var("TEXTREE_API_BASE").unwrap_or_else(|| DEFAULT_API_BASE.to_string())
 }
 
 /// Builds a zip (Deflate) from (relative forward-slash path, bytes) entries. Pure — no filesystem.

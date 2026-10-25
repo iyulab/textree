@@ -270,7 +270,7 @@ fn ensure_vault_at(base: &Path) -> Result<PathBuf, (String, Option<i32>)> {
 /// OneDrive-redirected/uninitialized Known Folder) that exists in name but cannot be created under —
 /// so we keep going past it rather than trusting the first resolved path.
 fn candidate_vault_bases(app: &AppHandle) -> Vec<PathBuf> {
-    if let Ok(p) = std::env::var("TEXTREE_DEFAULT_VAULT_BASE") {
+    if let Some(p) = crate::dev_env::var("TEXTREE_DEFAULT_VAULT_BASE") {
         if !p.is_empty() {
             return vec![PathBuf::from(p)];
         }
@@ -345,7 +345,7 @@ pub fn ensure_default_vault(app: AppHandle) -> Result<DefaultVault, String> {
 /// wants to see in their folder, and it should not travel when the notes do. Keyed per folder,
 /// because "which notes are favourites" only means anything about one set of notes.
 fn personal_dir(root: &Path) -> Result<PathBuf, String> {
-    let base = std::env::var_os("TEXTREE_PERSONAL_BASE")
+    let base = crate::dev_env::var_os("TEXTREE_PERSONAL_BASE")
         .map(PathBuf::from)
         .or_else(personal_base)
         .ok_or_else(|| "cannot find a place to keep settings".to_string())?;
@@ -1265,7 +1265,7 @@ pub fn rebuild_index(root: String, index: &IndexHandle) -> Result<(), String> {
 /// installed canopy release) under `<resource>/canopy/`.
 fn resolve_canopy(app: &AppHandle) -> Result<crate::publish::CanopyInvocation, String> {
     use crate::publish::CanopyInvocation;
-    if let Ok(p) = std::env::var("TEXTREE_CANOPY_CLI") {
+    if let Some(p) = crate::dev_env::var("TEXTREE_CANOPY_CLI") {
         let path = PathBuf::from(&p);
         if path.extension().and_then(|e| e.to_str()) == Some("js") {
             return Ok(CanopyInvocation {

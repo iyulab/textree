@@ -3,6 +3,7 @@ pub(crate) mod byo_secret;
 pub(crate) mod cloud_auth;
 pub(crate) mod cloud_publish;
 pub(crate) mod commands;
+pub(crate) mod dev_env;
 pub(crate) mod drafts;
 pub(crate) mod host;
 pub(crate) mod fs_ops;
@@ -87,9 +88,10 @@ pub fn run() {
             #[cfg(windows)]
             app.handle()
                 .plugin(tauri_plugin_updater::Builder::new().build())?;
-            // Spawn the local AI host when TEXTREE_HOST_EXE is set (dev/production opt-in).
-            // If the env var is absent the handle stays Unavailable — graceful degradation.
-            if let Ok(exe) = std::env::var("TEXTREE_HOST_EXE") {
+            // Spawn the local AI host when TEXTREE_HOST_EXE is set (development and test builds
+            // only — see `dev_env`). Without it the handle stays Unavailable until the person
+            // turns the helper on — graceful degradation.
+            if let Some(exe) = dev_env::var("TEXTREE_HOST_EXE") {
                 use tauri::Manager;
                 let handle = app.state::<std::sync::Arc<HostHandle>>().inner().clone();
                 if let Ok(log_dir) = app.path().app_log_dir() {

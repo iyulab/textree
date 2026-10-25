@@ -21,9 +21,10 @@ const SUCCESS_HTML: &str = "<!doctype html><html><head><meta charset=\"utf-8\"><
 <body style=\"font-family:sans-serif;text-align:center;padding:3rem\"><h2>Connected to Textree</h2>\
 <p>You can close this tab and return to the app.</p></body></html>";
 
-/// The app (BFF) base — `TEXTREE_APP_BASE` override (dev/E2E) or the production default.
+/// The app (BFF) base — `TEXTREE_APP_BASE` override (dev/E2E builds only, `dev_env`) or the
+/// production default.
 pub fn app_base() -> String {
-    std::env::var("TEXTREE_APP_BASE").unwrap_or_else(|_| DEFAULT_APP_BASE.to_string())
+    crate::dev_env::var("TEXTREE_APP_BASE").unwrap_or_else(|| DEFAULT_APP_BASE.to_string())
 }
 
 /// 32 bytes of OS randomness, base64url-nopad (43 chars, all unreserved — RFC 7636 verifier set).
