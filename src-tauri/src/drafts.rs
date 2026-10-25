@@ -10,7 +10,7 @@
 //! version first, so the ended alternative holds what was last typed, and then this is removed.
 
 use std::io;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 /// The directory, inside a folder's settings directory.
@@ -27,17 +27,8 @@ pub fn file(dir: &Path, id: &str, rel: &str) -> Option<PathBuf> {
     if id.is_empty() || !id.bytes().all(|b| b.is_ascii_hexdigit()) {
         return None;
     }
-    let mut out = dir.join(id);
-    let mut any = false;
-    for part in rel.split('/') {
-        let mut components = Path::new(part).components();
-        match (components.next(), components.next()) {
-            (Some(Component::Normal(name)), None) => out.push(name),
-            _ => return None,
-        }
-        any = true;
-    }
-    any.then_some(out)
+    crate::vault_paths::plain(rel).ok()?;
+    Some(rel.split('/').fold(dir.join(id), |p, name| p.join(name)))
 }
 
 /// The draft at `file`, or `None` when nothing is being worked on.

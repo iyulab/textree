@@ -11,15 +11,19 @@ import { dedupePushFront, RECENT_MAX, remapOrder, remapPaths } from "./nav.helpe
 import { readSettings } from "./settingsFile";
 import { isStringList, isStringListMap } from "./settingsFile.helpers";
 import { RetryingWriter } from "./sidecarWriter.helpers";
+import { readVaultList, writeVaultList } from "./vaultLocal.helpers";
 
 // Re-export so components can import the order helper alongside from `$lib/nav.svelte`.
 export { mergeOrder } from "./nav.helpers";
 
 const RECENT_KEY = "textree-recent";
 
+const storage = () => (typeof localStorage === "undefined" ? undefined : localStorage);
+
 class NavStore {
   favorites = $state<string[]>([]);
-  recent = $state<string[]>(loadRecent());
+  /** Notes opened lately in this vault, on this device. */
+  recent = $state<string[]>([]);
   /** parentPath → child path order. */
   order = $state<Record<string, string[]>>({});
   /** Current vault root (target of persist IPC). null means not loaded. */
@@ -43,6 +47,7 @@ class NavStore {
   async load(root: string, readOnly = false): Promise<string[]> {
     this.writer.reset(); // owed writes belong to the folder being left
     this.root = root;
+    this.recent = readVaultList(storage(), RECENT_KEY, root);
     this.kept = new Set();
     const setAside: string[] = [];
     const favorites = readOnly ? null : await readSettings(root, "favorites.json", isStringList);
@@ -72,8 +77,7 @@ class NavStore {
 
   pushRecent(path: string): void {
     this.recent = dedupePushFront(this.recent, path, RECENT_MAX);
-    if (typeof localStorage !== "undefined")
-      localStorage.setItem(RECENT_KEY, JSON.stringify(this.recent));
+    if (this.root !== null) writeVaultList(storage(), RECENT_KEY, this.root, this.recent);
   }
 
   async setOrder(parent: string, paths: string[]): Promise<void> {
@@ -89,7 +93,7 @@ class NavStore {
     const changed = (a: unknown, b: unknown) => JSON.stringify(a) !== JSON.stringify(b);
     if (changed(recent, this.recent)) {
       this.recent = recent;
-      if (typeof localStorage !== "undefined") localStorage.setItem(RECENT_KEY, JSON.stringify(recent));
+      if (this.root !== null) writeVaultList(storage(), RECENT_KEY, this.root, recent);
     }
     const writes: Promise<void>[] = [];
     if (changed(favorites, this.favorites)) {
@@ -103,16 +107,6 @@ class NavStore {
     await Promise.all(writes);
   }
 
-}
-
-function loadRecent(): string[] {
-  if (typeof localStorage === "undefined") return [];
-  try {
-    const arr = JSON.parse(localStorage.getItem(RECENT_KEY) ?? "[]");
-    return Array.isArray(arr) ? arr : [];
-  } catch {
-    return [];
-  }
 }
 
 export const nav = new NavStore();

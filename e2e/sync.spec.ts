@@ -106,7 +106,6 @@ test("deleted outside while editing: the unsaved edits stay and can be put back"
 test("deleted outside with its folder while editing: the note comes back at the top", async () => {
   const vault = createTempVault({ "box/gone.md": "before\n", "other.md": "# other\n" });
   try {
-    await page.evaluate(() => localStorage.removeItem("textree-tree-collapsed"));
     await loadVault(page, vault);
     await page.getByRole("treeitem", { name: /gone/ }).click();
     await expect(page.locator(".cm-content")).toContainText("before");
@@ -350,7 +349,7 @@ test("a save never replaces a change it has not seen", async () => {
             window as unknown as {
               __TAURI_INTERNALS__: { invoke: (cmd: string, args: unknown) => Promise<unknown> };
             }
-          ).__TAURI_INTERNALS__.invoke("write_note", { root, path: `${root}/cas.md`, content, expected }),
+          ).__TAURI_INTERNALS__.invoke("write_note", { root, rel: "cas.md", content, expected }),
         [vault, content, expected],
       );
 

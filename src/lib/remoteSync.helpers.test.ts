@@ -12,7 +12,7 @@ import {
 import type { RemoteExchange } from "./ipc";
 
 function exchange(part: Partial<RemoteExchange>): RemoteExchange {
-  return { received: [], removed: [], held: [], alternatives: [], keptBack: [], sent: false, ...part };
+  return { received: [], removed: [], held: [], alternatives: [], keptBack: [], waitingElsewhere: [], sent: false, ...part };
 }
 
 describe("repositoryLabel", () => {
@@ -104,11 +104,18 @@ describe("exchangeMessages", () => {
     ]);
   });
 
+  it("says notes waiting in another notes folder hold this one too", () => {
+    expect(exchangeMessages(exchange({ waitingElsewhere: ["Journal/n.md"] }))).toEqual([
+      "1 note in another notes folder is waiting for you, so nothing else arrived yet. Open that folder to see it: Journal/n",
+    ]);
+    expect(needsAttention(exchange({ waitingElsewhere: ["Journal/n.md"] }))).toBe(true);
+  });
+
   it("never uses machinery words", () => {
     const all = exchangeMessages(
-      exchange({ received: ["a.md"], removed: ["b.md"], held: ["c.md"], keptBack: ["d.md"] }),
+      exchange({ received: ["a.md"], removed: ["b.md"], held: ["c.md"], keptBack: ["d.md"], waitingElsewhere: ["x/e.md"] }),
     ).join(" ");
-    expect(all).not.toMatch(/\b(commit|branch|merge|push|pull|remote|conflict|ref)\b/i);
+    expect(all).not.toMatch(/\b(commit|branch|merge|push|pull|remote|conflict|ref|repository)\b/i);
   });
 });
 

@@ -53,7 +53,7 @@ class ViewsStore {
     const read = readOnly ? null : await readSettings(root, VIEWS_FILE, isViewsMap);
     this.kept = !read || !read.writable;
     this.all = read?.value ?? {};
-    this.foreignFolders = findForeignViewFolders(Object.keys(this.all), root);
+    this.foreignFolders = findForeignViewFolders(Object.keys(this.all));
     return read?.setAside ?? null;
   }
 

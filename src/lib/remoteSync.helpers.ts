@@ -79,7 +79,22 @@ export function exchangeMessages(exchange: RemoteExchange): string[] {
         `version, so what arrived for ${keptBack.length === 1 ? "it" : "them"} is waiting: ${nameList(keptBack)}`,
     );
   }
+  const elsewhere = exchange.waitingElsewhere ?? [];
+  if (elsewhere.length > 0) {
+    out.push(
+      `${notes(elsewhere.length)} in another notes folder ` +
+        `${elsewhere.length === 1 ? "is" : "are"} waiting for you, so nothing else arrived yet. ` +
+        `Open that folder to see ${elsewhere.length === 1 ? "it" : "them"}: ${pathList(elsewhere)}`,
+    );
+  }
   return out;
+}
+
+/** Paths joined for a sentence, without the extension, at most `NAMES_SHOWN` of them. */
+function pathList(paths: string[]): string {
+  const names = paths.map((p) => p.replace(/\.md$/i, ""));
+  if (names.length <= NAMES_SHOWN) return names.join(", ");
+  return `${names.slice(0, NAMES_SHOWN).join(", ")} and ${names.length - NAMES_SHOWN} more`;
 }
 
 /**
@@ -87,7 +102,11 @@ export function exchangeMessages(exchange: RemoteExchange): string[] {
  * Those are said with a warning; notes that simply arrived or went are said plainly.
  */
 export function needsAttention(exchange: RemoteExchange): boolean {
-  return exchange.held.length > 0 || exchange.keptBack.length > 0;
+  return (
+    exchange.held.length > 0 ||
+    exchange.keptBack.length > 0 ||
+    (exchange.waitingElsewhere ?? []).length > 0
+  );
 }
 
 /** What the panel says after an exchange the person asked for. Never empty. */

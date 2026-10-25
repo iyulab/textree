@@ -1,25 +1,21 @@
 /*
  * Tree UI state — collapse set + keyboard focus path.
  *
- * Collapse is a presentation-layer preference, so it persists in localStorage
- * (based on absolute paths → no vault conflict).
+ * Collapse is a presentation-layer preference, so it persists in localStorage, one list per vault
+ * (paths are relative to the vault).
  * Focus (roving tabindex) is session state and does not persist.
  */
 
+import { readVaultList, writeVaultList } from "./vaultLocal.helpers";
+
 const COLLAPSE_KEY = "textree-tree-collapsed";
 
-function loadCollapsed(): Set<string> {
-  if (typeof localStorage === "undefined") return new Set();
-  try {
-    const arr = JSON.parse(localStorage.getItem(COLLAPSE_KEY) ?? "[]");
-    return new Set(Array.isArray(arr) ? arr : []);
-  } catch {
-    return new Set();
-  }
-}
+const storage = () => (typeof localStorage === "undefined" ? undefined : localStorage);
 
 class TreeStore {
-  collapsed = $state<Set<string>>(loadCollapsed());
+  collapsed = $state<Set<string>>(new Set());
+  /** The vault whose folders `collapsed` names. */
+  private root: string | null = null;
   /** Path of the node under keyboard focus (roving tabindex basis). null = unset (falls back to the first item). */
   focused = $state<string | null>(null);
   /** Path of the node "cut" for keyboard move (Ctrl+X). Moved/adopted onto the paste (Ctrl+V) target. */
@@ -29,9 +25,16 @@ class TreeStore {
     return this.collapsed.has(path);
   }
 
+  /** A vault opened: its folders collapse as they were left on this device. */
+  load(root: string): void {
+    this.root = root;
+    this.collapsed = new Set(readVaultList(storage(), COLLAPSE_KEY, root));
+    this.focused = null;
+    this.cut = null;
+  }
+
   private persist(): void {
-    if (typeof localStorage !== "undefined")
-      localStorage.setItem(COLLAPSE_KEY, JSON.stringify([...this.collapsed]));
+    if (this.root !== null) writeVaultList(storage(), COLLAPSE_KEY, this.root, [...this.collapsed]);
   }
 
   /** A folder moved or was renamed: it stays collapsed, and so do the folders under it. */

@@ -372,7 +372,8 @@ pub fn clear_secret(key: &str) -> Result<(), String> {
     secrets().delete(key).map_err(|e| e.to_string())
 }
 
-/// What one exchange with the remote did.
+/// What one exchange with the remote did. Notes are named relative to the folder, as everywhere
+/// else on the screen's side — not relative to a repository the folder may sit inside.
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Exchange {
@@ -386,6 +387,10 @@ pub struct Exchange {
     pub alternatives: Vec<String>,
     /// Notes the other side changed that hold unrecorded edits here. Nothing moved.
     pub kept_back: Vec<String>,
+    /// Notes of another folder in the same repository that are held or kept back, named relative
+    /// to the repository. They hold this folder's exchange too — nothing is taken in until they
+    /// are decided — and only that folder can show them.
+    pub waiting_elsewhere: Vec<String>,
     /// The remote now holds everything recorded here.
     pub sent: bool,
 }
@@ -406,19 +411,27 @@ pub fn exchange(
         fetch(repo, url, credentials.clone()).map_err(err)?;
         crate::publish_scope::take_in(repo).map_err(err)?;
         let plan = plan(vault, root).map_err(err)?;
-        match apply(vault, root, &plan, locks)? {
+        let taken = apply(vault, root, &plan, locks)?;
+        // Decided on what was taken in, not on what this folder names: a note waiting in another
+        // folder of the same repository holds the send back just the same.
+        let waits = matches!(taken, Taken::Held { .. } | Taken::KeptBack { .. });
+        match taken {
             Taken::Done { written, removed } => {
-                out.received.extend(written);
-                out.removed.extend(removed);
+                out.received.extend(in_folder(vault, written));
+                out.removed.extend(in_folder(vault, removed));
             }
             Taken::Held {
                 overlap,
                 alternatives,
             } => {
-                out.held = overlap;
-                out.alternatives = alternatives;
+                out.waiting_elsewhere = elsewhere(vault, &overlap);
+                out.held = in_folder(vault, overlap);
+                out.alternatives = in_folder(vault, alternatives);
             }
-            Taken::KeptBack { notes } => out.kept_back = notes,
+            Taken::KeptBack { notes } => {
+                out.waiting_elsewhere = elsewhere(vault, &notes);
+                out.kept_back = in_folder(vault, notes);
+            }
             Taken::Nothing | Taken::Overtaken => {}
         }
         match push(repo, url, credentials.clone()).map_err(err)? {
@@ -429,11 +442,30 @@ pub fn exchange(
             }
             Sent::NothingToSend => break,
             // Held or kept back: sending waits until a person has decided.
-            Sent::Behind if !out.held.is_empty() || !out.kept_back.is_empty() => break,
+            Sent::Behind if waits => break,
             Sent::Behind => continue,
         }
     }
     Ok(out)
+}
+
+/// Repository paths as the folder names them. A path outside the folder is another folder's
+/// note sharing the repository, and is not this folder's to name.
+fn in_folder(vault: &VaultRepo, paths: Vec<String>) -> Vec<String> {
+    paths
+        .iter()
+        .filter_map(|p| vault.path_in_vault(Path::new(p)))
+        .map(|p| crate::git_engine::slashed(&p))
+        .collect()
+}
+
+/// The repository paths outside the folder: another folder's notes sharing the repository.
+fn elsewhere(vault: &VaultRepo, paths: &[String]) -> Vec<String> {
+    paths
+        .iter()
+        .filter(|p| vault.path_in_vault(Path::new(p)).is_none())
+        .cloned()
+        .collect()
 }
 
 /// After a send the remote holds exactly this machine's references. Recording that under
@@ -794,7 +826,7 @@ mod tests {
             commit_paths(
                 self.repo(),
                 NOTES_REF,
-                &[(PathBuf::from(rel), text.as_bytes().to_vec())],
+                &[(self.vault.path_in_repo(Path::new(rel)), text.as_bytes().to_vec())],
                 "version",
                 &author,
                 &committer,
@@ -1227,6 +1259,71 @@ mod tests {
     }
 
     #[test]
+    fn what_an_exchange_names_is_relative_to_a_folder_inside_a_repository() {
+        let tmp = tempfile::tempdir().unwrap();
+        let remote = tmp.path().join("remote.git");
+        Repository::init_bare(&remote).unwrap();
+        // Each machine opens a folder inside a repository that also holds other things.
+        let machine = |name: &str| {
+            Repository::init(tmp.path().join(name)).unwrap();
+            Machine::new(tmp.path().join(name).join("notes"))
+        };
+        let (a, b) = (machine("a"), machine("b"));
+        let url = Machine::url_of(&remote);
+        let exchange_on =
+            |m: &Machine| exchange(&m.vault, &m.root, &url, None, &NoteLocks::default()).unwrap();
+
+        a.record("sub/manual.md", "# Manual\n");
+        a.record("old.md", "# Old\n");
+        a.send(&remote);
+        let mut received = exchange_on(&b).received;
+        received.sort();
+        assert_eq!(received, vec!["old.md".to_string(), "sub/manual.md".to_string()]);
+        assert_eq!(b.read("sub/manual.md").as_deref(), Some("# Manual\n"));
+
+        b.save("old.md", "# Old\n\nTyped here, not yet a version.\n");
+        a.record("old.md", "# Old\n\nFrom a.\n");
+        a.send(&remote);
+        assert_eq!(exchange_on(&b).kept_back, vec!["old.md".to_string()]);
+        b.record("old.md", "# Old\n\nFrom a.\n");
+
+        a.record("sub/manual.md", "# Manual\n\nFrom a.\n");
+        a.send(&remote);
+        b.record("sub/manual.md", "# Manual\n\nFrom b.\n");
+        let held = exchange_on(&b);
+        assert_eq!(held.held, vec!["sub/manual.md".to_string()]);
+        assert_eq!(held.alternatives, vec!["sub/manual.md".to_string()]);
+    }
+
+    #[test]
+    fn a_note_waiting_in_another_folder_of_the_repository_holds_the_send_without_being_named() {
+        let tmp = tempfile::tempdir().unwrap();
+        let remote = tmp.path().join("remote.git");
+        Repository::init_bare(&remote).unwrap();
+        for name in ["a", "b"] {
+            Repository::init(tmp.path().join(name)).unwrap();
+        }
+        let a = Machine::new(tmp.path().join("a").join("x"));
+        let (bx, by) = (
+            Machine::new(tmp.path().join("b").join("x")),
+            Machine::new(tmp.path().join("b").join("y")),
+        );
+        let url = Machine::url_of(&remote);
+        a.record("n.md", "# N\n");
+        a.send(&remote);
+        exchange(&bx.vault, &bx.root, &url, None, &NoteLocks::default()).unwrap();
+
+        a.record("n.md", "# N\n\nFrom a.\n");
+        a.send(&remote);
+        bx.record("n.md", "# N\n\nFrom b.\n");
+        // Exchanged from the other folder: the note that waits is not one this folder can name,
+        // and nothing is sent until it is decided.
+        let out = exchange(&by.vault, &by.root, &url, None, &NoteLocks::default()).unwrap();
+        assert!(out.held.is_empty() && out.alternatives.is_empty(), "{out:?}");
+        assert!(!out.sent);
+    }
+
+    #[test]
     fn what_arrives_is_never_sent_back() {
         let (_tmp, remote, a, b) = setup();
         a.record("manual.md", "# Manual\n");
@@ -1596,6 +1693,12 @@ More.
         assert!(x.read("plan.md").is_none(), "all of it or none of it");
         assert_eq!(b.read("y/n.md").as_deref(), Some("# Written here, never recorded"));
         assert!(id_of(b.repo(), NOTES_REF).is_none());
+
+        // The folder that was synced says why nothing arrived, though the note is not its own.
+        let out = exchange(&x.vault, &x.root, &Machine::url_of(&remote), None, &NoteLocks::default()).unwrap();
+        assert!(out.kept_back.is_empty());
+        assert_eq!(out.waiting_elsewhere, vec!["y/n.md".to_string()]);
+        assert!(!out.sent);
     }
 
     #[test]

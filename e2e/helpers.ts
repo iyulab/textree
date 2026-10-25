@@ -328,7 +328,7 @@ export function refsUnder(repo: string, prefix: string): string[] {
 export async function recordNotes(page: Page, vault: string, rels: string[]): Promise<void> {
   await tauriInvoke(page, "commit_notes", {
     root: vault,
-    paths: rels.map((r) => join(vault, ...r.split("/"))),
+    rels,
     message: "test",
   });
 }

@@ -649,6 +649,69 @@ describe("NoteSave — switching notes", () => {
     ]);
   });
 
+  it("a note of the same name open in another vault is not the one a late answer is about", async () => {
+    let root = "/one";
+    let active: string | null = "A.md";
+    const calls: { root: string; text: string; settle: (o: WriteOutcome) => void }[] = [];
+    const copies: [string, string][] = [];
+    const state = initialNoteSaveState();
+    const save = new NoteSave(state, {
+      root: () => root,
+      activePath: () => active,
+      write: (r, _path, text) => new Promise<WriteOutcome>((resolve) => calls.push({ root: r, text, settle: resolve })),
+      keepCopy: async (r, path) => {
+        copies.push([r, path]);
+        return "A (2).md";
+      },
+    });
+    save.opened("a0");
+    save.schedule("A.md", "a1");
+    active = "B.md";
+    save.opened("b0"); // A left with a1 on its way
+    expect(await save.beforeLeaving()).toBe("saved");
+    root = "/two";
+    active = "A.md"; // another vault's note, named the same
+    save.opened("other");
+    await settle();
+
+    calls[0].settle({ kind: "conflict", disk: "changed elsewhere" });
+    await settle();
+    expect(copies).toEqual([["/one", "A.md"]]);
+    expect(state.conflictDisk).toBeNull();
+  });
+
+  it("moving a note in one vault leaves a waiting edit to the same name in another vault where it is", async () => {
+    let root = "/one";
+    let active: string | null = "A.md";
+    const calls: { root: string; path: string; settle: (o: WriteOutcome) => void }[] = [];
+    const save = new NoteSave(initialNoteSaveState(), {
+      root: () => root,
+      activePath: () => active,
+      write: (r, path) => new Promise<WriteOutcome>((resolve) => calls.push({ root: r, path, settle: resolve })),
+      moved: (remap) => {
+        if (active) active = remap(active);
+      },
+    });
+    save.opened("a0");
+    save.schedule("A.md", "a1");
+    void save.flush();
+    await settle();
+    save.schedule("A.md", "a2"); // waits behind a1
+    active = "B.md";
+    save.opened("b0");
+    root = "/two";
+    active = "A.md";
+    save.opened("other");
+    await save.move(async () => (p) => (p === "A.md" ? "dest/A.md" : p), "A.md");
+
+    calls[0].settle(written);
+    await settle();
+    expect(calls.map((c) => [c.root, c.path])).toEqual([
+      ["/one", "A.md"],
+      ["/one", "A.md"],
+    ]);
+  });
+
 });
 
 describe("NoteSave — answers", () => {

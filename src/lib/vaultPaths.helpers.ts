@@ -1,20 +1,21 @@
-// Vault paths — comparison and composition of the absolute paths the tree hands out, and where a
-// structure change puts them. Pure: nothing here touches the disk.
+// Vault paths — comparison and composition of the paths the backend hands out, relative to the
+// vault and `/`-separated (the vault itself is `""`), and where a structure change puts them.
+// Pure: nothing here touches the disk.
 //
-// Paths compare the way Windows does: separators and a trailing slash are ignored, and so is case.
+// Names compare the way Windows does: ignoring case.
 
 import type { Remap } from "./noteSave";
 
-const normalize = (p: string) => p.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
+const normalize = (p: string) => p.replace(/\/+$/, "").toLowerCase();
 
 /** One key per place: two spellings {@link samePath} equates give the same key. */
 export const pathKey = normalize;
 
-/** Is `child` equal to or below `ancestor`. */
+/** Is `child` equal to or below `ancestor` — and everything is below the vault itself (`""`). */
 export function pathInside(child: string, ancestor: string): boolean {
   const c = normalize(child);
   const a = normalize(ancestor);
-  return c === a || c.startsWith(a + "/");
+  return a === "" || c === a || c.startsWith(a + "/");
 }
 
 /** Do `a` and `b` name the same place. */
@@ -22,22 +23,43 @@ export function samePath(a: string, b: string): boolean {
   return normalize(a) === normalize(b);
 }
 
-/** Parent directory of a path (separator preserved). */
+/**
+ * Do `a` and `b` name the same vault. Vaults themselves are named by where they are on disk, as
+ * Windows names folders: either separator, a trailing one or not, any case.
+ */
+export function sameVault(a: string, b: string): boolean {
+  const n = (p: string) => p.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
+  return n(a) === n(b);
+}
+
+/**
+ * An absolute path as the vault at `root` names it — `""` for the vault itself — or `null` when it is
+ * not inside. For reading what was kept before paths were relative.
+ */
+export function relativeTo(root: string, abs: string): string | null {
+  const n = (p: string) => p.replace(/\\/g, "/").replace(/\/+$/, "");
+  const r = n(root);
+  const a = n(abs);
+  if (r === "") return null;
+  if (a.toLowerCase() === r.toLowerCase()) return "";
+  if (a.slice(0, r.length).toLowerCase() !== r.toLowerCase() || a[r.length] !== "/") return null;
+  return a.slice(r.length + 1);
+}
+
+/** The folder a path is in: `""` for one at the top of the vault. */
 export function parentDir(p: string): string {
-  const i = Math.max(p.lastIndexOf("/"), p.lastIndexOf("\\"));
-  return i >= 0 ? p.slice(0, i) : p;
+  const i = p.lastIndexOf("/");
+  return i >= 0 ? p.slice(0, i) : "";
 }
 
 /** Last component of a path (file or folder name). */
 export function baseName(p: string): string {
-  const i = Math.max(p.lastIndexOf("/"), p.lastIndexOf("\\"));
-  return i >= 0 ? p.slice(i + 1) : p;
+  return p.slice(p.lastIndexOf("/") + 1);
 }
 
-/** Join `child` onto `dir`, keeping the separator style `dir` already uses. */
+/** `child` inside the folder `dir` (`""` = the vault itself). */
 export function joinPath(dir: string, child: string): string {
-  const sep = dir.includes("\\") ? "\\" : "/";
-  return `${dir}${sep}${child}`;
+  return dir === "" ? child : `${dir}/${child}`;
 }
 
 /** A note's name: its file name without `.md`. */

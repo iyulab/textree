@@ -14,7 +14,7 @@
   interface Props {
     /** Absolute vault root path. */
     root: string;
-    /** Absolute path of the note whose states are listed. */
+    /** Path of the note whose states are listed, relative to the vault. */
     path: string;
     /** Moves on when the folder's history may have changed: the list is read again. */
     revision: number;

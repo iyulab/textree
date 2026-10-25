@@ -12,7 +12,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::io;
-use std::path::{Component, Path};
+use std::path::Path;
 use tauri_kit_state::Outbox;
 
 /// The directory, inside a folder's settings directory.
@@ -27,20 +27,6 @@ pub struct Kept {
     pub base: String,
     /// When it was kept, in milliseconds since the Unix epoch.
     pub at: u64,
-}
-
-/// `path` relative to `root`, `/`-separated — worked out from the text of the two paths alone.
-/// Looking at the disk here could hang on the very folder that stopped answering.
-pub fn relative(root: &Path, path: &Path) -> Option<String> {
-    let rel = path.strip_prefix(root).ok()?;
-    let mut parts = Vec::new();
-    for c in rel.components() {
-        match c {
-            Component::Normal(name) => parts.push(name.to_str()?.to_string()),
-            _ => return None,
-        }
-    }
-    (!parts.is_empty()).then(|| parts.join("/"))
 }
 
 /// Where kept edits are, as files `<when>-<n>.json`.
@@ -132,14 +118,5 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         assert!(forget(tmp.path(), "../settings").is_err());
         assert!(forget(tmp.path(), "").is_err());
-    }
-
-    #[test]
-    fn a_note_path_is_made_relative_without_looking_at_the_disk() {
-        let root = Path::new("/nowhere/notes");
-        assert_eq!(relative(root, Path::new("/nowhere/notes/sub/a.md")).as_deref(), Some("sub/a.md"));
-        assert_eq!(relative(root, Path::new("/nowhere/other/a.md")), None);
-        assert_eq!(relative(root, Path::new("/nowhere/notes/../escape.md")), None);
-        assert_eq!(relative(root, root), None);
     }
 }

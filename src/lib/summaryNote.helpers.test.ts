@@ -8,14 +8,14 @@ import { buildWikiResolver, findWikiLinks } from './wikilink.helpers';
 
 describe('summaryNoteParent', () => {
   it('folder scope -> the folder path', () => {
-    expect(summaryNoteParent('folder', 'C:\\v\\notes', 'C:\\v')).toBe('C:\\v\\notes');
+    expect(summaryNoteParent('folder', 'notes')).toBe('notes');
   });
-  it('file scope -> the containing folder', () => {
-    expect(summaryNoteParent('file', 'C:\\v\\notes\\a.md', 'C:\\v')).toBe('C:\\v\\notes');
-    expect(summaryNoteParent('file', '/v/notes/a.md', '/v')).toBe('/v/notes');
+  it('file scope -> the containing folder, the vault itself for a note at the top', () => {
+    expect(summaryNoteParent('file', 'notes/sub/a.md')).toBe('notes/sub');
+    expect(summaryNoteParent('file', 'a.md')).toBe('');
   });
-  it('vault scope (path null) -> the root', () => {
-    expect(summaryNoteParent('vault', null, 'C:\\v')).toBe('C:\\v');
+  it('vault scope (path null) -> the vault itself', () => {
+    expect(summaryNoteParent('vault', null)).toBe('');
   });
 });
 

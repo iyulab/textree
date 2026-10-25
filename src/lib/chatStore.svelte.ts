@@ -25,7 +25,7 @@ import { createNoteWithContent } from './ipc';
 export type ChatScopeKind = 'file' | 'folder' | 'vault';
 export interface ChatScope {
   kind: ChatScopeKind;
-  path: string | null; // file/folder absolute path; null for whole-vault
+  path: string | null; // file/folder path relative to the vault; null for whole-vault
   label: string;
 }
 export type ChatState =
@@ -94,7 +94,7 @@ class ChatStore {
    *  turn cannot be mistaken for the summary). Throws if there is no summary to save. */
   async saveSummaryToNote(vault: string, summaryText: string): Promise<string> {
     if (!this.summaryResult) throw new Error('No summary to save');
-    const parent = summaryNoteParent(this.scope.kind, this.scope.path, vault);
+    const parent = summaryNoteParent(this.scope.kind, this.scope.path);
     const name = summaryNoteBaseName(this.scope.label);
     const content = buildSummaryNote(
       this.scope.label,

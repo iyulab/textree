@@ -38,7 +38,6 @@ async function cutAndPaste(src: RegExp, dst: RegExp) {
 test("moving the open note into a folder keeps what was typed on screen and on disk", async () => {
   const vault = createTempVault({ "moving.md": "first line\n", "dest/other.md": "x\n" });
   try {
-    await page.evaluate(() => localStorage.removeItem("textree-tree-collapsed"));
     await loadVault(page, vault);
     await page.getByRole("treeitem", { name: /moving/ }).click();
     await expect(page.locator(".cm-content")).toContainText("first line");
@@ -51,7 +50,6 @@ test("moving the open note into a folder keeps what was typed on screen and on d
     await typeAndWaitSaved(vault, "dest/moving.md", " and after");
     expect(readVaultFile(vault, "dest/moving.md")).toContain("typed before the move and after");
   } finally {
-    await page.evaluate(() => localStorage.removeItem("textree-tree-collapsed"));
     removeTempVault(vault);
   }
 });
@@ -124,7 +122,6 @@ test("renaming the open note in the tree keeps it open with what was typed", asy
 test("renaming the folder that holds the open note keeps it open at its new place", async () => {
   const vault = createTempVault({ "box/inner.md": "first line\n" });
   try {
-    await page.evaluate(() => localStorage.removeItem("textree-tree-collapsed"));
     await loadVault(page, vault);
     await page.getByRole("treeitem", { name: /inner/ }).click();
     await typeAndWaitSaved(vault, "box/inner.md", "typed before the rename");
@@ -141,7 +138,6 @@ test("renaming the folder that holds the open note keeps it open at its new plac
     expect(readVaultFile(vault, "crate/inner.md")).toContain("typed before the rename and after");
     expect(existsSync(join(vault, "box"))).toBe(false);
   } finally {
-    await page.evaluate(() => localStorage.removeItem("textree-tree-collapsed"));
     removeTempVault(vault);
   }
 });

@@ -7,6 +7,7 @@
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { listTree, readNote, type TreeNode } from "./ipc";
 import { decideChangeAction, decideRescanAction } from "./sync.helpers";
+import { samePath, sameVault } from "./vaultPaths.helpers";
 
 export type FsChangeKind = "created" | "modified" | "removed";
 
@@ -15,10 +16,17 @@ export interface FsChange {
   path: string;
 }
 
+/** A change as the backend says it: the folder it happened in, and where in it. */
+interface FsEvent {
+  root: string;
+  kind: FsChangeKind;
+  rel: string;
+}
+
 export interface SyncHandlers {
   /** Current vault root (null if none). */
   root: () => string | null;
-  /** Body path of the currently open note (null if none). */
+  /** Body path of the currently open note, relative to the vault (null if none). */
   activePath: () => string | null;
   /** Current text of the open note as the user sees it (live editor doc). */
   activeDoc: () => string;
@@ -38,17 +46,12 @@ export interface SyncHandlers {
   conflict: (diskContent: string) => void;
 }
 
-/** Normalization for path comparison. Absorbs separator differences and compares in lowercase
- *  to match Windows case-insensitivity (Windows-first; same policy as pathInside in +page). */
-function samePath(a: string, b: string): boolean {
-  const norm = (p: string) => p.replace(/\\/g, "/").toLowerCase();
-  return norm(a) === norm(b);
-}
-
 /** Handle a single fs change (refresh tree + apply to the open note). */
-async function handleChange(handlers: SyncHandlers, payload: FsChange): Promise<void> {
+async function handleChange(handlers: SyncHandlers, event: FsEvent): Promise<void> {
   const root = handlers.root();
-  if (!root) return;
+  // A change in a folder no longer open says nothing about this one, even for a note of the same name.
+  if (!root || !sameVault(event.root, root)) return;
+  const payload: FsChange = { kind: event.kind, path: event.rel };
 
   // 1) Refresh the tree on any change (reflect create/remove/rename).
   try {
@@ -124,7 +127,7 @@ export async function startSync(handlers: SyncHandlers): Promise<UnlistenFn> {
   const enqueue = (task: () => Promise<void>) => {
     chain = chain.then(task).catch(() => {});
   };
-  const unlistenChanged = await listen<FsChange>("fs_changed", ({ payload }) => {
+  const unlistenChanged = await listen<FsEvent>("fs_changed", ({ payload }) => {
     enqueue(() => handleChange(handlers, payload));
   });
   const unlistenRescan = await listen<null>("fs_rescan", () => {

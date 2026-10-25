@@ -69,8 +69,8 @@ fn build_node_for_dir(dir: &Path) -> io::Result<TreeNode> {
         .map(|s| s.to_string_lossy().to_string())
         .unwrap_or_default();
     let body = dir.join(format!("{name}.md"));
-    // Note: body_path validation (preventing symlink escapes outside the vault) is done at the
-    // Tauri command boundary via the is_within check (commands.rs, a follow-up task).
+    // A body path that leads out through a link is refused where paths come back in: every note
+    // path a command takes is resolved by `vault_paths`.
     let body_path = if body.is_file() { Some(body) } else { None };
     let folder_note = format!("{name}.md");
     let children = build_children(dir, Some(&folder_note))?;

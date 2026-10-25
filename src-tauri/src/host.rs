@@ -745,11 +745,18 @@ pub fn stop_host(host: State<'_, Arc<HostHandle>>) -> Result<(), String> {
     Ok(())
 }
 
+/// Where a scope sent relative to the vault is: a folder or note inside it, or the whole vault
+/// when there is none (`""` alike). The host is handed the absolute path it indexes by.
+fn scope_within(vault: &str, scope: Option<String>) -> Result<String, String> {
+    crate::vault_paths::folder(vault, scope.as_deref().unwrap_or(""))
+        .map(|p| p.to_string_lossy().into_owned())
+}
+
 #[tauri::command]
 pub async fn semantic_search(
     vault: String,
     query: String,
-    scope_path: Option<String>,
+    scope: Option<String>,
     limit: u32,
     host: State<'_, Arc<HostHandle>>,
 ) -> Result<Vec<SemanticHit>, String> {
@@ -760,18 +767,8 @@ pub async fn semantic_search(
     if !matches!(host.status(), HostStatus::Ready) {
         return Ok(Vec::new());
     }
-    // Reject a scope_path that escapes the vault: containment is checked at the boundary.
-    // is_within uses canonicalize — both paths must exist; scope defaults to vault root.
-    if let Some(ref sp) = scope_path {
-        if !crate::pathsafe::is_within(
-            std::path::Path::new(&vault),
-            std::path::Path::new(sp),
-        ) {
-            return Err("scope is outside the vault".into());
-        }
-    }
-    let scope = scope_path.unwrap_or_else(|| vault.clone()); // compute before moving `vault`
     tauri::async_runtime::spawn_blocking(move || {
+        let scope = scope_within(&vault, scope)?;
         let payload = serde_json::json!({
             "vaultPath": vault,
             "query": query,
@@ -902,14 +899,14 @@ pub fn parse_chat_line(line: &str) -> Option<ChatLine> {
 /// detect the mismatch on each line and abort (dropping the reader closes the TCP connection,
 /// causing the host to see `RequestAborted` and stop generating — freeing CPU/memory).
 ///
-/// Scope validation mirrors `semantic_search`: `scope_path`, when provided, must be within
-/// the vault directory, or the command returns `Err` (an IPC-level error, not an event).
+/// Scope validation mirrors `semantic_search`: `scope`, when provided, must be within the vault,
+/// or the command returns `Err` (an IPC-level error, not an event).
 #[tauri::command]
 pub async fn ask(
     vault: String,
     messages: Vec<ChatMessage>,
     citation_hits: Vec<SemanticHit>,
-    scope_path: Option<String>,
+    scope: Option<String>,
     on_event: tauri::ipc::Channel<AskEvent>,
     host: State<'_, Arc<HostHandle>>,
 ) -> Result<(), String> {
@@ -926,11 +923,10 @@ pub async fn ask(
         });
         return Ok(());
     }
-    // Security at the edge: reject scope_path that escapes the vault (mirrors semantic_search N3).
-    if let Some(ref sp) = scope_path {
-        if !crate::pathsafe::is_within(Path::new(&vault), Path::new(sp)) {
-            return Err("scope is outside the vault".into());
-        }
+    // Security at the edge: a scope outside the vault is refused, as for `semantic_search`.
+    {
+        let vault = vault.clone();
+        crate::commands::off_main(move || scope_within(&vault, scope).map(drop)).await?;
     }
 
     // Single-flight cancellation counter (separate from health-poll `generation`).
@@ -1028,6 +1024,21 @@ pub fn reindex_vault(handle: &HostHandle, vault: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_scope_is_sent_relative_to_the_vault_and_kept_inside_it() {
+        let d = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(d.path().join("projects/2026")).unwrap();
+        let vault = d.path().to_string_lossy().into_owned();
+        assert_eq!(scope_within(&vault, None).unwrap(), vault);
+        assert_eq!(scope_within(&vault, Some(String::new())).unwrap(), vault);
+        let inner = scope_within(&vault, Some("projects/2026".into())).unwrap();
+        assert_eq!(Path::new(&inner), d.path().join("projects").join("2026"));
+        assert_eq!(
+            scope_within(&vault, Some("../elsewhere".into())).unwrap_err(),
+            "path is outside the vault"
+        );
+    }
 
     /// A client for a port nothing listens on.
     fn unreachable_endpoint() -> Client {
