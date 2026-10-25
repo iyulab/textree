@@ -9,10 +9,11 @@
  *
  * The base directory is recreated on every launch so first-run behaviour is actually first-run.
  *
- * Usage: npm run dev:e2e
+ * Usage: npm run dev:e2e              (the app under `tauri dev`)
+ *        npm run dev:e2e -- --embedded   (a debug build with the frontend embedded — the shipped CSP)
  */
 
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { rmSync, mkdirSync, writeFileSync, readFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
@@ -179,23 +180,45 @@ writeFileSync(GENERATED_OVERLAY, template.replace(/--remote-debugging-port=\d+/,
 writeFileSync(HANDSHAKE_FILE, JSON.stringify({ endpoint: `http://localhost:${cdpPort}` }), "utf8");
 console.log(`[dev:e2e] CDP endpoint: http://localhost:${cdpPort} (handshake: ${HANDSHAKE_FILE})`);
 
+const childEnv = {
+  ...process.env,
+  TEXTREE_DEFAULT_VAULT_BASE: DEFAULT_VAULT_BASE,
+  TEXTREE_PERSONAL_BASE: PERSONAL_BASE,
+  TEXTREE_INDEX_ROOT: INDEX_ROOT,
+  // The watchdog probes every few seconds instead of every five minutes, so a spec can watch
+  // whole probe cycles (e2e/lifetime.spec.ts) — and every other spec runs with it probing.
+  TEXTREE_WATCHDOG_INTERVAL_MS: WATCHDOG_INTERVAL_MS,
+  TEXTREE_E2E_STALL_FLAG: STALL_FLAG,
+  TEXTREE_E2E_OPEN_STALL_FLAG: OPEN_STALL_FLAG,
+};
+
+// `--embedded`: run the frontend the build embeds (what a shipped app loads, under the content
+// security policy `csp` — not the looser `devCsp` that `tauri dev` uses) instead of the vite dev
+// server. It is still a debug build, so the overrides above are honoured. The specs find the page
+// by its address: run them with TEXTREE_E2E_APP_URL=tauri.localhost.
+const embedded = process.argv.includes("--embedded");
+
 // One command string rather than an argument list: with a shell, Node concatenates arguments
 // without escaping them and warns about it (DEP0190). The only argument is our own temp path.
-const child = spawn(`tauri dev --config "${GENERATED_OVERLAY}"`, {
-  stdio: "inherit",
-  shell: true,
-  env: {
-    ...process.env,
-    TEXTREE_DEFAULT_VAULT_BASE: DEFAULT_VAULT_BASE,
-    TEXTREE_PERSONAL_BASE: PERSONAL_BASE,
-    TEXTREE_INDEX_ROOT: INDEX_ROOT,
-    // The watchdog probes every few seconds instead of every five minutes, so a spec can watch
-    // whole probe cycles (e2e/lifetime.spec.ts) — and every other spec runs with it probing.
-    TEXTREE_WATCHDOG_INTERVAL_MS: WATCHDOG_INTERVAL_MS,
-    TEXTREE_E2E_STALL_FLAG: STALL_FLAG,
-    TEXTREE_E2E_OPEN_STALL_FLAG: OPEN_STALL_FLAG,
-  },
-});
+let child;
+if (embedded) {
+  // VITE_TEXTREE_E2E puts the specs' test bridge into the embedded frontend; a shipped build never has it.
+  const built = spawnSync(`tauri build --debug --no-bundle --config "${GENERATED_OVERLAY}"`, {
+    stdio: "inherit",
+    shell: true,
+    env: { ...childEnv, VITE_TEXTREE_E2E: "1" },
+  });
+  if (built.status !== 0) process.exit(built.status ?? 1);
+  const exe = join(REPO, "src-tauri", "target", "debug", "textree.exe");
+  console.log(`[dev:e2e] embedded build: ${exe}`);
+  child = spawn(`"${exe}"`, { stdio: "inherit", shell: true, env: childEnv });
+} else {
+  child = spawn(`tauri dev --config "${GENERATED_OVERLAY}"`, {
+    stdio: "inherit",
+    shell: true,
+    env: childEnv,
+  });
+}
 
 child.on("exit", (code, signal) => {
   process.exit(signal ? 1 : (code ?? 0));

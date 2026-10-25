@@ -1648,9 +1648,10 @@
 
   // On window close, flush unsaved edits to disk before actually closing (guarantees "always saved").
   onMount(() => {
-    // E2E test bridge (dev build only — tree-shaken out of the production bundle).
-    // Bypasses the native folder dialog so Playwright can open a vault directly.
-    if (import.meta.env.DEV) {
+    // E2E test bridge: bypasses the native folder dialog so Playwright can open a vault directly.
+    // It exists in development and in the embedded build the end-to-end launcher makes
+    // (`dev:e2e --embedded` sets VITE_TEXTREE_E2E); a shipped build is tree-shaken of it.
+    if (import.meta.env.DEV || import.meta.env.VITE_TEXTREE_E2E === "1") {
       (window as unknown as { __textreeTest?: unknown }).__textreeTest = {
         loadVault,
         publishTo: publishToDir,
