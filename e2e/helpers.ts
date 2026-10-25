@@ -47,7 +47,7 @@ function cdpEndpoint(): string {
 }
 
 const CDP_ENDPOINT = cdpEndpoint();
-const APP_URL_FRAGMENT = "localhost:1420";
+const APP_URL_FRAGMENT = process.env.TEXTREE_E2E_APP_URL ?? "localhost:1420";
 
 /**
  * Base directory the launcher forces the app to resolve its default vault under.

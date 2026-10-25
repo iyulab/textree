@@ -88,8 +88,7 @@ fn probe_dir(root: &Path) -> Option<PathBuf> {
 /// otherwise. The override exists so an end-to-end run can watch whole probe cycles without waiting
 /// minutes for each; nothing else sets it.
 fn probe_interval() -> Duration {
-    std::env::var("TEXTREE_WATCHDOG_INTERVAL_MS")
-        .ok()
+    crate::dev_env::var("TEXTREE_WATCHDOG_INTERVAL_MS")
         .and_then(|v| v.parse::<u64>().ok())
         .filter(|ms| *ms > 0)
         .map(Duration::from_millis)

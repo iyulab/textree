@@ -474,10 +474,11 @@ pub fn host_exe_from_resource_dir(resource: &Path) -> Option<String> {
     }
 }
 
-/// How to launch the host. Dev/E2E: `TEXTREE_HOST_EXE` env (auto-consent — keeps the existing
-/// dev/test flow eager-spawning). Production: the bundled sidecar under `<resource>/host/`.
+/// How to launch the host. Dev/E2E builds: `TEXTREE_HOST_EXE` env (auto-consent — keeps the
+/// existing dev/test flow eager-spawning). A shipped build never reads it (`dev_env`): it uses the
+/// bundled sidecar under `<resource>/host/`.
 pub fn resolve_host(app: &AppHandle) -> Option<String> {
-    if let Ok(exe) = std::env::var("TEXTREE_HOST_EXE") {
+    if let Some(exe) = crate::dev_env::var("TEXTREE_HOST_EXE") {
         return Some(exe);
     }
     let resource = app.path().resource_dir().ok()?;

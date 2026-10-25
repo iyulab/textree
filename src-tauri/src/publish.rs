@@ -8,10 +8,11 @@
 
 use serde::{Deserialize, Serialize};
 use std::ffi::OsString;
-use std::io::{self, Read, Write};
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output, Stdio};
-use std::time::{Duration, Instant};
+use std::process::{Command, Output};
+use tauri_kit_sidecar::Ran;
+use std::time::Duration;
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -205,47 +206,14 @@ pub fn count_html_pages(out: &Path) -> usize {
     count
 }
 
-/// Spawns `cmd` and waits up to `timeout` for it to exit. stdout is discarded (unused — page count
-/// comes from the output dir on disk); stderr is captured. A drain thread reads stderr while we poll
-/// so a chatty child can't fill the pipe buffer and deadlock our wait. On timeout the child is
-/// killed and reaped, and an error is returned promptly — we don't wait for the stderr drain thread
-/// to finish, since a killed child can leave grandchildren holding the pipe open (see comment below).
-fn spawn_bounded(mut cmd: Command, timeout: Duration) -> Result<Output, String> {
-    cmd.stdout(Stdio::null());
-    cmd.stderr(Stdio::piped());
-    let mut child = cmd.spawn().map_err(|e| format!("failed to start canopy: {e}"))?;
-
-    // Drain stderr on a thread — prevents a full-pipe deadlock while we poll try_wait().
-    let mut stderr_pipe = child.stderr.take().expect("stderr was piped");
-    let drain = std::thread::spawn(move || {
-        let mut buf = Vec::new();
-        let _ = stderr_pipe.read_to_end(&mut buf);
-        buf
-    });
-
-    let deadline = Instant::now() + timeout;
-    loop {
-        match child.try_wait().map_err(|e| e.to_string())? {
-            Some(status) => {
-                let stderr = drain.join().unwrap_or_default();
-                return Ok(Output { status, stdout: Vec::new(), stderr });
-            }
-            None => {
-                if Instant::now() >= deadline {
-                    let _ = child.kill();
-                    let _ = child.wait(); // reap the zombie
-                    // Do NOT join `drain` here: on Windows, kill() only terminates the immediate
-                    // child (e.g. a `cmd /C` wrapper), not any grandchild it spawned. A grandchild
-                    // can keep the inherited stderr pipe write end open for a while after kill,
-                    // which would block this join well past our deadline. We don't need the
-                    // captured stderr for a timeout error, so let the drain thread finish on its
-                    // own in the background instead of waiting on it.
-                    drop(drain);
-                    return Err(format!("rendering timed out after {}s", timeout.as_secs()));
-                }
-                std::thread::sleep(Duration::from_millis(50));
-            }
-        }
+/// Runs `cmd` and waits up to `timeout` for it to exit, through the kit's `run`: no console window,
+/// stdin closed, both streams read while it is waited for (a chatty child cannot fill a pipe and
+/// stall), and on timeout the whole process tree is stopped — not only the child, whose own children
+/// would otherwise live on holding the pipes — and the call returns at once.
+fn spawn_bounded(cmd: Command, timeout: Duration) -> Result<Output, String> {
+    match tauri_kit_sidecar::run(cmd, timeout).map_err(|e| format!("failed to start canopy: {e}"))? {
+        Ran::Exited(output) => Ok(output),
+        Ran::TimedOut => Err(format!("rendering timed out after {}s", timeout.as_secs())),
     }
 }
 
@@ -278,9 +246,6 @@ pub fn run_publish(
     let mut cmd = Command::new(&canopy.program);
     cmd.args(&canopy.prefix_args);
     cmd.args(canopy_args(source, out, options, tokens_file.as_ref().map(|f| f.path())));
-    // Run the canopy CLI without flashing a console window (Windows).
-    tauri_kit_sidecar::hide_console(&mut cmd);
-
     let output = spawn_bounded(cmd, timeout)?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -341,6 +306,29 @@ mod tests {
         assert!(
             start.elapsed() < Duration::from_secs(10),
             "must kill and return near the 200ms deadline, not wait ~30s for ping: took {:?}",
+            start.elapsed()
+        );
+    }
+
+    /// A render that starts helpers of its own is bounded too: the whole tree is stopped, so the
+    /// call returns near the deadline instead of waiting on a grandchild that holds the pipes open.
+    #[test]
+    #[cfg(windows)]
+    fn spawn_bounded_stops_what_a_hung_child_started() {
+        use std::process::Command;
+        use std::time::{Duration, Instant};
+
+        // `cmd /C` starts `ping` as a grandchild, which runs ~30 seconds.
+        let mut cmd = Command::new("cmd");
+        cmd.args(["/C", "ping -n 31 127.0.0.1"]);
+
+        let start = Instant::now();
+        let result = spawn_bounded(cmd, Duration::from_millis(300));
+
+        assert!(result.unwrap_err().to_lowercase().contains("timed out"));
+        assert!(
+            start.elapsed() < Duration::from_secs(10),
+            "the grandchild must not hold the call for its ~30s: took {:?}",
             start.elapsed()
         );
     }

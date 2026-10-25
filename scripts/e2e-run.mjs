@@ -10,6 +10,8 @@
  * Usage:
  *   npm run e2e:run                          whole suite once
  *   npm run e2e:run -- --soak 3              whole suite three times against one app instance
+ *   npm run e2e:run -- --embedded            a debug build with the frontend embedded, under the
+ *                                            content security policy a shipped app has
  *   npm run e2e:run -- e2e/publish.spec.ts   anything else is passed to `playwright test`
  *
  * The app's own output goes to e2e-results/app.log; its tail is printed when startup fails.
@@ -27,7 +29,9 @@ import { devServerListeners, killTree, runningDevApps } from "./dev-processes.mj
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 /** Written by scripts/dev-e2e.mjs once it has chosen the CDP port. */
 const HANDSHAKE_FILE = join(tmpdir(), "textree-e2e-cdp.json");
-const APP_URL_FRAGMENT = "localhost:1420";
+/** Where the app page lives: the vite dev server, or (--embedded) the origin a built app serves. */
+const DEV_URL_FRAGMENT = "localhost:1420";
+const EMBEDDED_URL_FRAGMENT = "tauri.localhost";
 /** The first launch compiles the Rust side, which takes minutes. */
 const STARTUP_TIMEOUT_MS = 10 * 60_000;
 const APP_LOG = join(REPO, "e2e-results", "app.log");
@@ -40,6 +44,7 @@ if (process.platform !== "win32") {
 function parseArgs(argv) {
   const rest = [];
   let soak = 1;
+  let embedded = false;
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === "--soak") {
       soak = Number(argv[++i]);
@@ -47,11 +52,13 @@ function parseArgs(argv) {
         console.error(`[e2e:run] --soak needs a positive whole number, got "${argv[i]}"`);
         process.exit(2);
       }
+    } else if (argv[i] === "--embedded") {
+      embedded = true;
     } else {
       rest.push(argv[i]);
     }
   }
-  return { soak, playwrightArgs: rest };
+  return { soak, embedded, playwrightArgs: rest };
 }
 
 function clearLeftovers() {
@@ -64,11 +71,11 @@ function clearLeftovers() {
 
 const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
 
-async function appPageUp(endpoint) {
+async function appPageUp(endpoint, fragment) {
   try {
     const res = await fetch(`${endpoint}/json/list`, { signal: AbortSignal.timeout(2000) });
     const targets = await res.json();
-    return targets.some((t) => typeof t.url === "string" && t.url.includes(APP_URL_FRAGMENT));
+    return targets.some((t) => typeof t.url === "string" && t.url.includes(fragment));
   } catch {
     return false;
   }
@@ -79,23 +86,24 @@ function tail(file, lines) {
   return readFileSync(file, "utf8").split(/\r?\n/).slice(-lines).join("\n");
 }
 
-async function waitForApp(child) {
+async function waitForApp(child, fragment) {
   const deadline = Date.now() + STARTUP_TIMEOUT_MS;
   while (Date.now() < deadline) {
     if (child.exitCode !== null) throw new Error(`the app exited during startup (code ${child.exitCode})`);
     // The handshake is removed before launch, so one that exists now was written by this launch.
     if (existsSync(HANDSHAKE_FILE)) {
       const { endpoint } = JSON.parse(readFileSync(HANDSHAKE_FILE, "utf8"));
-      if (await appPageUp(endpoint)) return endpoint;
+      if (await appPageUp(endpoint, fragment)) return endpoint;
     }
     await sleep(2000);
   }
   throw new Error(`the app page did not appear within ${STARTUP_TIMEOUT_MS / 60_000} minutes`);
 }
 
-const { soak, playwrightArgs } = parseArgs(process.argv.slice(2));
+const { soak, embedded, playwrightArgs } = parseArgs(process.argv.slice(2));
+const appUrlFragment = embedded ? EMBEDDED_URL_FRAGMENT : DEV_URL_FRAGMENT;
 
-const env = { ...process.env };
+const env = { ...process.env, TEXTREE_E2E_APP_URL: appUrlFragment };
 if (!env.TEXTREE_CANOPY_CLI && existsSync(ASSEMBLED_CANOPY)) {
   // The assembled renderer, packaged the way a release packages it; publish specs need it by
   // absolute path. Whether it is also the canopy release the app ships depends on what it was
@@ -119,7 +127,7 @@ mkdirSync(dirname(APP_LOG), { recursive: true });
 // own log writes — the suite then fails from the middle on with the page gone.
 const log = openSync(APP_LOG, "w");
 console.log(`[e2e:run] starting the app (output: ${APP_LOG})`);
-const app = spawn(process.execPath, [join(REPO, "scripts", "dev-e2e.mjs")], { cwd: REPO, env, stdio: ["ignore", log, log] });
+const app = spawn(process.execPath, [join(REPO, "scripts", "dev-e2e.mjs"), ...(embedded ? ["--embedded"] : [])], { cwd: REPO, env, stdio: ["ignore", log, log] });
 
 let stopped = false;
 function stopApp() {
@@ -139,7 +147,7 @@ for (const signal of ["SIGINT", "SIGTERM"]) {
 let exitCode = 0;
 try {
   const started = Date.now();
-  const endpoint = await waitForApp(app);
+  const endpoint = await waitForApp(app, appUrlFragment);
   console.log(`[e2e:run] app is up at ${endpoint} after ${Math.round((Date.now() - started) / 1000)}s`);
 
   const outcomes = [];
