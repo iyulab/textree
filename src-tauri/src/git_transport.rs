@@ -49,6 +49,9 @@ fn agent() -> &'static ureq::Agent {
 /// Wraps the connection ureq makes so that no single wait on it outlasts [`IDLE`]. ureq bounds a
 /// whole phase (connecting, the response head, the body); this bounds the silence within one, so
 /// a body that keeps arriving is never cut, and one that stops is.
+///
+/// TODO(upstream: ureq has no limit on the silence within a phase — drop this wrapper, and the
+/// `unversioned` transport API it needs, when it grows one)
 #[derive(Debug)]
 struct Idle;
 

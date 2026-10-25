@@ -14,6 +14,13 @@ against one app instance. It points `TEXTREE_CANOPY_CLI` at the assembled render
 (`src-tauri/resources/canopy/node_modules/@iyulab/canopy/dist/cli.js`) when that exists and the variable is unset. The app's output
 goes to `e2e-results/app.log`.
 
+`npm run e2e:run -- --embedded` runs the same suite against a debug build with the frontend
+embedded (`tauri build --debug --no-bundle`) instead of the vite dev server. That is the only way
+the pages run under the content security policy a shipped app has — `tauri dev` uses the looser
+`devCsp`. It is still a debug build, so the test overrides are honoured; the test bridge is bundled
+because the launcher sets `VITE_TEXTREE_E2E`, which a shipped build never has. The first run
+compiles the app, which takes minutes.
+
 A leftover app is worth the trouble: the specs cannot tell an app built from older code from the
 current one, so a stale instance answering on the CDP port makes them pass or fail against the
 wrong build.
