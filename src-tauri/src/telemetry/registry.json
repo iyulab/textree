@@ -1,0 +1,7 @@
+{
+  "reports": {
+    "textree-desktop": {
+      "os_error_code": { "kind": "count", "max": 1000 }
+    }
+  }
+}

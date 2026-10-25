@@ -12563,7 +12563,7 @@ Same license text as fdeflate 0.3.7.
 Same license text as tauri 2.12.4.
 
 ------------------------------------------------------------------------------
-tauri-kit-credentials 0.17.0
+tauri-kit-credentials 0.28.0
 License: MIT
 Upstream: https://github.com/iyulab/tauri-kit
 
@@ -12590,39 +12590,39 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ------------------------------------------------------------------------------
-tauri-kit-diagnostics 0.17.0
+tauri-kit-diagnostics 0.28.0
 License: MIT
 Upstream: https://github.com/iyulab/tauri-kit
 
-Same license text as tauri-kit-credentials 0.17.0.
+Same license text as tauri-kit-credentials 0.28.0.
 
 ------------------------------------------------------------------------------
-tauri-kit-fs 0.17.0
+tauri-kit-fs 0.28.0
 License: MIT
 Upstream: https://github.com/iyulab/tauri-kit
 
-Same license text as tauri-kit-credentials 0.17.0.
+Same license text as tauri-kit-credentials 0.28.0.
 
 ------------------------------------------------------------------------------
-tauri-kit-sidecar 0.17.0
+tauri-kit-sidecar 0.28.0
 License: MIT
 Upstream: https://github.com/iyulab/tauri-kit
 
-Same license text as tauri-kit-credentials 0.17.0.
+Same license text as tauri-kit-credentials 0.28.0.
 
 ------------------------------------------------------------------------------
-tauri-kit-state 0.17.0
+tauri-kit-state 0.28.0
 License: MIT
 Upstream: https://github.com/iyulab/tauri-kit
 
-Same license text as tauri-kit-credentials 0.17.0.
+Same license text as tauri-kit-credentials 0.28.0.
 
 ------------------------------------------------------------------------------
-tauri-kit-watch 0.17.0
+tauri-kit-watch 0.28.0
 License: MIT
 Upstream: https://github.com/iyulab/tauri-kit
 
-Same license text as tauri-kit-credentials 0.17.0.
+Same license text as tauri-kit-credentials 0.28.0.
 
 ------------------------------------------------------------------------------
 tauri-macros 2.7.3
@@ -16055,7 +16055,7 @@ THE SOFTWARE.
 License: MIT
 Upstream: https://github.com/iyulab/canopy
 
-Same license text as tauri-kit-credentials 0.17.0.
+Same license text as tauri-kit-credentials 0.28.0.
 
 ------------------------------------------------------------------------------
 @shikijs/core 4.4.3
@@ -18122,7 +18122,7 @@ Flux.Abstractions 0.27.0
 License: MIT
 Upstream: https://github.com/iyulab/flux-abstractions
 
-Same license text as tauri-kit-credentials 0.17.0.
+Same license text as tauri-kit-credentials 0.28.0.
 
 ------------------------------------------------------------------------------
 FluxCurator 0.18.1
@@ -18143,21 +18143,21 @@ FluxFeed 0.58.0
 License: MIT
 Upstream: https://github.com/iyulab/FluxFeed
 
-Same license text as tauri-kit-credentials 0.17.0.
+Same license text as tauri-kit-credentials 0.28.0.
 
 ------------------------------------------------------------------------------
 FluxGuard 0.25.1
 License: MIT
 Upstream: https://github.com/iyulab/FluxGuard
 
-Same license text as tauri-kit-credentials 0.17.0.
+Same license text as tauri-kit-credentials 0.28.0.
 
 ------------------------------------------------------------------------------
 FluxGuard.Remote 0.25.1
 License: MIT
 Upstream: https://github.com/iyulab/FluxGuard
 
-Same license text as tauri-kit-credentials 0.17.0.
+Same license text as tauri-kit-credentials 0.28.0.
 
 ------------------------------------------------------------------------------
 FluxImprover 0.23.0
@@ -18354,21 +18354,21 @@ IronProw.Core 0.18.0
 License: MIT
 Upstream: https://github.com/iyulab/iron-prow
 
-Same license text as tauri-kit-credentials 0.17.0.
+Same license text as tauri-kit-credentials 0.28.0.
 
 ------------------------------------------------------------------------------
 IronProw.IronHive 0.18.0
 License: MIT
 Upstream: https://github.com/iyulab/iron-prow
 
-Same license text as tauri-kit-credentials 0.17.0.
+Same license text as tauri-kit-credentials 0.28.0.
 
 ------------------------------------------------------------------------------
 IronProw.LMSupply 0.18.0
 License: MIT
 Upstream: https://github.com/iyulab/iron-prow
 
-Same license text as tauri-kit-credentials 0.17.0.
+Same license text as tauri-kit-credentials 0.28.0.
 
 ------------------------------------------------------------------------------
 LMSupply.Core 0.136.0
@@ -35919,14 +35919,14 @@ TauriKit.Sidecar.Loopback 0.28.0
 License: MIT
 Upstream: https://github.com/iyulab/tauri-kit
 
-Same license text as tauri-kit-credentials 0.17.0.
+Same license text as tauri-kit-credentials 0.28.0.
 
 ------------------------------------------------------------------------------
 TauriKit.Sidecar.Loopback.AspNetCore 0.28.0
 License: MIT
 Upstream: https://github.com/iyulab/tauri-kit
 
-Same license text as tauri-kit-credentials 0.17.0.
+Same license text as tauri-kit-credentials 0.28.0.
 
 ------------------------------------------------------------------------------
 Tiktoken.Core 3.1.5
@@ -35991,7 +35991,7 @@ Unpdf 0.48.0
 License: MIT
 Upstream: https://github.com/iyulab/unpdf
 
-Same license text as tauri-kit-credentials 0.17.0.
+Same license text as tauri-kit-credentials 0.28.0.
 
 Third-party notices
 ===================

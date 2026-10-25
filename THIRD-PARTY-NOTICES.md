@@ -297,12 +297,12 @@ distributed.
 | `tao` | 0.37.1 | Apache-2.0 | https://github.com/tauri-apps/tao |
 | `tauri` | 2.12.4 | Apache-2.0 OR MIT | https://github.com/tauri-apps/tauri |
 | `tauri-codegen` | 2.7.3 | Apache-2.0 OR MIT | https://github.com/tauri-apps/tauri |
-| `tauri-kit-credentials` | 0.17.0 | MIT | https://github.com/iyulab/tauri-kit |
-| `tauri-kit-diagnostics` | 0.17.0 | MIT | https://github.com/iyulab/tauri-kit |
-| `tauri-kit-fs` | 0.17.0 | MIT | https://github.com/iyulab/tauri-kit |
-| `tauri-kit-sidecar` | 0.17.0 | MIT | https://github.com/iyulab/tauri-kit |
-| `tauri-kit-state` | 0.17.0 | MIT | https://github.com/iyulab/tauri-kit |
-| `tauri-kit-watch` | 0.17.0 | MIT | https://github.com/iyulab/tauri-kit |
+| `tauri-kit-credentials` | 0.28.0 | MIT | https://github.com/iyulab/tauri-kit |
+| `tauri-kit-diagnostics` | 0.28.0 | MIT | https://github.com/iyulab/tauri-kit |
+| `tauri-kit-fs` | 0.28.0 | MIT | https://github.com/iyulab/tauri-kit |
+| `tauri-kit-sidecar` | 0.28.0 | MIT | https://github.com/iyulab/tauri-kit |
+| `tauri-kit-state` | 0.28.0 | MIT | https://github.com/iyulab/tauri-kit |
+| `tauri-kit-watch` | 0.28.0 | MIT | https://github.com/iyulab/tauri-kit |
 | `tauri-macros` | 2.7.3 | Apache-2.0 OR MIT | https://github.com/tauri-apps/tauri |
 | `tauri-plugin-dialog` | 2.8.3 | Apache-2.0 OR MIT | https://github.com/tauri-apps/plugins-workspace |
 | `tauri-plugin-fs` | 2.7.1 | Apache-2.0 OR MIT | https://github.com/tauri-apps/plugins-workspace |

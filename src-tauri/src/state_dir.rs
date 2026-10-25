@@ -24,7 +24,7 @@ pub const CURRENT: u32 = 1;
 /// must be safe to run twice, and must write what it makes before removing what it replaces.
 const STEPS: [Step; CURRENT as usize] = [
     // 0 → 1: the files do not change. Format 1 is where the folder starts saying what it holds.
-    |_| Ok(()),
+    |_, _| Ok(()),
 ];
 
 const FORMATS: Versioned<'static> = Versioned::new(&STEPS);
@@ -41,7 +41,7 @@ pub fn bring_up_to_date(
     dir: &Path,
     write: impl Fn(&Path, &[u8]) -> io::Result<()>,
 ) -> io::Result<bool> {
-    FORMATS.bring_up_to_date(dir, write)
+    FORMATS.bring_up_to_date(dir, &(), write)
 }
 
 #[cfg(test)]

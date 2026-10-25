@@ -3,11 +3,11 @@
 //! search queries or content:
 //!
 //! - **Failures** — a panic, a default folder that cannot be made — are `tauri-kit-diagnostics`
-//!   reports: built from an allowlist only (the kind of failure, our own source frames, an OS error
-//!   number), appended to `reports.jsonl` in the app's log folder — exactly what would be sent,
-//!   readable by the person — and sent from there in the background. What could not go out yet
-//!   stays for the next launch, so a panic is delivered even though the process it ended cannot
-//!   send it.
+//!   reports: built from an allowlist only (the kind of failure, our own source frames, the details
+//!   `registry.json` declares — an OS error number), appended to a file in the `reports` folder of
+//!   the app's log folder — exactly what would be sent, readable by the person — and sent from there
+//!   in the background. What could not go out yet stays for the next launch, so a panic is delivered
+//!   even though the process it ended cannot send it.
 //! - **`app.launch`** — one usage event per start, which is not a failure and so not a report.
 
 pub mod event;
@@ -16,7 +16,7 @@ pub mod envelope;
 use event::{EnvFacts, LaunchEvent};
 use std::path::Path;
 use std::sync::{LazyLock, OnceLock};
-use tauri_kit_diagnostics::{trim, FrameRule, Layer, Report, Reporter, Sink, MAX_FILE_BYTES};
+use tauri_kit_diagnostics::{adopt, tidy, FrameRule, Layer, Registry, Report, Reporter, Segment, Sink, MAX_STREAM_BYTES};
 
 /// The only switch for outbound telemetry. Absent/blank ⇒ disabled (dev, test, forks, and
 /// official builds whose CI has not injected the string yet).
@@ -24,11 +24,19 @@ pub const ENV_VAR: &str = "TEXTREE_TELEMETRY_CONNECTION";
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
+/// What a report may carry besides its kind and our own source frames — declared, compiled in.
+static REGISTRY: LazyLock<Registry> = LazyLock::new(|| {
+    Registry::from_json(include_str!("registry.json")).expect("telemetry/registry.json is a registry")
+});
+
 /// This process, as reports name it — the role the AI helper's own telemetry sits beside.
-static SHELL: LazyLock<Layer> = LazyLock::new(|| Layer::new("textree-desktop", FrameRule::rust_source()));
+static SHELL: LazyLock<Layer> = LazyLock::new(|| REGISTRY.layer("textree-desktop", FrameRule::rust_source()));
 
 /// Set once the log folder is known (`start`); a failure before that is not recorded.
 static REPORTER: OnceLock<Reporter> = OnceLock::new();
+
+/// This process's file in the reports folder, held for as long as the process writes it.
+static SEGMENT: OnceLock<Segment> = OnceLock::new();
 
 /// Raw connection string from runtime env first (dev/E2E builds only — `dev_env`; a shipped build
 /// must not let the environment choose where its reports go), then the compile-time embedded value
@@ -55,17 +63,21 @@ pub fn host_connection() -> Option<String> {
 /// what earlier launches recorded and could not send, and this launch's `app.launch`. Never blocks
 /// and never fails: telemetry that cannot work stays quiet.
 pub fn start(log_dir: &Path) {
-    let file = log_dir.join("reports.jsonl");
-    let sent = log_dir.join("reports.sent");
-    // Before this launch writes or sends anything: the file is evidence, not an archive.
-    let _ = trim(&file, &sent, MAX_FILE_BYTES);
-    let _ = REPORTER.set(Reporter::new(&file));
+    let dir = log_dir.join("reports");
+    // An earlier release kept one `reports.jsonl`; what it had not sent still goes, once.
+    let _ = adopt(&dir, &log_dir.join("reports.jsonl"), &log_dir.join("reports.sent"));
+    // Before this launch writes or sends anything: the folder is evidence, not an archive.
+    let _ = tidy(&dir, MAX_STREAM_BYTES);
+    if let Ok(segment) = Segment::open(&dir) {
+        let _ = REPORTER.set(Reporter::new(segment.file()));
+        let _ = SEGMENT.set(segment);
+    }
 
     let Some(sink) = raw_connection().as_deref().and_then(Sink::parse) else {
         return;
     };
     // Transparency: what is sent is named in the app's own log, rather than leaving unannounced.
-    log::info!("[telemetry] sending app.launch and the failures recorded in {}", file.display());
+    log::info!("[telemetry] sending app.launch and the failures recorded in {}", dir.display());
     let _ = std::thread::Builder::new().spawn(move || {
         let agent = Sink::agent();
         let body = envelope::launch_envelope(
@@ -75,7 +87,7 @@ pub fn start(log_dir: &Path) {
             &envelope::format_rfc3339_utc(now_secs()),
         );
         let _ = agent.post(&sink.track_url).send_json(serde_json::json!([body]));
-        let _ = sink.send_pending(&agent, &file, &sent);
+        let _ = sink.send_pending(&agent, &REGISTRY, &dir);
     });
 }
 
@@ -95,10 +107,9 @@ pub fn panic_report(location: &str) -> Report {
 
 /// The default notes folder could not be made: the OS error number only, never the message.
 pub fn vault_open_failed_report(os_error_code: Option<i32>) -> Report {
-    let report = Report::new(&SHELL, "VaultOpenFailed", "", VERSION);
     match os_error_code {
-        Some(code) => report.detail("osErrorCode", &code.to_string()),
-        None => report,
+        Some(code) => SHELL.report("VaultOpenFailed", "", VERSION, &[("os_error_code", &code.to_string())]),
+        None => SHELL.report("VaultOpenFailed", "", VERSION, &[]),
     }
 }
 
@@ -138,7 +149,7 @@ mod tests {
         let r = vault_open_failed_report(Some(3));
         assert_eq!(r.kind, "VaultOpenFailed");
         assert!(r.frames.is_empty());
-        assert_eq!(r.details.get("osErrorCode").map(String::as_str), Some("3"));
+        assert_eq!(r.details.get("os_error_code").map(String::as_str), Some("3"));
         assert!(vault_open_failed_report(None).details.is_empty());
     }
 
@@ -151,9 +162,14 @@ mod tests {
         start(dir.path());
         record(vault_open_failed_report(Some(5)));
         record(vault_open_failed_report(Some(5)));
-        let lines = std::fs::read_to_string(dir.path().join("reports.jsonl")).unwrap();
+        let segment = std::fs::read_dir(dir.path().join("reports"))
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .find(|p| p.extension().is_some_and(|e| e == "jsonl"))
+            .expect("this launch's segment");
+        let lines = std::fs::read_to_string(segment).unwrap();
         assert_eq!(lines.lines().count(), 1, "{lines}");
-        assert!(lines.contains("\"VaultOpenFailed\"") && lines.contains("\"osErrorCode\":\"5\""), "{lines}");
+        assert!(lines.contains("\"VaultOpenFailed\"") && lines.contains("\"os_error_code\":\"5\""), "{lines}");
     }
 
     /// Sends this launch's event and a recorded failure to a real Application Insights resource:
@@ -163,12 +179,13 @@ mod tests {
     fn reaches_application_insights() {
         let sink = Sink::parse(&std::env::var(ENV_VAR).unwrap()).expect("a connection string");
         let dir = tempfile::tempdir().unwrap();
-        let (file, sent) = (dir.path().join("reports.jsonl"), dir.path().join("reports.sent"));
-        Reporter::new(&file).record(panic_report("src/lib.rs:1:1")).unwrap();
+        let reports = dir.path().join("reports");
+        let segment = Segment::open(&reports).unwrap();
+        Reporter::new(segment.file()).record(panic_report("src/lib.rs:1:1")).unwrap();
         let agent = Sink::agent();
         let body = envelope::launch_envelope(&LaunchEvent, &sink.instrumentation_key, &EnvFacts::current(), &envelope::format_rfc3339_utc(now_secs()));
         let answer = agent.post(&sink.track_url).send_json(serde_json::json!([body])).unwrap();
         assert_eq!(answer.status(), 200);
-        assert_eq!(sink.send_pending(&agent, &file, &sent).unwrap(), 1);
+        assert_eq!(sink.send_pending(&agent, &REGISTRY, &reports).unwrap(), 1);
     }
 }
