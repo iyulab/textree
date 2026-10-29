@@ -297,12 +297,12 @@ distributed.
 | `tao` | 0.37.1 | Apache-2.0 | https://github.com/tauri-apps/tao |
 | `tauri` | 2.12.4 | Apache-2.0 OR MIT | https://github.com/tauri-apps/tauri |
 | `tauri-codegen` | 2.7.3 | Apache-2.0 OR MIT | https://github.com/tauri-apps/tauri |
-| `tauri-kit-credentials` | 0.28.0 | MIT | https://github.com/iyulab/tauri-kit |
-| `tauri-kit-diagnostics` | 0.28.0 | MIT | https://github.com/iyulab/tauri-kit |
-| `tauri-kit-fs` | 0.28.0 | MIT | https://github.com/iyulab/tauri-kit |
-| `tauri-kit-sidecar` | 0.28.0 | MIT | https://github.com/iyulab/tauri-kit |
-| `tauri-kit-state` | 0.28.0 | MIT | https://github.com/iyulab/tauri-kit |
-| `tauri-kit-watch` | 0.28.0 | MIT | https://github.com/iyulab/tauri-kit |
+| `tauri-kit-credentials` | 0.30.0 | MIT | https://github.com/iyulab/tauri-kit |
+| `tauri-kit-diagnostics` | 0.30.0 | MIT | https://github.com/iyulab/tauri-kit |
+| `tauri-kit-fs` | 0.30.0 | MIT | https://github.com/iyulab/tauri-kit |
+| `tauri-kit-sidecar` | 0.30.0 | MIT | https://github.com/iyulab/tauri-kit |
+| `tauri-kit-state` | 0.30.0 | MIT | https://github.com/iyulab/tauri-kit |
+| `tauri-kit-watch` | 0.30.0 | MIT | https://github.com/iyulab/tauri-kit |
 | `tauri-macros` | 2.7.3 | Apache-2.0 OR MIT | https://github.com/tauri-apps/tauri |
 | `tauri-plugin-dialog` | 2.8.3 | Apache-2.0 OR MIT | https://github.com/tauri-apps/plugins-workspace |
 | `tauri-plugin-fs` | 2.7.1 | Apache-2.0 OR MIT | https://github.com/tauri-apps/plugins-workspace |
@@ -674,7 +674,7 @@ The 73 NuGet packages below put code into the helper (runtime or native assets).
 | `LMSupply.Reranker` | 0.136.0 | MIT | https://github.com/iyulab/lm-supply |
 | `LMSupply.Text.Core` | 0.136.0 | MIT | https://github.com/iyulab/lm-supply |
 | `Markdig` | 1.4.2 | BSD-2-Clause | https://github.com/xoofx/markdig |
-| `Microsoft.AspNetCore.App.Runtime.win-x64` | 10.0.13 | MIT | https://github.com/dotnet/dotnet |
+| `Microsoft.AspNetCore.App.Runtime.win-x64` | 10.0.14 | MIT | https://github.com/dotnet/dotnet |
 | `Microsoft.Data.Sqlite.Core` | 10.0.13 | MIT | https://github.com/dotnet/dotnet |
 | `Microsoft.EntityFrameworkCore` | 10.0.13 | MIT | https://github.com/dotnet/dotnet |
 | `Microsoft.EntityFrameworkCore.Abstractions` | 10.0.13 | MIT | https://github.com/dotnet/dotnet |
@@ -685,7 +685,7 @@ The 73 NuGet packages below put code into the helper (runtime or native assets).
 | `Microsoft.ML.OnnxRuntime.Managed` | 1.31.0 | MIT | https://github.com/microsoft/onnxruntime |
 | `Microsoft.ML.OnnxRuntimeGenAI.Managed` | 0.18.0 | MIT | https://github.com/microsoft/onnxruntime-genai/ |
 | `Microsoft.ML.Tokenizers` | 2.0.1 | MIT | https://github.com/dotnet/machinelearning |
-| `Microsoft.NETCore.App.Runtime.win-x64` | 10.0.13 | MIT | https://github.com/dotnet/dotnet |
+| `Microsoft.NETCore.App.Runtime.win-x64` | 10.0.14 | MIT | https://github.com/dotnet/dotnet |
 | `Newtonsoft.Json` | 13.0.3 | MIT | https://github.com/JamesNK/Newtonsoft.Json |
 | `NTextCat` | 0.3.65 | MIT | https://github.com/ivanakcheurov/ntextcat |
 | `OpenAI` | 2.14.0 | MIT | https://github.com/openai/openai-dotnet |
@@ -700,8 +700,8 @@ The 73 NuGet packages below put code into the helper (runtime or native assets).
 | `System.Management` | 7.0.2 | MIT | https://github.com/dotnet/runtime |
 | `System.Memory.Data` | 10.0.10 | MIT | https://github.com/dotnet/dotnet |
 | `System.Numerics.Tensors` | 10.0.13 | MIT | https://github.com/dotnet/dotnet |
-| `TauriKit.Sidecar.Loopback` | 0.28.0 | MIT | https://github.com/iyulab/tauri-kit |
-| `TauriKit.Sidecar.Loopback.AspNetCore` | 0.28.0 | MIT | https://github.com/iyulab/tauri-kit |
+| `TauriKit.Sidecar.Loopback` | 0.30.0 | MIT | https://github.com/iyulab/tauri-kit |
+| `TauriKit.Sidecar.Loopback.AspNetCore` | 0.30.0 | MIT | https://github.com/iyulab/tauri-kit |
 | `Tiktoken.Core` | 3.1.5 | MIT | https://github.com/tryAGI/Tiktoken |
 | `Tiktoken.Encodings.Abstractions` | 3.1.5 | MIT | https://github.com/tryAGI/Tiktoken |
 | `Tiktoken.Encodings.cl100k` | 3.1.5 | MIT | https://github.com/tryAGI/Tiktoken |

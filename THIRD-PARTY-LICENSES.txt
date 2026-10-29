@@ -12563,7 +12563,7 @@ Same license text as fdeflate 0.3.7.
 Same license text as tauri 2.12.4.
 
 ------------------------------------------------------------------------------
-tauri-kit-credentials 0.28.0
+tauri-kit-credentials 0.30.0
 License: MIT
 Upstream: https://github.com/iyulab/tauri-kit
 
@@ -12590,39 +12590,39 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ------------------------------------------------------------------------------
-tauri-kit-diagnostics 0.28.0
+tauri-kit-diagnostics 0.30.0
 License: MIT
 Upstream: https://github.com/iyulab/tauri-kit
 
-Same license text as tauri-kit-credentials 0.28.0.
+Same license text as tauri-kit-credentials 0.30.0.
 
 ------------------------------------------------------------------------------
-tauri-kit-fs 0.28.0
+tauri-kit-fs 0.30.0
 License: MIT
 Upstream: https://github.com/iyulab/tauri-kit
 
-Same license text as tauri-kit-credentials 0.28.0.
+Same license text as tauri-kit-credentials 0.30.0.
 
 ------------------------------------------------------------------------------
-tauri-kit-sidecar 0.28.0
+tauri-kit-sidecar 0.30.0
 License: MIT
 Upstream: https://github.com/iyulab/tauri-kit
 
-Same license text as tauri-kit-credentials 0.28.0.
+Same license text as tauri-kit-credentials 0.30.0.
 
 ------------------------------------------------------------------------------
-tauri-kit-state 0.28.0
+tauri-kit-state 0.30.0
 License: MIT
 Upstream: https://github.com/iyulab/tauri-kit
 
-Same license text as tauri-kit-credentials 0.28.0.
+Same license text as tauri-kit-credentials 0.30.0.
 
 ------------------------------------------------------------------------------
-tauri-kit-watch 0.28.0
+tauri-kit-watch 0.30.0
 License: MIT
 Upstream: https://github.com/iyulab/tauri-kit
 
-Same license text as tauri-kit-credentials 0.28.0.
+Same license text as tauri-kit-credentials 0.30.0.
 
 ------------------------------------------------------------------------------
 tauri-macros 2.7.3
@@ -16055,7 +16055,7 @@ THE SOFTWARE.
 License: MIT
 Upstream: https://github.com/iyulab/canopy
 
-Same license text as tauri-kit-credentials 0.28.0.
+Same license text as tauri-kit-credentials 0.30.0.
 
 ------------------------------------------------------------------------------
 @shikijs/core 4.4.3
@@ -18122,7 +18122,7 @@ Flux.Abstractions 0.27.0
 License: MIT
 Upstream: https://github.com/iyulab/flux-abstractions
 
-Same license text as tauri-kit-credentials 0.28.0.
+Same license text as tauri-kit-credentials 0.30.0.
 
 ------------------------------------------------------------------------------
 FluxCurator 0.18.1
@@ -18143,21 +18143,21 @@ FluxFeed 0.58.0
 License: MIT
 Upstream: https://github.com/iyulab/FluxFeed
 
-Same license text as tauri-kit-credentials 0.28.0.
+Same license text as tauri-kit-credentials 0.30.0.
 
 ------------------------------------------------------------------------------
 FluxGuard 0.25.1
 License: MIT
 Upstream: https://github.com/iyulab/FluxGuard
 
-Same license text as tauri-kit-credentials 0.28.0.
+Same license text as tauri-kit-credentials 0.30.0.
 
 ------------------------------------------------------------------------------
 FluxGuard.Remote 0.25.1
 License: MIT
 Upstream: https://github.com/iyulab/FluxGuard
 
-Same license text as tauri-kit-credentials 0.28.0.
+Same license text as tauri-kit-credentials 0.30.0.
 
 ------------------------------------------------------------------------------
 FluxImprover 0.23.0
@@ -18354,21 +18354,21 @@ IronProw.Core 0.18.0
 License: MIT
 Upstream: https://github.com/iyulab/iron-prow
 
-Same license text as tauri-kit-credentials 0.28.0.
+Same license text as tauri-kit-credentials 0.30.0.
 
 ------------------------------------------------------------------------------
 IronProw.IronHive 0.18.0
 License: MIT
 Upstream: https://github.com/iyulab/iron-prow
 
-Same license text as tauri-kit-credentials 0.28.0.
+Same license text as tauri-kit-credentials 0.30.0.
 
 ------------------------------------------------------------------------------
 IronProw.LMSupply 0.18.0
 License: MIT
 Upstream: https://github.com/iyulab/iron-prow
 
-Same license text as tauri-kit-credentials 0.28.0.
+Same license text as tauri-kit-credentials 0.30.0.
 
 ------------------------------------------------------------------------------
 LMSupply.Core 0.136.0
@@ -18450,7 +18450,7 @@ OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ------------------------------------------------------------------------------
-Microsoft.AspNetCore.App.Runtime.win-x64 10.0.13
+Microsoft.AspNetCore.App.Runtime.win-x64 10.0.14
 License: MIT
 Upstream: https://github.com/dotnet/dotnet
 
@@ -19595,7 +19595,7 @@ License: MIT
 Upstream: https://github.com/dotnet/dotnet
 License text from: https://raw.githubusercontent.com/dotnet/dotnet/4099f83977f4d29604a9aeb971fb0a7bc1d5f699/LICENSE.TXT
 
-Same license text as Microsoft.AspNetCore.App.Runtime.win-x64 10.0.13.
+Same license text as Microsoft.AspNetCore.App.Runtime.win-x64 10.0.14.
 
 ------------------------------------------------------------------------------
 Microsoft.EntityFrameworkCore 10.0.13
@@ -19603,7 +19603,7 @@ License: MIT
 Upstream: https://github.com/dotnet/dotnet
 License text from: https://raw.githubusercontent.com/dotnet/dotnet/4099f83977f4d29604a9aeb971fb0a7bc1d5f699/LICENSE.TXT
 
-Same license text as Microsoft.AspNetCore.App.Runtime.win-x64 10.0.13.
+Same license text as Microsoft.AspNetCore.App.Runtime.win-x64 10.0.14.
 
 ------------------------------------------------------------------------------
 Microsoft.EntityFrameworkCore.Abstractions 10.0.13
@@ -19611,7 +19611,7 @@ License: MIT
 Upstream: https://github.com/dotnet/dotnet
 License text from: https://raw.githubusercontent.com/dotnet/dotnet/4099f83977f4d29604a9aeb971fb0a7bc1d5f699/LICENSE.TXT
 
-Same license text as Microsoft.AspNetCore.App.Runtime.win-x64 10.0.13.
+Same license text as Microsoft.AspNetCore.App.Runtime.win-x64 10.0.14.
 
 ------------------------------------------------------------------------------
 Microsoft.EntityFrameworkCore.Relational 10.0.13
@@ -19619,7 +19619,7 @@ License: MIT
 Upstream: https://github.com/dotnet/dotnet
 License text from: https://raw.githubusercontent.com/dotnet/dotnet/4099f83977f4d29604a9aeb971fb0a7bc1d5f699/LICENSE.TXT
 
-Same license text as Microsoft.AspNetCore.App.Runtime.win-x64 10.0.13.
+Same license text as Microsoft.AspNetCore.App.Runtime.win-x64 10.0.14.
 
 ------------------------------------------------------------------------------
 Microsoft.EntityFrameworkCore.Sqlite.Core 10.0.13
@@ -19627,7 +19627,7 @@ License: MIT
 Upstream: https://github.com/dotnet/dotnet
 License text from: https://raw.githubusercontent.com/dotnet/dotnet/4099f83977f4d29604a9aeb971fb0a7bc1d5f699/LICENSE.TXT
 
-Same license text as Microsoft.AspNetCore.App.Runtime.win-x64 10.0.13.
+Same license text as Microsoft.AspNetCore.App.Runtime.win-x64 10.0.14.
 
 ------------------------------------------------------------------------------
 Microsoft.Extensions.AI.Abstractions 10.11.0
@@ -19665,7 +19665,7 @@ License: MIT
 Upstream: https://github.com/dotnet/dotnet
 License text from: https://raw.githubusercontent.com/dotnet/dotnet/4099f83977f4d29604a9aeb971fb0a7bc1d5f699/LICENSE.TXT
 
-Same license text as Microsoft.AspNetCore.App.Runtime.win-x64 10.0.13.
+Same license text as Microsoft.AspNetCore.App.Runtime.win-x64 10.0.14.
 
 .NET Runtime uses third-party libraries or other resources that may be
 distributed under licenses different than the .NET Runtime software.
@@ -34041,7 +34041,7 @@ Microsoft.ML.Tokenizers 2.0.1
 License: MIT
 Upstream: https://github.com/dotnet/machinelearning
 
-Same license text as Microsoft.AspNetCore.App.Runtime.win-x64 10.0.13.
+Same license text as Microsoft.AspNetCore.App.Runtime.win-x64 10.0.14.
 
 ML.NET uses third-party libraries or other resources that may be
 distributed under licenses different than the ML.NET software.
@@ -34284,11 +34284,11 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ------------------------------------------------------------------------------
-Microsoft.NETCore.App.Runtime.win-x64 10.0.13
+Microsoft.NETCore.App.Runtime.win-x64 10.0.14
 License: MIT
 Upstream: https://github.com/dotnet/dotnet
 
-Same license text as Microsoft.AspNetCore.App.Runtime.win-x64 10.0.13.
+Same license text as Microsoft.AspNetCore.App.Runtime.win-x64 10.0.14.
 
 Same license text as Microsoft.Extensions.DependencyModel 10.0.13.
 
@@ -34737,7 +34737,7 @@ System.CodeDom 7.0.0
 License: MIT
 Upstream: https://github.com/dotnet/runtime
 
-Same license text as Microsoft.AspNetCore.App.Runtime.win-x64 10.0.13.
+Same license text as Microsoft.AspNetCore.App.Runtime.win-x64 10.0.14.
 
 .NET Runtime uses third-party libraries or other resources that may be
 distributed under licenses different than the .NET Runtime software.
@@ -35890,7 +35890,7 @@ System.Management 7.0.2
 License: MIT
 Upstream: https://github.com/dotnet/runtime
 
-Same license text as Microsoft.AspNetCore.App.Runtime.win-x64 10.0.13.
+Same license text as Microsoft.AspNetCore.App.Runtime.win-x64 10.0.14.
 
 Same license text as System.CodeDom 7.0.0.
 
@@ -35900,7 +35900,7 @@ License: MIT
 Upstream: https://github.com/dotnet/dotnet
 License text from: https://raw.githubusercontent.com/dotnet/dotnet/f7d90799ce4ef09a0bb257852a57248d2a8fb8dd/LICENSE.TXT
 
-Same license text as Microsoft.AspNetCore.App.Runtime.win-x64 10.0.13.
+Same license text as Microsoft.AspNetCore.App.Runtime.win-x64 10.0.14.
 
 Same license text as Microsoft.Extensions.DependencyModel 10.0.13.
 
@@ -35910,23 +35910,23 @@ License: MIT
 Upstream: https://github.com/dotnet/dotnet
 License text from: https://raw.githubusercontent.com/dotnet/dotnet/4099f83977f4d29604a9aeb971fb0a7bc1d5f699/LICENSE.TXT
 
-Same license text as Microsoft.AspNetCore.App.Runtime.win-x64 10.0.13.
+Same license text as Microsoft.AspNetCore.App.Runtime.win-x64 10.0.14.
 
 Same license text as Microsoft.Extensions.DependencyModel 10.0.13.
 
 ------------------------------------------------------------------------------
-TauriKit.Sidecar.Loopback 0.28.0
+TauriKit.Sidecar.Loopback 0.30.0
 License: MIT
 Upstream: https://github.com/iyulab/tauri-kit
 
-Same license text as tauri-kit-credentials 0.28.0.
+Same license text as tauri-kit-credentials 0.30.0.
 
 ------------------------------------------------------------------------------
-TauriKit.Sidecar.Loopback.AspNetCore 0.28.0
+TauriKit.Sidecar.Loopback.AspNetCore 0.30.0
 License: MIT
 Upstream: https://github.com/iyulab/tauri-kit
 
-Same license text as tauri-kit-credentials 0.28.0.
+Same license text as tauri-kit-credentials 0.30.0.
 
 ------------------------------------------------------------------------------
 Tiktoken.Core 3.1.5
@@ -35991,7 +35991,7 @@ Unpdf 0.48.0
 License: MIT
 Upstream: https://github.com/iyulab/unpdf
 
-Same license text as tauri-kit-credentials 0.28.0.
+Same license text as tauri-kit-credentials 0.30.0.
 
 Third-party notices
 ===================
