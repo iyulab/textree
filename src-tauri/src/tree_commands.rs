@@ -42,15 +42,18 @@ async fn folder_resolved(root: &str, rel: &str) -> Result<String, String> {
 /// the person from opening another instead (the later opening wins — see
 /// [`commands::open_vault`]).
 #[tauri::command]
-pub async fn open_vault(root: String, app: AppHandle) -> Result<commands::OpenedRoot, String> {
+pub async fn open_vault(root_id: String, app: AppHandle) -> Result<Vec<commands::TreeItem>, String> {
     let ticket = commands::begin_open();
-    off_main(move || {
-        let root_id = crate::workspace::register(&root);
-        commands::open_vault(root.clone(), root_id.clone(), app, ticket)
-            .and_then(|tree| commands::tree_out(&root, tree))
-            .map(|tree| commands::OpenedRoot { root_id, tree })
-    })
-    .await
+    let root = crate::workspace::path_of(&root_id)?;
+    off_main(move || commands::open_vault(root.clone(), root_id, app, ticket).and_then(|tree| commands::tree_out(&root, tree))).await
+}
+
+/// Makes the folder at `path` known and answers with the id every later command names it by. It
+/// only records the name — nothing on the disk is looked at — so the screen can hold the id
+/// before the folder has finished opening.
+#[tauri::command]
+pub async fn register_root(path: String) -> Result<String, String> {
+    Ok(crate::workspace::register(&path))
 }
 
 /// Runs `work` off the main thread while holding a turn over `places`.

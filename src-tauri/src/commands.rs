@@ -585,13 +585,6 @@ pub struct RescanEvent {
     pub root_id: String,
 }
 
-/// An opened folder: the id later commands name it by, and its tree.
-#[derive(Debug, Serialize)]
-pub struct OpenedRoot {
-    #[serde(rename = "rootId")]
-    pub root_id: String,
-    pub tree: Vec<TreeItem>,
-}
 
 pub(crate) fn tree_of(root: String) -> Result<Vec<TreeNode>, String> {
     vault::build_tree(Path::new(&root)).map_err(|e| e.to_string())
