@@ -79,19 +79,6 @@ fn atomic_bytes_beside(path: &Path, content: &[u8]) -> io::Result<()> {
     tauri_kit_fs::write_atomic(path, content)
 }
 
-/// [`atomic_bytes_beside`] for a file that must not exist yet: refuses with
-/// [`io::ErrorKind::AlreadyExists`] rather than replacing one.
-fn atomic_new_beside(path: &Path, content: &[u8]) -> io::Result<()> {
-    let dir = path
-        .parent()
-        .ok_or_else(|| io::Error::other("no parent directory"))?;
-    std::fs::create_dir_all(dir)?;
-    let mut tmp = NamedTempFile::new_in(dir)?;
-    tmp.write_all(content)?;
-    tmp.as_file().sync_all()?;
-    persist(tmp, path, Landing::New)
-}
-
 /// Atomic file write: write to a temp file in repository storage (or beside the target when no
 /// repository governs the folder), then rename onto the target. Even if a crash or power loss
 /// happens mid-write, the target file is not truncated ("the FS is the truth").
@@ -503,7 +490,7 @@ pub async fn keep_stranded(
             .map(|d| d.as_millis() as u64)
             .unwrap_or(0);
         let kept = crate::stranded::Kept { rel, text, base, at };
-        crate::stranded::keep(&stranded_dir(&root)?, &kept, atomic_new_beside)
+        crate::stranded::keep(&stranded_dir(&root)?, &kept, tauri_kit_fs::write_atomic_new)
             .map_err(|e| e.to_string())
     })
     .await
@@ -2989,7 +2976,7 @@ mod tests {
                         at: 7,
                     };
                     start.wait();
-                    crate::stranded::keep(&dir, &kept, atomic_new_beside).unwrap()
+                    crate::stranded::keep(&dir, &kept, tauri_kit_fs::write_atomic_new).unwrap()
                 })
             })
             .collect();
@@ -3015,7 +3002,7 @@ mod tests {
             base: "before".into(),
             at: 1,
         };
-        let id = crate::stranded::keep(&dir, &kept, atomic_new_beside).unwrap();
+        let id = crate::stranded::keep(&dir, &kept, tauri_kit_fs::write_atomic_new).unwrap();
 
         let back = stranded_edits(tmp.path()).unwrap();
         assert_eq!(
