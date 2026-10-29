@@ -754,12 +754,13 @@ fn scope_within(vault: &str, scope: Option<String>) -> Result<String, String> {
 
 #[tauri::command]
 pub async fn semantic_search(
-    vault: String,
+    root_id: String,
     query: String,
     scope: Option<String>,
     limit: u32,
     host: State<'_, Arc<HostHandle>>,
 ) -> Result<Vec<SemanticHit>, String> {
+    let vault = crate::workspace::path_of(&root_id)?;
     // Read cheap mutex fields before entering the blocking closure.
     let Some(endpoint) = host.endpoint() else {
         return Ok(Vec::new()); // host not up → empty, caller falls back / shows unavailable
@@ -903,13 +904,14 @@ pub fn parse_chat_line(line: &str) -> Option<ChatLine> {
 /// or the command returns `Err` (an IPC-level error, not an event).
 #[tauri::command]
 pub async fn ask(
-    vault: String,
+    root_id: String,
     messages: Vec<ChatMessage>,
     citation_hits: Vec<SemanticHit>,
     scope: Option<String>,
     on_event: tauri::ipc::Channel<AskEvent>,
     host: State<'_, Arc<HostHandle>>,
 ) -> Result<(), String> {
+    let vault = crate::workspace::path_of(&root_id)?;
     // Graceful degradation: host not up → inform the user, do not hard-error.
     let Some(endpoint) = host.endpoint() else {
         let _ = on_event.send(AskEvent::Error {

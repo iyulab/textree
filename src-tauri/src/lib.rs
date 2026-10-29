@@ -38,6 +38,7 @@ pub(crate) mod note_refs;
 pub(crate) mod state_dir;
 pub(crate) mod stranded;
 pub(crate) mod tree_commands;
+pub(crate) mod workspace;
 
 use host::HostHandle;
 use search::IndexHandle;

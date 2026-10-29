@@ -476,11 +476,12 @@ fn stranded_dir(root: &Path) -> Result<PathBuf, String> {
 /// Keeps an edit that could not be written to its note yet, until it is. Returns its id.
 #[tauri::command]
 pub async fn keep_stranded(
-    root: String,
+    root_id: String,
     rel: String,
     text: String,
     base: String,
 ) -> Result<String, String> {
+    let root = crate::workspace::path_of(&root_id)?;
     off_main(move || {
         // From the text alone: the folder may be the very one that stopped answering.
         crate::vault_paths::plain(&rel)?;
@@ -498,7 +499,8 @@ pub async fn keep_stranded(
 
 /// Lets go of a kept edit once it has landed.
 #[tauri::command]
-pub async fn forget_stranded(root: String, id: String) -> Result<(), String> {
+pub async fn forget_stranded(root_id: String, id: String) -> Result<(), String> {
+    let root = crate::workspace::path_of(&root_id)?;
     off_main(move || {
         crate::stranded::forget(&stranded_dir(Path::new(&root))?, &id).map_err(|e| e.to_string())
     })
@@ -507,7 +509,8 @@ pub async fn forget_stranded(root: String, id: String) -> Result<(), String> {
 
 /// Every edit kept for this folder, oldest first, to be tried again now that it is open.
 #[tauri::command]
-pub async fn list_stranded(root: String) -> Result<Vec<StrandedEdit>, String> {
+pub async fn list_stranded(root_id: String) -> Result<Vec<StrandedEdit>, String> {
+    let root = crate::workspace::path_of(&root_id)?;
     off_main(move || stranded_edits(Path::new(&root))).await
 }
 
@@ -533,7 +536,8 @@ pub(crate) async fn off_main<T: Send + 'static>(
 }
 
 #[tauri::command]
-pub async fn list_tree(root: String) -> Result<Vec<TreeItem>, String> {
+pub async fn list_tree(root_id: String) -> Result<Vec<TreeItem>, String> {
+    let root = crate::workspace::path_of(&root_id)?;
     off_main(move || tree_of(root.clone()).and_then(|tree| tree_out(&root, tree))).await
 }
 
@@ -568,9 +572,25 @@ pub(crate) fn tree_out(root: &str, tree: Vec<TreeNode>) -> Result<Vec<TreeItem>,
 /// A change to a note, as the screen is told about it: which folder, and where in it.
 #[derive(Debug, Serialize, Clone, PartialEq, Eq)]
 pub struct FsEvent {
-    pub root: String,
+    #[serde(rename = "rootId")]
+    pub root_id: String,
     pub kind: crate::watcher::ChangeKind,
     pub rel: String,
+}
+
+/// The folder's whole tree has to be read again: said with the folder it is about.
+#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
+pub struct RescanEvent {
+    #[serde(rename = "rootId")]
+    pub root_id: String,
+}
+
+/// An opened folder: the id later commands name it by, and its tree.
+#[derive(Debug, Serialize)]
+pub struct OpenedRoot {
+    #[serde(rename = "rootId")]
+    pub root_id: String,
+    pub tree: Vec<TreeItem>,
 }
 
 pub(crate) fn tree_of(root: String) -> Result<Vec<TreeNode>, String> {
@@ -578,7 +598,8 @@ pub(crate) fn tree_of(root: String) -> Result<Vec<TreeNode>, String> {
 }
 
 #[tauri::command]
-pub async fn read_note(root: String, rel: String) -> Result<String, String> {
+pub async fn read_note(root_id: String, rel: String) -> Result<String, String> {
+    let root = crate::workspace::path_of(&root_id)?;
     off_main(move || {
         let path = crate::vault_paths::resolve(&root, &rel)?;
         note_text(root, path.to_string_lossy().into_owned())
@@ -625,7 +646,7 @@ fn stale_base(path: &Path, expected: &str) -> io::Result<Option<WriteOutcome>> {
 /// drive) holds up this save, not the window or the other notes.
 #[tauri::command]
 pub async fn write_note(
-    root: String,
+    root_id: String,
     rel: String,
     content: String,
     expected: String,
@@ -633,6 +654,7 @@ pub async fn write_note(
     locks: State<'_, Arc<NoteLocks>>,
     app: AppHandle,
 ) -> Result<WriteOutcome, String> {
+    let root = crate::workspace::path_of(&root_id)?;
     let (own, locks) = (own.inner().clone(), locks.inner().clone());
     off_main(move || {
         let path = crate::vault_paths::resolve(&root, &rel)?;
@@ -743,7 +765,7 @@ pub(crate) fn begin_open() -> u64 {
 /// watches it. Everything that reads the folder runs first, where it may take as long as the
 /// folder takes; only then, briefly and one opening at a time, is the folder put in place — and
 /// only if no later opening started meanwhile.
-pub fn open_vault(root: String, app: AppHandle, ticket: u64) -> Result<Vec<TreeNode>, String> {
+pub fn open_vault(root: String, root_id: String, app: AppHandle, ticket: u64) -> Result<Vec<TreeNode>, String> {
     stall_opening(&root);
     let root_path = PathBuf::from(&root);
     // Sweep orphaned atomic-write temps (crash/power-loss leftovers) so they don't linger and sync.
@@ -757,6 +779,7 @@ pub fn open_vault(root: String, app: AppHandle, ticket: u64) -> Result<Vec<TreeN
     let app_data = app.path().app_data_dir().map_err(|e| e.to_string())?;
     let emitter = app.clone();
     let watched = root.clone();
+    let watched_id = root_id.clone();
     use tauri::Emitter as _;
     let watcher = crate::watcher::watch_vault(&root_path, &own, index.clone(), move |surface| match surface {
         crate::watcher::Surface::Changed(batch) => {
@@ -764,11 +787,11 @@ pub fn open_vault(root: String, app: AppHandle, ticket: u64) -> Result<Vec<TreeN
                 // Said with the folder it happened in: one that arrives after another folder was
                 // opened is not mistaken for a note of the same name there.
                 let Some(rel) = crate::vault_paths::rel_of(&watched, Path::new(&change.path)) else { continue };
-                let _ = emitter.emit("fs_changed", FsEvent { root: watched.clone(), kind: change.kind, rel });
+                let _ = emitter.emit("fs_changed", FsEvent { root_id: watched_id.clone(), kind: change.kind, rel });
             }
         }
         crate::watcher::Surface::Rescan => {
-            let _ = emitter.emit("fs_rescan", ());
+            let _ = emitter.emit("fs_rescan", RescanEvent { root_id: watched_id.clone() });
         }
     })?;
 
