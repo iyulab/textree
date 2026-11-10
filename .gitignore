@@ -1,0 +1,6 @@
+target/
+node_modules/
+bin/
+obj/
+*.swp
+.DS_Store
