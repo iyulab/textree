@@ -26,4 +26,4 @@ own terms — never in terms of a particular consuming project.
 - A change set is committed whole or not at all, and never over a stale base version.
 - No content disappears without the change set saying so.
 - Links that resolved before a change still resolve after it.
-- Tags are written into the document body, not into fields Textree adds; front matter that already exists is read.
+- Tags are read from the document body and from front matter that already exists. By default they are written into the body only; writing front matter is a policy the consumer turns on for a store it owns.
