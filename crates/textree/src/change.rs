@@ -203,6 +203,10 @@ pub fn validate_paths(changes: &ChangeSet) -> Result<(), String> {
         if let Err(why) = crate::path::check_inside_root(path) {
             return Err(format!("{path:?}: {why}"));
         }
+        // Hidden names are never read, so a plan made by Textree never names one.
+        if path.split('/').any(|piece| piece.starts_with('.')) {
+            return Err(format!("{path:?}: has a hidden piece (starts with a dot)"));
+        }
     }
     Ok(())
 }

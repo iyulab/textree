@@ -409,6 +409,7 @@ fn a_tampered_or_missing_plan_is_a_usage_error() {
         r#"{"version":1,"nodes_fingerprint":"x","reads":[],"moves":[{"from":"x/link.md","to":"../escaped.md"}],"writes":[],"deletes":[],"remove_folders":[],"rewrites":[]}"#,
         r#"{"version":1,"nodes_fingerprint":"x","reads":[],"moves":[],"writes":[{"path":"/etc/x","content":"x"}],"deletes":[],"remove_folders":[],"rewrites":[]}"#,
         r#"{"version":1,"nodes_fingerprint":"x","reads":[],"moves":[],"writes":[],"deletes":[{"path":"a/../../b","kind":"document"}],"remove_folders":[],"rewrites":[]}"#,
+        r#"{"version":1,"nodes_fingerprint":"x","reads":[],"moves":[{"from":"x/link.md","to":".hidden.md"}],"writes":[],"deletes":[],"remove_folders":[],"rewrites":[]}"#,
         "this is not json",
     ] {
         fs::write(&evil, body).unwrap();
