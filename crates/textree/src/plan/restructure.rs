@@ -1306,7 +1306,20 @@ fn merge(snap: &Snapshot, into: &str, from: &[String], policy: &Policy) -> Resul
         })
         .collect();
     let merged_anchors_c = merged_anchors.clone();
-    let titles_c: Vec<String> = sections.iter().map(|s| s.title.clone()).collect();
+    // How a wiki link names a section: by its title, unless an earlier heading of the merged
+    // document reads the same, in which case by its anchor.
+    let titles_c: Vec<String> = sections
+        .iter()
+        .enumerate()
+        .map(|(i, s)| {
+            let at = synth_at[i].unwrap_or(source_first[i]);
+            if heading_for(&s.title, &merged_anchors) == Some(at) {
+                s.title.clone()
+            } else {
+                merged_anchors[at].clone()
+            }
+        })
+        .collect();
     let expect = move |t: &str, heading: Option<&str>| -> Expected {
         if let Some(i) = sources.iter().position(|s| s == t) {
             let reason = Some(format!("{t} was merged into {into_s}"));

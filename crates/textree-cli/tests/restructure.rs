@@ -595,3 +595,30 @@ fn a_saved_split_plan_applies_to_the_same_tree_and_only_once() {
     assert_eq!(a.run(&["apply", &plan_s]).0, 1);
     let _ = fs::remove_file(plan);
 }
+
+#[test]
+fn merge_points_a_link_to_a_merged_document_past_an_earlier_heading_that_reads_the_same() {
+    let s = Scratch::with(&[
+        ("a.md", b"# Same\n\nx\n"),
+        ("b.md", b"# Same\n\nbb\n"),
+        ("idx.md", b"[[b]] [[b#Same]] [[a#Same]] [b](b.md)\n"),
+    ]);
+    assert_eq!(s.run(&["merge", "a.md", "b.md", "--apply"]).0, 0);
+    s.assert_tree(&[
+        ("a.md", b"# Same\n\nx\n\n## Same\n\nbb\n"),
+        (
+            "idx.md",
+            b"[[a#same-1]] [[a#same-1]] [[a#Same]] [b](a.md#same-1)\n",
+        ),
+    ]);
+    let s = Scratch::with(&[
+        ("a.md", b"# A\n\n## Part\n\nx\n"),
+        ("b.md", b"# part\n\nbb\n"),
+        ("idx.md", b"[[b]]\n"),
+    ]);
+    assert_eq!(s.run(&["merge", "a.md", "b.md", "--apply"]).0, 0);
+    s.assert_tree(&[
+        ("a.md", b"# A\n\n## Part\n\nx\n\n## part\n\nbb\n"),
+        ("idx.md", b"[[a#part-1]]\n"),
+    ]);
+}
