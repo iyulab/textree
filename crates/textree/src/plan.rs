@@ -23,6 +23,8 @@ use crate::port::{Issue, Listing, Node, NodeKind, ReadPort};
 use crate::read::{read_document, RawLink, Reading, Syntax};
 use crate::resolve::{Index, Resolution};
 
+mod restructure;
+
 /// What planning needs to know about a hierarchy: its nodes and every readable document.
 pub struct Snapshot {
     pub nodes: Vec<Node>,
@@ -124,6 +126,8 @@ struct Edit {
     unit: StdRange<usize>,
     line: usize,
     reason: Option<String>,
+    /// Whether the plan lists it as a rewritten link (heading markers and the like are not).
+    show: bool,
 }
 
 /// Plans one operation.
@@ -143,6 +147,7 @@ pub fn plan(snapshot: &Snapshot, op: &Op, policy: &Policy) -> Result<Plan, PlanE
     match op {
         Op::Move { from, to } => plan_move(snapshot, from, to, policy),
         Op::Delete { path } => plan_delete(snapshot, path, policy),
+        Op::Split { .. } | Op::Merge { .. } => restructure::plan(snapshot, op, policy),
     }
 }
 
@@ -394,6 +399,7 @@ fn empty_changes(snap: &Snapshot) -> ChangeSet {
         nodes_fingerprint: nodes_fingerprint(&snap.nodes),
         reads: Vec::new(),
         moves: Vec::new(),
+        creates: Vec::new(),
         writes: Vec::new(),
         deletes: Vec::new(),
         remove_folders: Vec::new(),
@@ -502,6 +508,7 @@ fn finish(
         writes.push(Write {
             path: new_path.clone(),
             content: String::from_utf8_lossy(&content).into_owned(),
+            note: None,
         });
         new_files.insert(new_path, content);
     }
@@ -621,6 +628,7 @@ fn finish(
             MoveKind::Moving { .. } => moved.moves.clone(),
             MoveKind::Deleting { .. } => Vec::new(),
         },
+        creates: Vec::new(),
         writes,
         deletes,
         remove_folders,
@@ -714,6 +722,7 @@ fn plan_link_edit(
                         unit: to_text(&link.range),
                         line: link.line,
                         reason: Some(reason),
+                        show: true,
                     })
                 }
             }
@@ -760,6 +769,7 @@ fn path_edit(
         unit,
         line,
         reason,
+        show: true,
     })
 }
 
@@ -781,6 +791,7 @@ fn wiki_name(
             alias: None,
             range: crate::read::Range { start: 0, end: 0 },
             line: 0,
+            heading_span: None,
             target_span: None,
             angle: false,
             label: None,

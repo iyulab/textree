@@ -20,6 +20,8 @@ cargo run --release -p textree-cli -- check path/to/notes          # broken link
 cargo run --release -p textree-cli -- move path/to/notes a.md sub/a.md     # show the plan, change nothing
 cargo run --release -p textree-cli -- move path/to/notes a.md sub/a.md --apply
 cargo run --release -p textree-cli -- delete path/to/notes old.md --apply  # refused if links would break
+cargo run --release -p textree-cli -- split path/to/notes trip.md --apply   # one document per ## section
+cargo run --release -p textree-cli -- merge path/to/notes a.md b.md --apply # b.md becomes a section of a.md
 ```
 
 ## What it holds
@@ -29,7 +31,7 @@ cargo run --release -p textree-cli -- delete path/to/notes old.md --apply  # ref
 | **Model** | Two kinds of node: a *collection* (has children) and a *document* (Markdown body). Paths, depth, and a version per node supplied by the store |
 | **Markdown reading** | Links, wiki links (`[[name]]`), tags, headings — code is never read as a link |
 | **Relation graph** | Backlinks, tag → documents, broken links, orphans. Derived data: it can always be rebuilt from the documents |
-| **Change sets** | Move or rename and delete, with links rewritten when a document moves (add, edit a section, split and merge are planned). Every change set is checked: content is preserved or its removal is explicit, links resolve, nothing is orphaned, the change stays within its budget (a count of touched nodes and rewritten bytes). A change is applied whole or not at all, and never over a stale plan |
+| **Change sets** | Move or rename, delete, split a document into sections and merge documents, with links rewritten so they keep meaning what they meant (add and edit a section are planned). Every change set is checked: content is preserved or its removal is explicit, links resolve, nothing is orphaned, the change stays within its budget (a count of touched nodes and rewritten bytes). A change is applied whole or not at all, and never over a stale plan |
 | **Thresholds** | Width, depth, length, cohesion and duplication measures that tell when a part of the hierarchy should be reorganized. Values come from a policy the consumer supplies |
 | **Ingest harness** | Places new text by walking the hierarchy from the top, reorganizes a subtree when a threshold is crossed, and repairs a change set that fails its checks. Uses a language model through a port |
 

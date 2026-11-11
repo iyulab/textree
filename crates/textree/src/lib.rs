@@ -16,6 +16,7 @@
 //! assert_eq!(graph.orphans, vec!["a.md".to_string()]);
 //! ```
 
+mod anchors;
 mod change;
 mod graph;
 pub mod path;
@@ -24,6 +25,7 @@ mod port;
 mod read;
 mod resolve;
 
+pub use anchors::{anchors_of, file_stem_of, github_slug};
 pub use change::{
     nodes_fingerprint, validate_paths, ChangeSet, CommitError, Delete, Move, Op, PlanError, Policy,
     ReadVersion, Rewrite, Violation, Write, WritePort,
@@ -35,5 +37,5 @@ pub use plan::{plan, Plan, Snapshot};
 pub use port::{
     content_version, is_document_path, Issue, Listing, MemoryStore, Node, NodeKind, ReadPort,
 };
-pub use read::{read_document, Heading, Range, RawLink, Reading, RefDef, Syntax, TagUse};
+pub use read::{read_document, Footnote, Heading, Range, RawLink, Reading, RefDef, Syntax, TagUse};
 pub use resolve::{Index, Resolution};

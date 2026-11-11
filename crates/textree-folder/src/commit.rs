@@ -20,6 +20,8 @@ enum Undo {
     Restore { path: PathBuf, bytes: Vec<u8> },
     /// Remove a folder that the commit created.
     RemoveDir(PathBuf),
+    /// Remove a file that the commit created.
+    RemoveFile(PathBuf),
 }
 
 struct Run<'a> {
@@ -115,6 +117,21 @@ impl Run<'_> {
         Ok(())
     }
 
+    /// Creates a file that does not exist yet; never replaces one.
+    fn create(&mut self, path: &Path, content: &[u8]) -> io::Result<()> {
+        use std::io::Write as _;
+        self.step()?;
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(path)?;
+        self.undo.push(Undo::RemoveFile(path.to_path_buf()));
+        self.step()?;
+        file.write_all(content)?;
+        file.sync_all()?;
+        Ok(())
+    }
+
     fn set_aside_for_delete(&mut self, path: &Path) -> io::Result<()> {
         let hidden = self.temp_name(path, "trash");
         self.step()?;
@@ -135,6 +152,7 @@ impl Run<'_> {
                 Undo::Rename { from, to } => fs::rename(from, to),
                 Undo::Restore { path, bytes } => fs::write(path, bytes),
                 Undo::RemoveDir(d) => fs::remove_dir(d),
+                Undo::RemoveFile(f) => fs::remove_file(f),
             };
             if let Err(e) = result {
                 problems.push(match &u {
@@ -143,6 +161,7 @@ impl Run<'_> {
                     }
                     Undo::Restore { path, .. } => format!("{}: {e}", path.display()),
                     Undo::RemoveDir(d) => format!("{}: {e}", d.display()),
+                    Undo::RemoveFile(f) => format!("{}: {e}", f.display()),
                 });
             }
         }
@@ -192,6 +211,7 @@ pub(crate) fn preflight(store: &FolderStore, changes: &ChangeSet) -> Result<(), 
         paths.push(&m.to);
     }
     paths.extend(changes.writes.iter().map(|w| w.path.as_str()));
+    paths.extend(changes.creates.iter().map(|w| w.path.as_str()));
     paths.extend(changes.deletes.iter().map(|d| d.path.as_str()));
     paths.extend(changes.remove_folders.iter().map(String::as_str));
     for p in paths {
@@ -248,6 +268,11 @@ pub(crate) fn commit(
             conflicts.push(m.to.clone());
         }
     }
+    for c in &changes.creates {
+        if fs::symlink_metadata(under(&store.root, &c.path)).is_ok() {
+            conflicts.push(c.path.clone());
+        }
+    }
     if !conflicts.is_empty() {
         return Err(CommitError::Conflict(conflicts));
     }
@@ -278,7 +303,10 @@ pub(crate) fn commit(
             for folder in &changes.remove_folders {
                 let _ = fs::remove_dir(under(&store.root, folder));
             }
-            Ok(changes.moves.len() + changes.writes.len() + changes.deletes.len())
+            Ok(changes.moves.len()
+                + changes.creates.len()
+                + changes.writes.len()
+                + changes.deletes.len())
         }
         Err((path, e)) => {
             let problems = run.roll_back();
@@ -306,6 +334,14 @@ fn apply(
             run.make_dirs(parent).map_err(|e| (m.to.clone(), e))?;
         }
         run.rename(&from, &to).map_err(|e| (m.to.clone(), e))?;
+    }
+    for c in &changes.creates {
+        let path = under(&root, &c.path);
+        if let Some(parent) = path.parent() {
+            run.make_dirs(parent).map_err(|e| (c.path.clone(), e))?;
+        }
+        run.create(&path, c.content.as_bytes())
+            .map_err(|e| (c.path.clone(), e))?;
     }
     for w in &changes.writes {
         run.write(&under(&root, &w.path), w.content.as_bytes())

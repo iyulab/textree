@@ -23,6 +23,26 @@ pub struct Heading {
     pub text: String,
     pub range: Range,
     pub line: usize,
+    /// Written as text with an underline (`Title` / `-----`).
+    #[serde(skip)]
+    pub setext: bool,
+    /// Sits inside a block quote or a list item, not at the start of a line.
+    #[serde(skip)]
+    pub nested: bool,
+    /// Where the heading text starts and ends (without the `#` marker, closing hashes or underline).
+    #[serde(skip)]
+    pub title_start: usize,
+    #[serde(skip)]
+    pub title_end: usize,
+}
+
+/// A footnote reference (`[^x]`) or definition (`[^x]: …`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Footnote {
+    pub label: String,
+    pub definition: bool,
+    pub range: Range,
+    pub line: usize,
 }
 
 /// One use of a tag.
@@ -56,6 +76,8 @@ pub struct RawLink {
     pub alias: Option<String>,
     pub range: Range,
     pub line: usize,
+    /// Where the heading fragment (the text after `#`) sits in the source bytes, if there is one.
+    pub heading_span: Option<Range>,
     /// Where the name (wiki links) or the path part of the destination (path links, before any
     /// `#heading`) sits in the source bytes. `None` when the link has no destination of its own
     /// (a reference link takes it from its definition, see [`RefDef`]).
@@ -76,6 +98,7 @@ pub struct RefDef {
     pub heading: Option<String>,
     /// Where the path part of the destination sits in the source bytes.
     pub target_span: Option<Range>,
+    pub heading_span: Option<Range>,
     pub angle: bool,
     pub range: Range,
     pub line: usize,
@@ -88,6 +111,11 @@ pub struct Reading {
     pub tags: Vec<TagUse>,
     pub links: Vec<RawLink>,
     pub defs: Vec<RefDef>,
+    /// Links to a heading of the same document (`[x](#heading)`, `[[#heading]]`).
+    pub anchors: Vec<RawLink>,
+    pub footnotes: Vec<Footnote>,
+    /// The front matter block, if the document starts with one.
+    pub front_matter: Option<Range>,
 }
 
 /// Reads a document. `text` has no byte order mark; `offset` is added to every range so that
@@ -104,6 +132,9 @@ pub fn read_document(text: &str, offset: usize) -> Reading {
     let mut links: Vec<RawLink> = Vec::new();
     let mut headings: Vec<Heading> = Vec::new();
     let mut tags: Vec<TagUse> = Vec::new();
+    let mut anchors: Vec<RawLink> = Vec::new();
+    let mut footnotes: Vec<Footnote> = Vec::new();
+    let mut front_matter: Option<Range> = None;
 
     struct LinkFrame {
         end: usize,
@@ -190,12 +221,25 @@ pub fn read_document(text: &str, offset: usize) -> Reading {
                     if is_path && !frame.dest.trim().is_empty() {
                         let (target, heading) = split_fragment(frame.dest.trim());
                         let mut target_span = None;
+                        let mut heading_span = None;
                         let mut angle = false;
                         if frame.link_type == LinkType::Inline {
                             if let Some(at) = close_at {
                                 if text[at + 1..frame.end].starts_with('(') {
                                     if let Some((token, a)) = dest_token(text, at + 2, frame.end) {
-                                        target_span = path_part(text, token).map(|r| Range {
+                                        target_span =
+                                            path_part(text, token.clone()).map(|r| Range {
+                                                start: r.start + offset,
+                                                end: r.end + offset,
+                                            });
+                                        if target_span.is_none() {
+                                            // `(#heading)`: the path part is empty, at the `#`.
+                                            target_span = Some(Range {
+                                                start: token.start + offset,
+                                                end: token.start + offset,
+                                            });
+                                        }
+                                        heading_span = fragment_part(text, token).map(|r| Range {
                                             start: r.start + offset,
                                             end: r.end + offset,
                                         });
@@ -206,7 +250,8 @@ pub fn read_document(text: &str, offset: usize) -> Reading {
                         }
                         let label = (frame.link_type != LinkType::Inline)
                             .then(|| normalize_label(&frame.id));
-                        links.push(RawLink {
+                        let same_document = target.is_empty();
+                        let link = RawLink {
                             syntax: Syntax::Path,
                             text: text[frame.start..frame.end].to_string(),
                             target,
@@ -217,10 +262,16 @@ pub fn read_document(text: &str, offset: usize) -> Reading {
                                 end: frame.end + offset,
                             },
                             line: lines.line_of(frame.start),
+                            heading_span,
                             target_span,
                             angle,
                             label,
-                        });
+                        };
+                        if same_document {
+                            anchors.push(link);
+                        } else {
+                            links.push(link);
+                        }
                     }
                 }
             }
@@ -229,9 +280,31 @@ pub fn read_document(text: &str, offset: usize) -> Reading {
             | Event::Start(Tag::MetadataBlock(_)) => {
                 if let Event::Start(Tag::MetadataBlock(_)) = event {
                     read_front_matter_tags(text, range.clone(), &lines, offset, &mut tags);
+                    front_matter = Some(Range {
+                        start: range.start + offset,
+                        end: range.end + offset,
+                    });
                 }
                 excluded.push(range);
             }
+            Event::FootnoteReference(label) => footnotes.push(Footnote {
+                label: label.to_string(),
+                definition: false,
+                range: Range {
+                    start: range.start + offset,
+                    end: range.end + offset,
+                },
+                line: lines.line_of(range.start),
+            }),
+            Event::Start(Tag::FootnoteDefinition(label)) => footnotes.push(Footnote {
+                label: label.to_string(),
+                definition: true,
+                range: Range {
+                    start: range.start + offset,
+                    end: range.end + offset,
+                },
+                line: lines.line_of(range.start),
+            }),
             Event::Code(_) | Event::Html(_) | Event::InlineHtml(_) => {
                 excluded.push(range.clone());
                 if let (Event::Code(code), Some(h)) = (&event, heading.as_mut()) {
@@ -254,7 +327,37 @@ pub fn read_document(text: &str, offset: usize) -> Reading {
                 if let Some(h) = heading.take() {
                     let slice = text[h.range.clone()].trim_end();
                     let end = h.range.start + slice.len();
+                    let start = h.range.start;
+                    let line_start = text[..start].rfind('\n').map_or(0, |i| i + 1);
+                    let nested = text[line_start..start]
+                        .chars()
+                        .any(|c| c != ' ' && c != '\t');
+                    let first_line = slice
+                        .split('\n')
+                        .next()
+                        .unwrap_or("")
+                        .trim_end_matches('\r');
+                    let setext = !first_line.trim_start().starts_with('#');
+                    let (title_start, title_end) = if setext {
+                        (start, start + first_line.trim_end().len())
+                    } else {
+                        let after = first_line.trim_start_matches('#');
+                        let lead = first_line.len() - after.len();
+                        let after_ws = after.trim_start();
+                        let ts = start + lead + (after.len() - after_ws.len());
+                        let mut te = start + first_line.trim_end().len();
+                        let content = &text[ts.min(te)..te];
+                        let closed = content.trim_end_matches('#');
+                        if closed.is_empty() || closed.ends_with(' ') || closed.ends_with('\t') {
+                            te = ts + closed.trim_end().len();
+                        }
+                        (ts.min(te), te)
+                    };
                     headings.push(Heading {
+                        setext,
+                        nested,
+                        title_start: title_start + offset,
+                        title_end: title_end + offset,
                         level: h.level,
                         text: h.text.trim().to_string(),
                         range: Range {
@@ -284,7 +387,11 @@ pub fn read_document(text: &str, offset: usize) -> Reading {
                 label: normalize_label(&label),
                 target,
                 heading,
-                target_span: path_part(text, token).map(|r| Range {
+                target_span: path_part(text, token.clone()).map(|r| Range {
+                    start: r.start + offset,
+                    end: r.end + offset,
+                }),
+                heading_span: fragment_part(text, token).map(|r| Range {
                     start: r.start + offset,
                     end: r.end + offset,
                 }),
@@ -304,7 +411,15 @@ pub fn read_document(text: &str, offset: usize) -> Reading {
     // Wiki links, then tags outside code, wiki links and link destinations.
     let mut consumed = excluded.clone();
     for seg in complement(text.len(), &excluded) {
-        scan_wiki(text, seg, &lines, offset, &mut links, &mut consumed);
+        scan_wiki(
+            text,
+            seg,
+            &lines,
+            offset,
+            &mut links,
+            &mut anchors,
+            &mut consumed,
+        );
     }
     let consumed = merge(consumed);
     for seg in complement(text.len(), &consumed) {
@@ -313,11 +428,15 @@ pub fn read_document(text: &str, offset: usize) -> Reading {
 
     links.sort_by_key(|l| l.range.start);
     tags.sort_by_key(|t| t.range.start);
+    anchors.sort_by_key(|l| l.range.start);
     Reading {
         headings,
         tags,
         links,
         defs,
+        anchors,
+        footnotes,
+        front_matter,
     }
 }
 
@@ -375,6 +494,14 @@ fn dest_token(text: &str, from: usize, limit: usize) -> Option<(StdRange<usize>,
     }
     let end = i.min(limit);
     (end > start).then_some((start..end, false))
+}
+
+/// The text after the first `#` of a destination token; `None` when there is none.
+fn fragment_part(text: &str, token: StdRange<usize>) -> Option<StdRange<usize>> {
+    let raw = &text[token.clone()];
+    let hash = raw.find('#')?;
+    let start = token.start + hash + 1;
+    (start < token.end).then_some(start..token.end)
 }
 
 /// The part of a destination token before any `#heading`; `None` when that part is empty.
@@ -457,6 +584,7 @@ fn scan_wiki(
     lines: &LineIndex,
     offset: usize,
     links: &mut Vec<RawLink>,
+    anchors: &mut Vec<RawLink>,
     consumed: &mut Vec<StdRange<usize>>,
 ) {
     let bytes = text.as_bytes();
@@ -481,25 +609,35 @@ fn scan_wiki(
                 let link_start = if embed { i - 1 } else { i };
                 let link_end = j + 2;
                 consumed.push(link_start..link_end);
-                if let Some((name_at, target, heading, alias)) = parse_wiki(&text[start..j]) {
-                    links.push(RawLink {
+                if let Some(w) = parse_wiki(&text[start..j]) {
+                    let link = RawLink {
                         syntax: if embed { Syntax::Embed } else { Syntax::Wiki },
                         text: text[link_start..link_end].to_string(),
-                        target,
-                        heading,
-                        alias,
+                        target: w.name.clone(),
+                        heading: w.heading.clone(),
+                        alias: w.alias.clone(),
                         range: Range {
                             start: link_start + offset,
                             end: link_end + offset,
                         },
                         line: lines.line_of(link_start),
+                        heading_span: w.heading_range.as_ref().map(|r| Range {
+                            start: start + r.start + offset,
+                            end: start + r.end + offset,
+                        }),
                         target_span: Some(Range {
-                            start: start + name_at.start + offset,
-                            end: start + name_at.end + offset,
+                            start: start + w.name_range.start + offset,
+                            end: start + w.name_range.end + offset,
                         }),
                         angle: false,
                         label: None,
-                    });
+                    };
+                    // `[[#heading]]` points at a heading of its own document.
+                    if w.name.is_empty() {
+                        anchors.push(link);
+                    } else {
+                        links.push(link);
+                    }
                 }
                 i = link_end;
                 continue;
@@ -509,10 +647,17 @@ fn scan_wiki(
     }
 }
 
-/// Splits the inside of `[[ ]]` into name, heading and alias. A link that only points at a
-/// heading of its own document (`[[#heading]]`) has no name and is not a relation.
-#[allow(clippy::type_complexity)]
-fn parse_wiki(inner: &str) -> Option<(StdRange<usize>, String, Option<String>, Option<String>)> {
+struct WikiParts {
+    name: String,
+    name_range: StdRange<usize>,
+    heading: Option<String>,
+    heading_range: Option<StdRange<usize>>,
+    alias: Option<String>,
+}
+
+/// Splits the inside of `[[ ]]` into name, heading and alias (with where the name and the
+/// heading sit). A link with neither a name nor a heading is not a link.
+fn parse_wiki(inner: &str) -> Option<WikiParts> {
     let (target_part, alias) = match inner.find('|') {
         Some(bar) => {
             let alias = inner[bar + 1..].trim();
@@ -528,32 +673,38 @@ fn parse_wiki(inner: &str) -> Option<(StdRange<usize>, String, Option<String>, O
         None => (inner, None),
     };
     let target_part = target_part.trim_end_matches('\\');
-    let (name, heading) = match target_part.find('#') {
-        Some(hash) => {
-            let heading = target_part[hash + 1..].trim();
-            (
-                &target_part[..hash],
-                if heading.is_empty() {
-                    None
-                } else {
-                    Some(heading.to_string())
-                },
-            )
-        }
+    let hash = target_part.find('#');
+    let (name_str, heading_raw) = match hash {
+        Some(h) => (&target_part[..h], Some(&target_part[h + 1..])),
         None => (target_part, None),
     };
-    let trimmed = name.trim();
-    if trimmed.is_empty() {
-        None
-    } else {
-        let lead = name.len() - name.trim_start().len();
-        Some((
-            lead..lead + trimmed.len(),
-            trimmed.to_string(),
-            heading,
-            alias,
-        ))
+    let name = name_str.trim();
+    let heading_info = heading_raw.and_then(|raw| {
+        let t = raw.trim();
+        if t.is_empty() {
+            None
+        } else {
+            let start = hash.unwrap_or(0) + 1 + (raw.len() - raw.trim_start().len());
+            Some((start..start + t.len(), t.to_string()))
+        }
+    });
+    if name.is_empty() && heading_info.is_none() {
+        return None;
     }
+    let name_range = if name.is_empty() {
+        let at = hash.unwrap_or(0);
+        at..at
+    } else {
+        let lead = name_str.len() - name_str.trim_start().len();
+        lead..lead + name.len()
+    };
+    Some(WikiParts {
+        name: name.to_string(),
+        name_range,
+        heading: heading_info.as_ref().map(|(_, t)| t.clone()),
+        heading_range: heading_info.map(|(r, _)| r),
+        alias,
+    })
 }
 
 fn is_boundary(c: char) -> bool {

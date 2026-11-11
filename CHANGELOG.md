@@ -15,6 +15,8 @@ Entries describe changes in Textree's own terms — never in terms of a particul
 - A wiki link that starts with a slash (`[[/name]]`) names a path from the root, so a document in
   the root can be told apart from a nearer document with the same name.
 - A collapsed reference link (`[text][]`) now covers its trailing brackets in its text and range.
+- A change set has a `creates` list (new documents, never replacing a file) and a write can carry a
+  `note` that the plan shows; both are optional in a saved plan.
 
 ### Added
 
@@ -43,3 +45,21 @@ Entries describe changes in Textree's own terms — never in terms of a particul
   definition; `graph --json` lists the definitions of each document (`definitions`).
 - Command line: `textree move`, `textree delete` (plans by default, `--apply` writes,
   `--plan <file>` saves) and `textree apply`.
+- Splitting and merging: `textree split <folder> <doc> [--level N]` turns a document into a folder
+  document plus one new document per section (`--level` defaults to 2), and
+  `textree merge <folder> <into> <from>...` appends documents to another one as sections, with their
+  headings one level deeper. Both are planned like any change set (`--apply`, `--plan`, the budget
+  options) and committed whole or not at all. Links keep their meaning: a link to a section follows
+  the section, a link to a document that was merged goes to the section it became, a name that
+  would now mean another document is written as a path, and links that were broken stay as they
+  were. Same-document anchors that now cross documents become links. Nothing but links and the
+  declared structure (the list of sections, a section title, a heading's level) changes; refused
+  when text would be lost or changed (front matter of a merged document, a footnote that crosses
+  sections, reference definitions that disagree, a heading that would pass level 6, a name that is
+  already taken).
+- Heading anchors follow the rule of the common slug algorithm (github-slugger 2.x: lower case, keep
+  letters, marks, numbers, `_`, `-` and spaces, spaces become `-`, repeated anchors get `-1`, `-2`).
+  A link fragment names a heading by its anchor or by its text; a heading that reads the same as
+  another is named by its anchor.
+- The reader exposes headings with their level, footnotes and links to a heading of the same
+  document.

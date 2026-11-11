@@ -72,7 +72,7 @@ pub fn run(folder: &str, op: Op, break_links: bool, opts: &Options) -> ExitCode 
         eprintln!("refused [I5] {why}");
         return ExitCode::from(1);
     }
-    print_plan(changes);
+    print_plan(changes, matches!(op, Op::Split { .. } | Op::Merge { .. }));
     if !opts.apply {
         println!("Dry run: nothing was written. Use --apply to write.");
         return ExitCode::SUCCESS;
@@ -165,6 +165,10 @@ fn applied_line(changes: &ChangeSet) -> String {
     if n > 0 {
         parts.push(format!("{n} {}", if n == 1 { "move" } else { "moves" }));
     }
+    let n = changes.creates.len();
+    if n > 0 {
+        parts.push(format!("{n} created"));
+    }
     let n = changes.rewrites.len();
     if n > 0 {
         parts.push(format!(
@@ -184,9 +188,24 @@ fn plural(n: usize, one: &str, many: &str) -> String {
 }
 
 /// The plan, as it is shown: what moves and goes, then which links are written differently.
-fn print_plan(changes: &ChangeSet) {
+fn print_plan(changes: &ChangeSet, restructure: bool) {
     for m in &changes.moves {
         println!("move     {} -> {}", m.from, m.to);
+    }
+    // A write that only carries rewritten links is told by its rewrites; the others say what
+    // they are made of.
+    for w in changes.writes.iter().filter(|w| w.note.is_some()) {
+        println!(
+            "write    {} ({})",
+            w.path,
+            w.note.as_deref().unwrap_or_default()
+        );
+    }
+    for c in &changes.creates {
+        match &c.note {
+            Some(note) => println!("create   {} ({note})", c.path),
+            None => println!("create   {}", c.path),
+        }
     }
     for d in &changes.deletes {
         match d.lines {
@@ -220,7 +239,11 @@ fn print_plan(changes: &ChangeSet) {
         }
         println!();
     }
-    println!("checks   content kept · links intact · no empty folders · no name clashes");
+    if restructure {
+        println!("checks   nothing disappears · links intact · no name clashes");
+    } else {
+        println!("checks   content kept · links intact · no empty folders · no name clashes");
+    }
 }
 
 fn one_line(s: &str) -> String {

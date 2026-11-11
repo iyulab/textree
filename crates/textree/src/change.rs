@@ -16,6 +16,11 @@ pub enum Op {
     Move { from: String, to: String },
     /// Delete a document, an asset or a folder with everything in it.
     Delete { path: String },
+    /// Split a document at its headings of one level: the document becomes a folder document
+    /// and each section a new document in the folder.
+    Split { path: String, level: u8 },
+    /// Merge documents into another one: each becomes a section of it and is deleted.
+    Merge { into: String, from: Vec<String> },
 }
 
 /// Limits and switches for planning.
@@ -49,6 +54,9 @@ pub struct Move {
 pub struct Write {
     pub path: String,
     pub content: String,
+    /// A line for the plan that says what this write is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
 }
 
 /// Remove a document or an asset.
@@ -84,6 +92,9 @@ pub struct ChangeSet {
     /// Every document read (and every asset moved or deleted) with the version it had.
     pub reads: Vec<ReadVersion>,
     pub moves: Vec<Move>,
+    /// New documents: paths that do not exist yet.
+    #[serde(default)]
+    pub creates: Vec<Write>,
     pub writes: Vec<Write>,
     pub deletes: Vec<Delete>,
     /// Folders that the change leaves empty; a store removes them when they really are.
@@ -95,6 +106,7 @@ impl ChangeSet {
     /// Nothing to do.
     pub fn is_empty(&self) -> bool {
         self.moves.is_empty()
+            && self.creates.is_empty()
             && self.writes.is_empty()
             && self.deletes.is_empty()
             && self.remove_folders.is_empty()
@@ -196,6 +208,7 @@ pub fn validate_paths(changes: &ChangeSet) -> Result<(), String> {
         all.push(&m.to);
     }
     all.extend(changes.writes.iter().map(|w| w.path.as_str()));
+    all.extend(changes.creates.iter().map(|w| w.path.as_str()));
     all.extend(changes.deletes.iter().map(|d| d.path.as_str()));
     all.extend(changes.remove_folders.iter().map(String::as_str));
     all.extend(changes.rewrites.iter().map(|r| r.path.as_str()));

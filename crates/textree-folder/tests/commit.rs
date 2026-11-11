@@ -356,10 +356,141 @@ fn nothing_is_written_through_a_symbolic_link() {
     forged.writes.push(textree::Write {
         path: "lnk/victim.md".into(),
         content: "PWNED".into(),
+        note: None,
     });
     assert!(matches!(
         store.commit(&forged),
         Err(CommitError::Invalid(_))
     ));
     assert!(!outside.path().join("victim.md").exists());
+}
+
+fn plan_split(root: &Path, path: &str, level: u8) -> ChangeSet {
+    let store = FolderStore::open(root).unwrap();
+    plan(
+        &Snapshot::read(&store),
+        &Op::Split {
+            path: path.into(),
+            level,
+        },
+        &Policy::default(),
+    )
+    .unwrap()
+    .changes
+}
+
+fn trip(s: &Scratch) {
+    s.file(
+        "notes/trip.md",
+        "# Trip\n\nIntro [[sleep]].\n\n## Day 1\n\nWalk [[sleep]].\n\n## Day 2\n\nRest.\n",
+    )
+    .file("notes/sleep.md", "z\n")
+    .file("index.md", "[t](notes/trip.md#day-2) [[trip#Day 1]]\n");
+}
+
+#[test]
+fn a_failure_while_splitting_puts_everything_back() {
+    let reference = Scratch::new();
+    trip(&reference);
+    let want = snapshot(reference.path());
+    let mut failures = 0;
+    for n in 1..=60 {
+        let s = Scratch::new();
+        trip(&s);
+        let cs = plan_split(s.path(), "notes/trip.md", 2);
+        assert_eq!(cs.creates.len(), 2);
+        let store = FolderStore::open(s.path()).unwrap().with_failure_at(n);
+        match store.commit(&cs) {
+            Err(CommitError::Failed { message, .. }) => {
+                failures += 1;
+                assert!(
+                    message.contains("everything was put back"),
+                    "step {n}: {message}"
+                );
+                assert_eq!(
+                    snapshot(s.path()),
+                    want,
+                    "failure at step {n} left the folder changed (a created file or folder, or a \
+                     temporary trace)"
+                );
+            }
+            Ok(_) => {
+                let (files, _) = snapshot(s.path());
+                assert!(files.contains_key("notes/trip/day-1.md"));
+                assert!(!files.contains_key("notes/trip.md"));
+                break;
+            }
+            Err(other) => panic!("step {n}: {other:?}"),
+        }
+    }
+    assert!(failures >= 8, "only {failures} steps could be made to fail");
+}
+
+#[test]
+fn a_created_document_never_replaces_a_file_that_appeared_after_the_plan() {
+    let s = Scratch::new();
+    trip(&s);
+    let cs = plan_split(s.path(), "notes/trip.md", 2);
+    // Someone creates the file the plan was going to create. The listing changes too, so the
+    // plan is stale; either way nothing may be overwritten.
+    s.file("notes/trip/day-1.md", "theirs\n");
+    let store = FolderStore::open(s.path()).unwrap();
+    let outcome = store.commit(&cs);
+    assert!(
+        matches!(
+            outcome,
+            Err(CommitError::Stale(_)) | Err(CommitError::Conflict(_))
+        ),
+        "{outcome:?}"
+    );
+    assert_eq!(
+        fs::read_to_string(s.path().join("notes/trip/day-1.md")).unwrap(),
+        "theirs\n"
+    );
+    assert!(s.path().join("notes/trip.md").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn a_create_over_a_name_the_listing_cannot_see_is_a_conflict_not_an_overwrite() {
+    // A dangling link is not a document, so it cannot make the plan stale; the commit itself
+    // has to refuse to write through or over it.
+    let s = Scratch::new();
+    s.file("a.md", "# A\n\n## One\n\n1\n");
+    let cs = plan_split(s.path(), "a.md", 2);
+    fs::create_dir_all(s.path().join("a")).unwrap();
+    std::os::unix::fs::symlink("nowhere.md", s.path().join("a/one.md")).unwrap();
+    let store = FolderStore::open(s.path()).unwrap();
+    let outcome = store.commit(&cs);
+    assert!(
+        matches!(
+            outcome,
+            Err(CommitError::Conflict(_)) | Err(CommitError::Stale(_))
+        ),
+        "{outcome:?}"
+    );
+    assert!(!s.path().join("nowhere.md").exists());
+    assert!(s.path().join("a.md").exists());
+}
+
+#[test]
+fn a_forged_create_may_not_leave_the_folder() {
+    let s = Scratch::new();
+    s.file("a.md", "# A\n");
+    let outside = Scratch::new();
+    let store = FolderStore::open(s.path()).unwrap();
+    let mut cs = plan_move(s.path(), "a.md", "b.md");
+    for bad in ["../escape.md", "/abs.md", ".hidden/x.md", "ok/../../x.md"] {
+        cs.creates = vec![textree::Write {
+            path: bad.into(),
+            content: "PWNED".into(),
+            note: None,
+        }];
+        assert!(
+            matches!(store.commit(&cs), Err(CommitError::Invalid(_))),
+            "{bad}"
+        );
+    }
+    assert!(!outside.path().join("escape.md").exists());
+    assert!(s.path().join("a.md").exists());
 }

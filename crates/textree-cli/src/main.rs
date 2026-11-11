@@ -4,6 +4,8 @@
 //! * `textree check <folder>` — list broken links; the exit code is 1 when there are any.
 //! * `textree move <folder> <from> <to>` and `textree delete <folder> <path>` — plan a change
 //!   (and with `--apply` make it); links are rewritten so that they keep meaning what they meant.
+//! * `textree split <folder> <doc>` and `textree merge <folder> <into> <from>...` — turn one
+//!   document into a folder of documents, one per section, or the other way round.
 //! * `textree apply <folder> <plan>` — apply a plan that was saved with `--plan`.
 //!
 //! This is an observation and test tool, not a published product.
@@ -64,6 +66,30 @@ enum Command {
         /// Allow links to the deleted things to be left pointing at nothing
         #[arg(long)]
         break_links: bool,
+        #[command(flatten)]
+        opts: edit::Options,
+    },
+    /// Split a document into a folder of documents, one per section; shows the plan, writes with --apply
+    Split {
+        /// The folder to work in
+        folder: String,
+        /// The document to split, relative to the folder
+        path: String,
+        /// The heading level to split at
+        #[arg(long, default_value_t = 2, value_name = "N")]
+        level: u8,
+        #[command(flatten)]
+        opts: edit::Options,
+    },
+    /// Merge documents into another one as sections; shows the plan, writes with --apply
+    Merge {
+        /// The folder to work in
+        folder: String,
+        /// The document that receives the others
+        into: String,
+        /// The documents to merge in, in the order of their sections
+        #[arg(required = true)]
+        from: Vec<String>,
         #[command(flatten)]
         opts: edit::Options,
     },
@@ -128,6 +154,18 @@ fn main() -> ExitCode {
             break_links,
             opts,
         } => edit::run(&folder, textree::Op::Delete { path }, break_links, &opts),
+        Command::Split {
+            folder,
+            path,
+            level,
+            opts,
+        } => edit::run(&folder, textree::Op::Split { path, level }, false, &opts),
+        Command::Merge {
+            folder,
+            into,
+            from,
+            opts,
+        } => edit::run(&folder, textree::Op::Merge { into, from }, false, &opts),
         Command::Apply { folder, plan } => edit::apply_saved(&folder, &plan),
     }
 }
