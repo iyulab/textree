@@ -306,3 +306,60 @@ fn a_rename_that_only_changes_case_leaves_the_new_spelling_on_disk() {
     );
     assert_eq!(files["ref.md"], b"[a](note.md) [[Note]]\n");
 }
+
+#[test]
+fn a_failed_verification_puts_everything_back() {
+    let s = Scratch::new();
+    busy(&s);
+    let want = snapshot(s.path());
+    let cs = plan_move(s.path(), "projects/garden", "archive/yard");
+    let store = FolderStore::open(s.path()).unwrap();
+    let err = store
+        .commit_checked(&cs, &|_| {
+            Err("the folder is not what the plan said".to_string())
+        })
+        .unwrap_err();
+    match err {
+        CommitError::Failed { message, .. } => {
+            assert!(message.contains("not what the plan said"), "{message}");
+            assert!(message.contains("put back"), "{message}");
+        }
+        other => panic!("{other:?}"),
+    }
+    assert_eq!(snapshot(s.path()), want);
+    // And a verification that agrees lets it through.
+    store.commit_checked(&cs, &|_| Ok(())).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn nothing_is_written_through_a_symbolic_link() {
+    let outside = Scratch::new();
+    let s = Scratch::new();
+    busy(&s);
+    std::os::unix::fs::symlink(outside.path(), s.path().join("lnk")).unwrap();
+    let store = FolderStore::open(s.path()).unwrap();
+
+    // A plan that moves into the linked folder.
+    let cs = plan_move(s.path(), "solo/only.md", "lnk/only.md");
+    let err = store.preflight(&cs).unwrap_err();
+    assert!(
+        matches!(&err, CommitError::Invalid(why) if why.contains("symbolic link")),
+        "{err:?}"
+    );
+    assert!(matches!(store.commit(&cs), Err(CommitError::Invalid(_))));
+    assert!(s.path().join("solo/only.md").exists());
+    assert!(!outside.path().join("only.md").exists());
+
+    // A hand-edited plan that writes through it.
+    let mut forged = plan_move(s.path(), "solo/only.md", "solo/other.md");
+    forged.writes.push(textree::Write {
+        path: "lnk/victim.md".into(),
+        content: "PWNED".into(),
+    });
+    assert!(matches!(
+        store.commit(&forged),
+        Err(CommitError::Invalid(_))
+    ));
+    assert!(!outside.path().join("victim.md").exists());
+}

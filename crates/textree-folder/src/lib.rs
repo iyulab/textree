@@ -148,8 +148,26 @@ impl ReadPort for FolderStore {
     }
 }
 
+impl FolderStore {
+    /// Everything that can be told about a change set without changing the folder: it is well
+    /// formed, stays inside the folder and goes through no symbolic link.
+    pub fn preflight(&self, changes: &ChangeSet) -> Result<(), CommitError> {
+        commit::preflight(self, changes)
+    }
+
+    /// Like [`WritePort::commit`], and `verify` looks at the folder after the changes are made
+    /// but before they are final: if it says no, everything is put back.
+    pub fn commit_checked(
+        &self,
+        changes: &ChangeSet,
+        verify: &dyn Fn(&FolderStore) -> Result<(), String>,
+    ) -> Result<usize, CommitError> {
+        commit::commit(self, changes, Some(verify))
+    }
+}
+
 impl WritePort for FolderStore {
     fn commit(&self, changes: &ChangeSet) -> Result<usize, CommitError> {
-        commit::commit(self, changes)
+        commit::commit(self, changes, None)
     }
 }

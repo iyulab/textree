@@ -34,9 +34,12 @@ Entries describe changes in Textree's own terms — never in terms of a particul
   rewritten, and nothing else in a document changes by a byte. A folder that is renamed takes its
   folder document (`name/name.md`) along; relative links that leave the root keep pointing at the
   same place; links that were already broken are left as they were.
+- A change is refused when its destination has a hidden (dot-prefixed) piece, since hidden names
+  are never read, or goes through a symbolic link, which could lead out of the folder. A change
+  that the folder does not match once it is written is undone.
 - A write port (`WritePort`) and a folder implementation: a change set is committed whole or not
   at all, refused when what it was planned against has changed, and undone when a step fails.
 - Read results keep the byte span of every link destination, wiki link name and reference
-  definition.
+  definition; `graph --json` lists the definitions of each document (`definitions`).
 - Command line: `textree move`, `textree delete` (plans by default, `--apply` writes,
   `--plan <file>` saves) and `textree apply`.

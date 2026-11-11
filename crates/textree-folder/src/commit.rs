@@ -99,7 +99,6 @@ impl Run<'_> {
             if let Ok(meta) = fs::metadata(path) {
                 let _ = fs::set_permissions(&tmp, meta.permissions());
             }
-            
         });
         if let Err(e) = written {
             let _ = fs::remove_file(&tmp);
@@ -159,7 +158,27 @@ fn under(root: &Path, rel: &str) -> PathBuf {
     p
 }
 
-pub(crate) fn commit(store: &FolderStore, changes: &ChangeSet) -> Result<usize, CommitError> {
+/// A check of the folder after the changes were made, before they are final.
+pub(crate) type Verify<'a> = &'a dyn Fn(&FolderStore) -> Result<(), String>;
+
+/// Whether a path goes through a symbolic link on its way down (the last piece may be one).
+fn goes_through_symlink(root: &Path, rel: &str) -> bool {
+    let pieces: Vec<&str> = rel.split('/').collect();
+    let mut cur = root.to_path_buf();
+    for piece in &pieces[..pieces.len().saturating_sub(1)] {
+        cur.push(piece);
+        if let Ok(meta) = fs::symlink_metadata(&cur) {
+            if meta.file_type().is_symlink() {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// What can be told about a change set without changing anything: it is well formed, every
+/// path stays inside the root and none goes through a symbolic link (which could lead out).
+pub(crate) fn preflight(store: &FolderStore, changes: &ChangeSet) -> Result<(), CommitError> {
     if changes.version != 1 {
         return Err(CommitError::Invalid(format!(
             "unknown change set version {}",
@@ -167,6 +186,30 @@ pub(crate) fn commit(store: &FolderStore, changes: &ChangeSet) -> Result<usize, 
         )));
     }
     validate_paths(changes).map_err(CommitError::Invalid)?;
+    let mut paths: Vec<&str> = Vec::new();
+    for m in &changes.moves {
+        paths.push(&m.from);
+        paths.push(&m.to);
+    }
+    paths.extend(changes.writes.iter().map(|w| w.path.as_str()));
+    paths.extend(changes.deletes.iter().map(|d| d.path.as_str()));
+    paths.extend(changes.remove_folders.iter().map(String::as_str));
+    for p in paths {
+        if goes_through_symlink(&store.root, p) {
+            return Err(CommitError::Invalid(format!(
+                "{p}: goes through a symbolic link"
+            )));
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn commit(
+    store: &FolderStore,
+    changes: &ChangeSet,
+    verify: Option<Verify<'_>>,
+) -> Result<usize, CommitError> {
+    preflight(store, changes)?;
 
     // Stale? Nothing may have changed since the plan was made.
     let listing = store.list();
@@ -217,7 +260,10 @@ pub(crate) fn commit(store: &FolderStore, changes: &ChangeSet) -> Result<usize, 
         set_aside: Vec::new(),
         unique: 0,
     };
-    let outcome = apply(&mut run, store, changes);
+    let outcome = apply(&mut run, store, changes).and_then(|()| match verify {
+        Some(check) => check(store).map_err(|why| (String::new(), io::Error::other(why))),
+        None => Ok(()),
+    });
     match outcome {
         Ok(()) => {
             for hidden in &run.set_aside {

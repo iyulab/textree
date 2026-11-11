@@ -67,23 +67,28 @@ pub fn run(folder: &str, op: Op, break_links: bool, opts: &Options) -> ExitCode 
             return usage(format!("{file}: {e}"));
         }
     }
+    // The disk can say no where the plan cannot: a destination behind a symbolic link.
+    if let Err(CommitError::Invalid(why)) = store.preflight(changes) {
+        eprintln!("refused [I5] {why}");
+        return ExitCode::from(1);
+    }
     print_plan(changes);
     if !opts.apply {
         println!("Dry run: nothing was written. Use --apply to write.");
         return ExitCode::SUCCESS;
     }
-    match store.commit(changes) {
+    // After writing, and before it is final, the folder has to be what the plan said it would
+    // be; if it is not, everything is put back.
+    let verify = |s: &FolderStore| -> Result<(), String> {
+        if same_links(&planned.expected, &build_graph(s)) {
+            Ok(())
+        } else {
+            Err("the folder after writing does not match the plan".to_string())
+        }
+    };
+    match store.commit_checked(changes, &verify) {
         Ok(_) => {}
         Err(e) => return report_commit_error(e),
-    }
-    // Read the folder again: it has to be what the plan said it would be.
-    let after = match FolderStore::open(folder) {
-        Ok(s) => build_graph(&s),
-        Err(message) => return usage(message),
-    };
-    if !same_links(&planned.expected, &after) {
-        eprintln!("error: the folder after writing does not match the plan; check it with git or a backup");
-        return ExitCode::from(1);
     }
     println!("{}", applied_line(changes));
     ExitCode::SUCCESS
@@ -131,7 +136,11 @@ fn report_commit_error(e: CommitError) -> ExitCode {
             ExitCode::from(1)
         }
         CommitError::Failed { path, message } => {
-            eprintln!("failed at {path}: {message}");
+            if path.is_empty() {
+                eprintln!("error: {message}");
+            } else {
+                eprintln!("failed at {path}: {message}");
+            }
             ExitCode::from(1)
         }
     }
@@ -196,8 +205,13 @@ fn print_plan(changes: &ChangeSet) {
             plural(changes.rewrites.len(), "link", "links"),
             plural(docs.len(), "document", "documents")
         );
+        let mut last: Option<(&str, usize)> = None;
         for r in &changes.rewrites {
-            println!("  {}:{}", r.path, r.line);
+            // Several rewrites on one line share one heading.
+            if last != Some((r.path.as_str(), r.line)) {
+                println!("  {}:{}", r.path, r.line);
+                last = Some((r.path.as_str(), r.line));
+            }
             println!("    - {}", one_line(&r.before));
             println!("    + {}", one_line(&r.after));
             if let Some(reason) = &r.reason {

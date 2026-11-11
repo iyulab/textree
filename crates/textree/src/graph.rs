@@ -26,6 +26,15 @@ pub enum LinkKind {
     PathAsset,
 }
 
+/// A reference definition (`[label]: destination`) of a document.
+#[derive(Clone, Debug, Serialize)]
+pub struct Definition {
+    pub label: String,
+    pub target: String,
+    pub range: Range,
+    pub line: usize,
+}
+
 /// What was read from one document.
 #[derive(Clone, Debug, Serialize)]
 pub struct DocumentInfo {
@@ -33,6 +42,9 @@ pub struct DocumentInfo {
     pub version: String,
     pub headings: Vec<Heading>,
     pub tags: Vec<TagUse>,
+    /// Where the destinations of reference links are written.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub definitions: Vec<Definition>,
 }
 
 /// A link from a document, with what it points at (`to` is `null` when it is broken).
@@ -177,6 +189,16 @@ pub fn build_graph(port: &dyn ReadPort) -> Graph {
             version: node.version.clone(),
             headings: reading.headings,
             tags: reading.tags,
+            definitions: reading
+                .defs
+                .iter()
+                .map(|d| Definition {
+                    label: d.label.clone(),
+                    target: d.target.clone(),
+                    range: d.range,
+                    line: d.line,
+                })
+                .collect(),
         });
     }
 

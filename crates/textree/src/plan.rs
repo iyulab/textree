@@ -200,6 +200,12 @@ fn plan_move(snap: &Snapshot, from: &str, to: &str, policy: &Policy) -> Result<P
     if from_kind == NodeKind::Collection && in_subtree(to, from) {
         refuse(to, "cannot move a folder into itself");
     }
+    if to.split('/').any(|piece| piece.starts_with('.')) {
+        refuse(
+            to,
+            "a name that starts with a dot is hidden and is never read",
+        );
+    }
     match from_kind {
         NodeKind::Document if !crate::port::is_document_path(to) => {
             refuse(to, "a document must keep the .md extension")

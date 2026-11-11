@@ -584,3 +584,116 @@ fn plans_are_the_same_whatever_the_creation_order_or_working_directory() {
     );
     assert_eq!(a.state(), b.state());
 }
+
+// --- found by the evaluation ----------------------------------------------------------------
+
+#[test]
+fn a_hidden_destination_is_refused_before_anything_is_written() {
+    let s = Scratch::new();
+    s.file("idx.md", "[a](n.md) [[n]]\n").file("n.md", "n\n");
+    let before = s.state();
+    for to in [".n.md", ".d/n.md"] {
+        let (code, out, err) = run(&s, &["move", "n.md", to, "--apply"]);
+        assert_eq!(code, 1, "{to}: {out} {err}");
+        assert!(
+            err.contains("refused [I5]") && err.contains("hidden"),
+            "{err}"
+        );
+        assert!(
+            !out.contains("links intact"),
+            "the plan must not claim a good plan: {out}"
+        );
+        assert_eq!(s.state(), before, "{to}");
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn a_destination_behind_a_symbolic_link_is_refused() {
+    let outside = Scratch::new();
+    let s = Scratch::new();
+    s.file("a.md", "a\n").file("b.md", "[a](a.md)\n");
+    std::os::unix::fs::symlink(outside.path(), s.path().join("lnk")).unwrap();
+    let before = s.state();
+    let (code, out, err) = run(&s, &["move", "a.md", "lnk/a.md", "--apply"]);
+    assert_eq!(code, 1, "{out} {err}");
+    assert!(err.contains("symbolic link"), "{err}");
+    assert_eq!(s.state(), before);
+    assert!(
+        fs::read_dir(outside.path()).unwrap().next().is_none(),
+        "something left the root"
+    );
+
+    // A forged plan that goes through the link is not applied either.
+    let plan = std::env::temp_dir().join(format!("textree-forged-{}.json", std::process::id()));
+    fs::write(
+        &plan,
+        r#"{"version":1,"nodes_fingerprint":"x","reads":[],"moves":[],"writes":[{"path":"lnk/victim.md","content":"PWNED"}],"deletes":[],"remove_folders":[],"rewrites":[]}"#,
+    )
+    .unwrap();
+    let (code, _, err) = run(&s, &["apply", plan.to_str().unwrap()]);
+    let _ = fs::remove_file(&plan);
+    assert_eq!(code, 2, "{err}");
+    assert!(!outside.path().join("victim.md").exists());
+}
+
+#[test]
+fn several_rewrites_on_one_line_share_one_heading() {
+    let s = Scratch::new();
+    s.file("hub.md", "[a](t.md) [b](t.md#x) [[t]]\n")
+        .file("t.md", "t\n")
+        .file("z/z.md", "z\n");
+    let (code, out, err) = run(&s, &["move", "t.md", "z/t.md"]);
+    assert_eq!(code, 0, "{err}");
+    assert_eq!(out.matches("  hub.md:1").count(), 1, "{out}");
+    assert_eq!(out.matches("    - ").count(), 2, "{out}");
+}
+
+#[test]
+fn any_file_name_can_be_given_to_a_document_that_only_path_links_reach() {
+    for name in ["my (draft).md", "a#b.md", "x[1].md", "q?.md", "50% done.md"] {
+        let s = Scratch::new();
+        s.file("a.md", "[t](t.md) [t again](t.md#top)\n")
+            .file("t.md", "t\n");
+        let (code, out, err) = run(&s, &["move", "t.md", name, "--apply"]);
+        assert_eq!(code, 0, "{name}: {out} {err}");
+        assert_eq!(run(&s, &["check"]).0, 0, "{name}");
+    }
+}
+
+#[test]
+fn a_name_a_wiki_link_cannot_hold_is_refused_and_one_it_can_hold_is_not() {
+    // `[[my (draft)]]` is a fine wiki link.
+    let s = Scratch::new();
+    s.file("a.md", "[t](t.md) [[t]]\n").file("t.md", "t\n");
+    let (code, out, err) = run(&s, &["move", "t.md", "my (draft).md", "--apply"]);
+    assert_eq!(code, 0, "{out} {err}");
+    assert_eq!(run(&s, &["check"]).0, 0);
+    // `[[a#b]]` would mean heading `b` of `a`, and `[[x[1]]]` is not a link: refuse, change nothing.
+    for name in ["a#b.md", "x[1].md"] {
+        let s = Scratch::new();
+        s.file("a.md", "[t](t.md) [[t]]\n").file("t.md", "t\n");
+        let before = s.state();
+        let (code, _, err) = run(&s, &["move", "t.md", name, "--apply"]);
+        assert_eq!(code, 1, "{name}: {err}");
+        assert!(err.contains("refused [I2]"), "{name}: {err}");
+        assert_eq!(s.state(), before, "{name}");
+    }
+}
+
+#[test]
+fn graph_json_shows_where_reference_definitions_are() {
+    let s = Scratch::new();
+    s.file("r.md", "See [x][].\n\n[x]: n.md\n")
+        .file("n.md", "n\n");
+    let (_, out, _) = run(&s, &["graph", "--json"]);
+    let g: serde_json::Value = serde_json::from_str(&out).unwrap();
+    let r = g["documents"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|d| d["path"] == "r.md")
+        .unwrap();
+    assert_eq!(r["definitions"][0]["label"], "x");
+    assert_eq!(r["definitions"][0]["line"], 3);
+}

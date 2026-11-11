@@ -669,3 +669,81 @@ fn random_moves_never_break_or_retarget_a_link() {
         }
     }
 }
+
+// --- found by the evaluation: hidden destinations and names with special characters ------------
+
+#[test]
+fn a_destination_with_a_hidden_piece_is_refused() {
+    let f = files(&[
+        ("idx.md", "[a](n.md) [[n]]\n"),
+        ("n.md", "n\n"),
+        ("f/x.md", "x\n"),
+    ]);
+    for to in [".n.md", ".d/n.md", "d/.n.md"] {
+        let v = refused(move_err(&f, "n.md", to));
+        assert_eq!(v[0].invariant, "I5", "{to}");
+        assert!(v[0].message.contains("hidden"), "{to}: {}", v[0].message);
+    }
+    let v = refused(move_err(&f, "f", ".f"));
+    assert!(v[0].message.contains("hidden"));
+}
+
+#[test]
+fn names_with_special_characters_keep_their_links() {
+    for name in [
+        "my (draft).md",
+        "a#b.md",
+        "q?.md",
+        "x[1].md",
+        "p|q.md",
+        "back`tick.md",
+        "50% done.md",
+        "angle brackets.md",
+    ] {
+        let before = files(&[
+            ("a.md", "see [a](t.md) and ![i](pic.png) and <u>\n"),
+            ("t.md", "t\n"),
+            ("sub/b.md", "[b](../t.md#top)\n"),
+        ]);
+        let mut before = before;
+        before.insert("pic.png".into(), PNG.to_vec());
+        match move_err(&before, "t.md", name) {
+            Ok(p) => {
+                let after = apply(&before, &p.changes);
+                let g = build_graph(&store(&after));
+                assert!(g.broken.is_empty(), "{name}: {:?}", g.broken);
+                assert_eq!(
+                    g.links
+                        .iter()
+                        .filter(|l| l.to.as_deref() == Some(name))
+                        .count(),
+                    2,
+                    "{name}"
+                );
+            }
+            // A name that a link cannot hold is refused, never half done.
+            Err(PlanError::Refused(v)) => assert_eq!(v[0].invariant, "I2", "{name}: {v:?}"),
+            Err(e) => panic!("{name}: {e:?}"),
+        }
+    }
+}
+
+#[test]
+fn reference_definitions_are_part_of_what_is_read() {
+    let f = files(&[
+        (
+            "r.md",
+            "See [x][] and [z][w].\n\n[x]: n.md\n[w]: n.md \"t\"\n",
+        ),
+        ("n.md", "n\n"),
+    ]);
+    let g = build_graph(&store(&f));
+    let r = g.documents.iter().find(|d| d.path == "r.md").unwrap();
+    let src = text(&f, "r.md");
+    let cut: Vec<&str> = r
+        .definitions
+        .iter()
+        .map(|d| &src[d.range.start..d.range.end])
+        .collect();
+    assert_eq!(cut, vec!["[x]: n.md", "[w]: n.md \"t\""]);
+}

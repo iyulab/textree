@@ -185,7 +185,8 @@ pub fn relative_to_outside(from_dir: &str, ups: usize, pieces: &[String]) -> Str
 /// Writes a path as a link destination. Inside `< >` it is kept as is; otherwise the
 /// characters that would end or confuse a destination are written as `%XX`.
 pub fn encode_destination(path: &str, angle: bool) -> String {
-    if angle {
+    // Inside `< >` a path is kept as it is, unless it holds a character that cannot be there.
+    if angle && !path.contains(['<', '>', '\n', '\\']) {
         return path.to_string();
     }
     let mut out = String::with_capacity(path.len());
@@ -197,6 +198,14 @@ pub fn encode_destination(path: &str, angle: bool) -> String {
             '<' => out.push_str("%3C"),
             '>' => out.push_str("%3E"),
             '%' => out.push_str("%25"),
+            '#' => out.push_str("%23"),
+            '?' => out.push_str("%3F"),
+            '[' => out.push_str("%5B"),
+            ']' => out.push_str("%5D"),
+            '|' => out.push_str("%7C"),
+            '`' => out.push_str("%60"),
+            '\n' => out.push_str("%0A"),
+            '\\' => out.push_str("%5C"),
             other => out.push(other),
         }
     }
