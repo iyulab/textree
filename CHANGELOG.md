@@ -7,6 +7,15 @@ Entries describe changes in Textree's own terms — never in terms of a particul
 
 ## [Unreleased]
 
+### Changed
+
+- A tag has to start with a letter or an underscore. Written forms that start with a digit
+  (`#123`, `#1577th`, `#2024-goals`) are no longer read as tags; front matter tags are not
+  affected.
+- A wiki link that starts with a slash (`[[/name]]`) names a path from the root, so a document in
+  the root can be told apart from a nearer document with the same name.
+- A collapsed reference link (`[text][]`) now covers its trailing brackets in its text and range.
+
 ### Added
 
 - Scope and planned contracts (design stage).
@@ -19,3 +28,15 @@ Entries describe changes in Textree's own terms — never in terms of a particul
 - A command line tool (not published) to look at the result: `textree graph <folder> [--json]` and
   `textree check <folder>`, which lists broken links as `path:line` and exits with 1 when there are any.
 - A small corpus with a golden relation graph under `tests/data/corpus`.
+- Change sets: moving, renaming and deleting a document, an asset or a folder is planned as a
+  checked change set (moves, rewritten documents, deletions, folders left empty). Every link that
+  resolved still resolves to the same document; only links whose meaning would change are
+  rewritten, and nothing else in a document changes by a byte. A folder that is renamed takes its
+  folder document (`name/name.md`) along; relative links that leave the root keep pointing at the
+  same place; links that were already broken are left as they were.
+- A write port (`WritePort`) and a folder implementation: a change set is committed whole or not
+  at all, refused when what it was planned against has changed, and undone when a step fails.
+- Read results keep the byte span of every link destination, wiki link name and reference
+  definition.
+- Command line: `textree move`, `textree delete` (plans by default, `--apply` writes,
+  `--plan <file>` saves) and `textree apply`.

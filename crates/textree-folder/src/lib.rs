@@ -7,12 +7,19 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use textree::{content_version, is_document_path, Issue, Listing, Node, NodeKind, ReadPort};
+use textree::{
+    content_version, is_document_path, ChangeSet, CommitError, Issue, Listing, Node, NodeKind,
+    ReadPort, WritePort,
+};
+
+mod commit;
 
 /// A hierarchy of documents stored in a folder.
 #[derive(Clone, Debug)]
 pub struct FolderStore {
     root: PathBuf,
+    /// For tests: make the n-th step of a commit fail, to prove that a failure is undone.
+    fail_at: Option<usize>,
 }
 
 impl FolderStore {
@@ -20,10 +27,20 @@ impl FolderStore {
     pub fn open(root: impl AsRef<Path>) -> Result<Self, String> {
         let root = root.as_ref().to_path_buf();
         match fs::metadata(&root) {
-            Ok(meta) if meta.is_dir() => Ok(FolderStore { root }),
+            Ok(meta) if meta.is_dir() => Ok(FolderStore {
+                root,
+                fail_at: None,
+            }),
             Ok(_) => Err(format!("{}: not a folder", root.display())),
             Err(e) => Err(format!("{}: {e}", root.display())),
         }
+    }
+
+    /// Makes the `n`-th mutating step of every commit fail (counting from 1). For tests of the
+    /// undo path; a store used for real never sets it.
+    pub fn with_failure_at(mut self, n: usize) -> Self {
+        self.fail_at = Some(n);
+        self
     }
 
     fn walk(&self, dir: &Path, rel: &str, out: &mut Listing) {
@@ -128,5 +145,11 @@ impl ReadPort for FolderStore {
             full.push(part);
         }
         fs::read(&full).map_err(|e| e.to_string())
+    }
+}
+
+impl WritePort for FolderStore {
+    fn commit(&self, changes: &ChangeSet) -> Result<usize, CommitError> {
+        commit::commit(self, changes)
     }
 }

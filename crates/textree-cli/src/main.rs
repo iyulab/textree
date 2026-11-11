@@ -2,8 +2,13 @@
 //!
 //! * `textree graph <folder> [--json]` — documents, links, tags, broken links and orphans.
 //! * `textree check <folder>` — list broken links; the exit code is 1 when there are any.
+//! * `textree move <folder> <from> <to>` and `textree delete <folder> <path>` — plan a change
+//!   (and with `--apply` make it); links are rewritten so that they keep meaning what they meant.
+//! * `textree apply <folder> <plan>` — apply a plan that was saved with `--plan`.
 //!
 //! This is an observation and test tool, not a published product.
+
+mod edit;
 
 use std::collections::BTreeMap;
 use std::process::ExitCode;
@@ -38,6 +43,36 @@ enum Command {
     Check {
         /// The folder to read
         folder: String,
+    },
+    /// Move or rename a document, an asset or a folder; shows the plan, writes with --apply
+    Move {
+        /// The folder to work in
+        folder: String,
+        /// What to move, relative to the folder
+        from: String,
+        /// Its new full path, relative to the folder
+        to: String,
+        #[command(flatten)]
+        opts: edit::Options,
+    },
+    /// Delete a document, an asset or a folder; shows the plan, writes with --apply
+    Delete {
+        /// The folder to work in
+        folder: String,
+        /// What to delete, relative to the folder
+        path: String,
+        /// Allow links to the deleted things to be left pointing at nothing
+        #[arg(long)]
+        break_links: bool,
+        #[command(flatten)]
+        opts: edit::Options,
+    },
+    /// Apply a plan saved with --plan; refuses when the folder changed since
+    Apply {
+        /// The folder the plan was made for
+        folder: String,
+        /// The saved plan
+        plan: String,
     },
 }
 
@@ -81,6 +116,19 @@ fn main() -> ExitCode {
                 ExitCode::from(1)
             }
         }
+        Command::Move {
+            folder,
+            from,
+            to,
+            opts,
+        } => edit::run(&folder, textree::Op::Move { from, to }, false, &opts),
+        Command::Delete {
+            folder,
+            path,
+            break_links,
+            opts,
+        } => edit::run(&folder, textree::Op::Delete { path }, break_links, &opts),
+        Command::Apply { folder, plan } => edit::apply_saved(&folder, &plan),
     }
 }
 

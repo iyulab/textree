@@ -286,9 +286,9 @@ fn apply_move(snap: &Snapshot, from: &str, to: &str, from_kind: NodeKind) -> Mov
     // A folder that is renamed takes its folder document (`name/name.md`) along.
     if from_kind == NodeKind::Collection && name_of(from) != name_of(to) {
         let old_doc = format!("{from}/{}.md", name_of(from));
-        if mapping.contains_key(&old_doc) {
+        if let std::collections::hash_map::Entry::Occupied(mut e) = mapping.entry(old_doc) {
             let new_doc = format!("{to}/{}.md", name_of(to));
-            mapping.insert(old_doc, new_doc.clone());
+            e.insert(new_doc.clone());
             moves.push(Move {
                 from: format!("{to}/{}.md", name_of(from)),
                 to: new_doc,
