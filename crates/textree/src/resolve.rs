@@ -2,7 +2,8 @@
 //!
 //! * A path link is resolved against the folder of the linking document, and names exactly one
 //!   place.
-//! * A wiki link with a `/` is matched against whole paths (case-insensitive, `.md` optional).
+//! * A wiki link with a `/` (or a leading `/`, which names a document in the root) is matched
+//!   against whole paths (case-insensitive, `.md` optional).
 //! * A wiki link without a `/` is matched by name. When several documents carry that name, the
 //!   one nearest to the linking document wins: the same folder first, then the deeper shared
 //!   ancestor folder, then the shorter path, then alphabetical order. The result does not depend
@@ -112,11 +113,13 @@ impl Index {
 
     fn resolve_wiki(&self, from: &str, name: &str) -> Resolution {
         let name = name.trim().replace('\\', "/");
+        // A leading `/` anchors the name at the root: it is a path even without another `/`.
+        let rooted = name.starts_with('/');
         let lower = name.trim_matches('/').to_lowercase();
         if lower.is_empty() {
             return Resolution::Broken;
         }
-        let candidates: Vec<String> = if lower.contains('/') {
+        let candidates: Vec<String> = if lower.contains('/') || rooted {
             let mut found = self.by_lower_path.get(&lower).cloned().unwrap_or_default();
             if found.is_empty() {
                 found = self

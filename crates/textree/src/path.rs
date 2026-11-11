@@ -94,3 +94,111 @@ pub fn resolve_relative(from_dir: &str, dest: &str) -> Option<String> {
         Some(parts.join("/"))
     }
 }
+
+/// Why a path is not a path inside the root; `Ok` when it is: relative, `/`-separated, with no
+/// empty, `.` or `..` piece and none of the characters `\`, `:` or NUL.
+pub fn check_inside_root(path: &str) -> Result<(), &'static str> {
+    if path.is_empty() {
+        return Err("is empty");
+    }
+    if path.starts_with('/') {
+        return Err("is absolute");
+    }
+    for piece in path.split('/') {
+        match piece {
+            "" => return Err("has an empty piece"),
+            "." | ".." => return Err("has a . or .. piece"),
+            _ => {}
+        }
+        if piece.contains(['\\', ':', '\0']) {
+            return Err("has a piece with \\ : or NUL");
+        }
+    }
+    Ok(())
+}
+
+/// The path from the folder `from_dir` to `target`, written with `..` pieces where needed.
+pub fn relative_between(from_dir: &str, target: &str) -> String {
+    let from: Vec<&str> = if from_dir.is_empty() {
+        Vec::new()
+    } else {
+        from_dir.split('/').collect()
+    };
+    let to: Vec<&str> = target.split('/').collect();
+    let common = from
+        .iter()
+        .zip(to.iter())
+        .take_while(|(a, b)| a == b)
+        .count();
+    let mut parts: Vec<&str> = vec![".."; from.len() - common];
+    parts.extend(&to[common..]);
+    parts.join("/")
+}
+
+/// Where a relative destination that climbs out of the root points: how many levels above the
+/// root, and the pieces below that level. `None` when it stays inside the root.
+pub fn outside_location(from_dir: &str, dest: &str) -> Option<(usize, Vec<String>)> {
+    let mut stack: Vec<String> = if from_dir.is_empty() {
+        Vec::new()
+    } else {
+        from_dir.split('/').map(String::from).collect()
+    };
+    let mut ups = 0usize;
+    for piece in dest.split('/') {
+        match piece {
+            "" | "." => {}
+            ".." => {
+                if stack.pop().is_none() {
+                    ups += 1;
+                }
+            }
+            other => {
+                if ups > 0 {
+                    // Below an outside level the pieces are kept as they are.
+                }
+                stack.push(other.to_string());
+            }
+        }
+    }
+    if ups > 0 {
+        Some((ups, stack))
+    } else {
+        None
+    }
+}
+
+/// The destination that, written in the folder `from_dir`, points at the outside location.
+pub fn relative_to_outside(from_dir: &str, ups: usize, pieces: &[String]) -> String {
+    let depth = if from_dir.is_empty() {
+        0
+    } else {
+        from_dir.split('/').count()
+    };
+    let mut out = vec![".."; depth + ups].join("/");
+    for p in pieces {
+        out.push('/');
+        out.push_str(p);
+    }
+    out
+}
+
+/// Writes a path as a link destination. Inside `< >` it is kept as is; otherwise the
+/// characters that would end or confuse a destination are written as `%XX`.
+pub fn encode_destination(path: &str, angle: bool) -> String {
+    if angle {
+        return path.to_string();
+    }
+    let mut out = String::with_capacity(path.len());
+    for c in path.chars() {
+        match c {
+            ' ' => out.push_str("%20"),
+            '(' => out.push_str("%28"),
+            ')' => out.push_str("%29"),
+            '<' => out.push_str("%3C"),
+            '>' => out.push_str("%3E"),
+            '%' => out.push_str("%25"),
+            other => out.push(other),
+        }
+    }
+    out
+}

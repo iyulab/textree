@@ -56,6 +56,29 @@ pub struct RawLink {
     pub alias: Option<String>,
     pub range: Range,
     pub line: usize,
+    /// Where the name (wiki links) or the path part of the destination (path links, before any
+    /// `#heading`) sits in the source bytes. `None` when the link has no destination of its own
+    /// (a reference link takes it from its definition, see [`RefDef`]).
+    pub target_span: Option<Range>,
+    /// The destination was written inside `<` `>`.
+    pub angle: bool,
+    /// For reference links (`[text][label]`, `[label][]`, `[label]`): the normalized label.
+    pub label: Option<String>,
+}
+
+/// A reference definition: `[label]: destination "title"`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RefDef {
+    /// The normalized label (lower case, white space collapsed).
+    pub label: String,
+    /// The destination without its `#heading`.
+    pub target: String,
+    pub heading: Option<String>,
+    /// Where the path part of the destination sits in the source bytes.
+    pub target_span: Option<Range>,
+    pub angle: bool,
+    pub range: Range,
+    pub line: usize,
 }
 
 /// Everything read from one document.
@@ -64,6 +87,7 @@ pub struct Reading {
     pub headings: Vec<Heading>,
     pub tags: Vec<TagUse>,
     pub links: Vec<RawLink>,
+    pub defs: Vec<RefDef>,
 }
 
 /// Reads a document. `text` has no byte order mark; `offset` is added to every range so that
@@ -86,6 +110,7 @@ pub fn read_document(text: &str, offset: usize) -> Reading {
         last_child_end: usize,
         link_type: LinkType,
         dest: String,
+        id: String,
         start: usize,
     }
     struct HeadingFrame {
@@ -96,7 +121,13 @@ pub fn read_document(text: &str, offset: usize) -> Reading {
     let mut stack: Vec<LinkFrame> = Vec::new();
     let mut heading: Option<HeadingFrame> = None;
 
-    for (event, range) in Parser::new_ext(text, options).into_offset_iter() {
+    let parser = Parser::new_ext(text, options);
+    let defs_raw: Vec<(String, StdRange<usize>, String)> = parser
+        .reference_definitions()
+        .iter()
+        .map(|(label, def)| (label.to_string(), def.span.clone(), def.dest.to_string()))
+        .collect();
+    for (event, range) in parser.into_offset_iter() {
         // Children of a link move the end of its text; the destination starts after that.
         let is_link_end = matches!(event, Event::End(TagEnd::Link) | Event::End(TagEnd::Image));
         if !is_link_end {
@@ -108,11 +139,13 @@ pub fn read_document(text: &str, offset: usize) -> Reading {
             Event::Start(Tag::Link {
                 link_type,
                 dest_url,
+                id,
                 ..
             })
             | Event::Start(Tag::Image {
                 link_type,
                 dest_url,
+                id,
                 ..
             }) => {
                 stack.push(LinkFrame {
@@ -120,20 +153,28 @@ pub fn read_document(text: &str, offset: usize) -> Reading {
                     last_child_end: (range.start + 1).min(range.end),
                     link_type,
                     dest: dest_url.to_string(),
+                    id: id.to_string(),
                     start: range.start,
                 });
             }
             Event::End(TagEnd::Link) | Event::End(TagEnd::Image) => {
-                if let Some(frame) = stack.pop() {
+                if let Some(mut frame) = stack.pop() {
                     if let Some(parent) = stack.last_mut() {
                         parent.last_child_end =
                             parent.last_child_end.max(frame.end).min(parent.end);
                     }
+                    // A collapsed reference link `[x][]`: the parser ends the link before the `[]`.
+                    if frame.link_type == LinkType::Collapsed && text[frame.end..].starts_with("[]")
+                    {
+                        frame.end += 2;
+                    }
                     // The destination part (after the closing bracket of the text) is not prose.
+                    let mut close_at = None;
                     if let Some(close) = text[frame.last_child_end..frame.end].find(']') {
-                        let from = frame.last_child_end + close + 1;
-                        if from < frame.end {
-                            excluded.push(from..frame.end);
+                        let at = frame.last_child_end + close;
+                        close_at = Some(at);
+                        if at + 1 < frame.end {
+                            excluded.push(at + 1..frame.end);
                         }
                     }
                     let is_path = matches!(
@@ -148,6 +189,23 @@ pub fn read_document(text: &str, offset: usize) -> Reading {
                     );
                     if is_path && !frame.dest.trim().is_empty() {
                         let (target, heading) = split_fragment(frame.dest.trim());
+                        let mut target_span = None;
+                        let mut angle = false;
+                        if frame.link_type == LinkType::Inline {
+                            if let Some(at) = close_at {
+                                if text[at + 1..frame.end].starts_with('(') {
+                                    if let Some((token, a)) = dest_token(text, at + 2, frame.end) {
+                                        target_span = path_part(text, token).map(|r| Range {
+                                            start: r.start + offset,
+                                            end: r.end + offset,
+                                        });
+                                        angle = a;
+                                    }
+                                }
+                            }
+                        }
+                        let label = (frame.link_type != LinkType::Inline)
+                            .then(|| normalize_label(&frame.id));
                         links.push(RawLink {
                             syntax: Syntax::Path,
                             text: text[frame.start..frame.end].to_string(),
@@ -159,6 +217,9 @@ pub fn read_document(text: &str, offset: usize) -> Reading {
                                 end: frame.end + offset,
                             },
                             line: lines.line_of(frame.start),
+                            target_span,
+                            angle,
+                            label,
                         });
                     }
                 }
@@ -208,6 +269,36 @@ pub fn read_document(text: &str, offset: usize) -> Reading {
         }
     }
 
+    let mut defs: Vec<RefDef> = Vec::new();
+    for (label, span, dest) in defs_raw {
+        excluded.push(span.clone());
+        let Some(colon) = text[span.clone()].find("]:") else {
+            continue;
+        };
+        if dest.trim().is_empty() {
+            continue;
+        }
+        if let Some((token, angle)) = dest_token(text, span.start + colon + 2, span.end) {
+            let (target, heading) = split_fragment(dest.trim());
+            defs.push(RefDef {
+                label: normalize_label(&label),
+                target,
+                heading,
+                target_span: path_part(text, token).map(|r| Range {
+                    start: r.start + offset,
+                    end: r.end + offset,
+                }),
+                angle,
+                range: Range {
+                    start: span.start + offset,
+                    end: span.end + offset,
+                },
+                line: lines.line_of(span.start),
+            });
+        }
+    }
+    defs.sort_by_key(|d| d.range.start);
+
     let excluded = merge(excluded);
 
     // Wiki links, then tags outside code, wiki links and link destinations.
@@ -226,7 +317,71 @@ pub fn read_document(text: &str, offset: usize) -> Reading {
         headings,
         tags,
         links,
+        defs,
     }
+}
+
+/// Lower case, white space collapsed: how reference labels are compared.
+fn normalize_label(label: &str) -> String {
+    label
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
+}
+
+/// The destination token that starts at or after `from` (spaces skipped), inside `limit`.
+/// Returns the byte range of the token (without `<` `>`) and whether it was angle-bracketed.
+fn dest_token(text: &str, from: usize, limit: usize) -> Option<(StdRange<usize>, bool)> {
+    let b = text.as_bytes();
+    let limit = limit.min(b.len());
+    let mut i = from;
+    while i < limit && matches!(b[i], b' ' | b'\t' | b'\n' | b'\r') {
+        i += 1;
+    }
+    if i >= limit {
+        return None;
+    }
+    if b[i] == b'<' {
+        let start = i + 1;
+        let mut j = start;
+        while j < limit && b[j] != b'>' && b[j] != b'\n' {
+            if b[j] == b'\\' {
+                j += 1;
+            }
+            j += 1;
+        }
+        return (j < limit && b[j] == b'>').then_some((start..j, true));
+    }
+    let start = i;
+    let mut depth = 0i32;
+    while i < limit {
+        match b[i] {
+            b'\\' => {
+                i += 2;
+                continue;
+            }
+            b'(' => depth += 1,
+            b')' => {
+                if depth == 0 {
+                    break;
+                }
+                depth -= 1;
+            }
+            b' ' | b'\t' | b'\n' | b'\r' => break,
+            _ => {}
+        }
+        i += 1;
+    }
+    let end = i.min(limit);
+    (end > start).then_some((start..end, false))
+}
+
+/// The part of a destination token before any `#heading`; `None` when that part is empty.
+fn path_part(text: &str, token: StdRange<usize>) -> Option<StdRange<usize>> {
+    let raw = &text[token.clone()];
+    let end = raw.find('#').map_or(token.end, |h| token.start + h);
+    (end > token.start).then_some(token.start..end)
 }
 
 fn split_fragment(dest: &str) -> (String, Option<String>) {
@@ -326,7 +481,7 @@ fn scan_wiki(
                 let link_start = if embed { i - 1 } else { i };
                 let link_end = j + 2;
                 consumed.push(link_start..link_end);
-                if let Some((target, heading, alias)) = parse_wiki(&text[start..j]) {
+                if let Some((name_at, target, heading, alias)) = parse_wiki(&text[start..j]) {
                     links.push(RawLink {
                         syntax: if embed { Syntax::Embed } else { Syntax::Wiki },
                         text: text[link_start..link_end].to_string(),
@@ -338,6 +493,12 @@ fn scan_wiki(
                             end: link_end + offset,
                         },
                         line: lines.line_of(link_start),
+                        target_span: Some(Range {
+                            start: start + name_at.start + offset,
+                            end: start + name_at.end + offset,
+                        }),
+                        angle: false,
+                        label: None,
                     });
                 }
                 i = link_end;
@@ -350,7 +511,8 @@ fn scan_wiki(
 
 /// Splits the inside of `[[ ]]` into name, heading and alias. A link that only points at a
 /// heading of its own document (`[[#heading]]`) has no name and is not a relation.
-fn parse_wiki(inner: &str) -> Option<(String, Option<String>, Option<String>)> {
+#[allow(clippy::type_complexity)]
+fn parse_wiki(inner: &str) -> Option<(StdRange<usize>, String, Option<String>, Option<String>)> {
     let (target_part, alias) = match inner.find('|') {
         Some(bar) => {
             let alias = inner[bar + 1..].trim();
@@ -380,11 +542,17 @@ fn parse_wiki(inner: &str) -> Option<(String, Option<String>, Option<String>)> {
         }
         None => (target_part, None),
     };
-    let name = name.trim();
-    if name.is_empty() {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
         None
     } else {
-        Some((name.to_string(), heading, alias))
+        let lead = name.len() - name.trim_start().len();
+        Some((
+            lead..lead + trimmed.len(),
+            trimmed.to_string(),
+            heading,
+            alias,
+        ))
     }
 }
 
@@ -426,9 +594,8 @@ fn scan_tags(
         let first_ok = name
             .chars()
             .next()
-            .is_some_and(|ch| ch.is_alphanumeric() || ch == '_');
-        let has_letter = name.chars().any(|ch| !ch.is_ascii_digit());
-        if first_ok && has_letter {
+            .is_some_and(|ch| ch.is_alphabetic() || ch == '_');
+        if first_ok {
             tags.push(TagUse {
                 tag: name.to_string(),
                 range: Range {
