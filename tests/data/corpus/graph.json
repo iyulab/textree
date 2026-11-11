@@ -1,0 +1,96 @@
+{
+  "rule": "A wiki link with a bare name goes to the nearest document of that name: the same folder first, then the deeper shared ancestor folder, then the shorter path, then alphabetical order.",
+  "links": [
+    {
+      "from": "projects/projects.md",
+      "link": "[[garden]]",
+      "to": "projects/garden/garden.md",
+      "kind": "wiki"
+    },
+    {
+      "from": "projects/garden/garden.md",
+      "link": "[[soil]]",
+      "to": "projects/garden/soil.md",
+      "kind": "wiki",
+      "note": "two notes named soil: the one beside the link wins (same folder)"
+    },
+    {
+      "from": "projects/garden/garden.md",
+      "link": "[[watering]]",
+      "to": "projects/garden/watering.md",
+      "kind": "wiki"
+    },
+    {
+      "from": "projects/garden/garden.md",
+      "link": "[schedule](watering.md#schedule)",
+      "to": "projects/garden/watering.md",
+      "heading": "schedule",
+      "kind": "path"
+    },
+    {
+      "from": "projects/garden/garden.md",
+      "link": "![beds](assets/beds.png)",
+      "to": "projects/garden/assets/beds.png",
+      "kind": "path-asset"
+    },
+    {
+      "from": "reading/books.md",
+      "link": "[[notes-on-habits]]",
+      "to": "reading/notes-on-habits.md",
+      "kind": "wiki"
+    }
+  ],
+  "not_links": [
+    {
+      "in": "projects/garden/garden.md",
+      "text": "[[not a link]]",
+      "why": "inline code"
+    },
+    {
+      "in": "projects/garden/garden.md",
+      "text": "[[also not a link]]",
+      "why": "fenced block"
+    }
+  ],
+  "tags": {
+    "garden": [
+      "projects/garden/garden.md",
+      "projects/garden/soil.md",
+      "reading/books.md"
+    ],
+    "soil": [
+      "projects/garden/soil.md"
+    ],
+    "reading": [
+      "reading/books.md",
+      "reading/notes-on-habits.md"
+    ]
+  },
+  "not_tags": [
+    {
+      "in": "projects/garden/garden.md",
+      "text": "#not-a-tag",
+      "why": "fenced block"
+    }
+  ],
+  "backlinks": {
+    "projects/garden/garden.md": [
+      "projects/projects.md"
+    ],
+    "projects/garden/watering.md": [
+      "projects/garden/garden.md"
+    ],
+    "projects/garden/soil.md": [
+      "projects/garden/garden.md"
+    ],
+    "reading/notes-on-habits.md": [
+      "reading/books.md"
+    ]
+  },
+  "orphans": [
+    "archive/2025/soil.md",
+    "inbox.md",
+    "reading/books.md"
+  ],
+  "broken": []
+}

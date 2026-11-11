@@ -1,0 +1,14 @@
+[package]
+name = "textree-folder"
+description = "A read port for Textree that reads a hierarchy of Markdown documents from a folder on disk."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+textree = { path = "../textree" }
+
+[dev-dependencies]
+serde_json.workspace = true

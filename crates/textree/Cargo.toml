@@ -1,0 +1,15 @@
+[package]
+name = "textree"
+description = "A deterministic engine for hierarchical Markdown: links, backlinks, tags and a relation graph."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+pulldown-cmark.workspace = true
+serde.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true

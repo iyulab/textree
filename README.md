@@ -8,7 +8,16 @@ itself should be reorganized; then it checks the result before anything is store
 Textree does not do storage. A consumer tells it how to read the hierarchy and how to commit a change set; the
 storage behind that may be a folder on disk, a network share or a database.
 
-> **Status: design.** No release yet. The contracts below are the plan, not a published API.
+> **Status: early.** Reading Markdown and the relation graph work and can be tried from a checkout (below);
+> nothing is released yet. The rest of the contracts below are the plan, not a published API.
+
+## Try it
+
+```sh
+cargo run --release -p textree-cli -- graph path/to/notes          # documents, links, tags, orphans
+cargo run --release -p textree-cli -- graph path/to/notes --json   # the full graph, with byte ranges
+cargo run --release -p textree-cli -- check path/to/notes          # broken links as path:line; exit 1 if any
+```
 
 ## What it holds
 

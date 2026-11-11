@@ -1,0 +1,19 @@
+[package]
+name = "textree-cli"
+description = "Command line tool to look at what Textree reads from a folder of Markdown documents."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish = false
+
+[[bin]]
+name = "textree"
+path = "src/main.rs"
+
+[dependencies]
+textree = { path = "../textree" }
+textree-folder = { path = "../textree-folder" }
+clap.workspace = true
+serde_json.workspace = true
