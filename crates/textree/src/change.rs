@@ -10,7 +10,10 @@ use serde::{Deserialize, Serialize};
 use crate::port::{content_version, Node, NodeKind};
 
 /// Something that can be done to a hierarchy.
-#[derive(Clone, Debug, PartialEq, Eq)]
+///
+/// In JSON an operation is an object with an `op` field: `{"op": "move", "from": …, "to": …}`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "op", rename_all = "snake_case")]
 pub enum Op {
     /// Move or rename a document, an asset or a folder. `to` is the new full path.
     Move { from: String, to: String },
@@ -24,14 +27,17 @@ pub enum Op {
 }
 
 /// Limits and switches for planning.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Policy {
+    /// Allow a delete that leaves links pointing at nothing.
+    #[serde(default)]
+    pub break_links: bool,
     /// The most nodes a change may touch (the named node plus the documents it rewrites).
+    #[serde(default)]
     pub max_touched: Option<usize>,
     /// The most bytes of link text a change may rewrite.
+    #[serde(default, rename = "max_bytes")]
     pub max_changed_bytes: Option<usize>,
-    /// Allow a delete that leaves links pointing at nothing.
-    pub break_links: bool,
 }
 
 /// A version a change set depends on.
@@ -85,7 +91,16 @@ pub struct Rewrite {
 /// A planned change to a hierarchy, checked and ready to commit.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ChangeSet {
+    /// The format: 2. (Version 1 plans carried no operations.)
     pub version: u32,
+    /// The operations this plan was made from. A plan that came from outside is applied only
+    /// when these operations, planned again on the current hierarchy, give the same plan.
+    #[serde(default)]
+    pub ops: Vec<Op>,
+    /// The policy the operations were planned under. `break_links` is recorded only when the
+    /// plan does leave a link broken.
+    #[serde(default)]
+    pub policy: Policy,
     /// Identifies the set of nodes the plan was made against; a store refuses the plan when
     /// documents were added or removed since (a new document can change what a name means).
     pub nodes_fingerprint: String,
@@ -190,6 +205,35 @@ impl fmt::Display for CommitError {
             CommitError::Failed { path, message } => write!(f, "failed at {path}: {message}"),
         }
     }
+}
+
+/// The paths a change set depends on that changed since it was made: documents read at another
+/// version, or any document when the set of nodes is not what it was.
+pub fn stale_paths(nodes: &[Node], changes: &ChangeSet) -> Vec<String> {
+    let mut stale: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    let current: std::collections::HashMap<&str, &Node> =
+        nodes.iter().map(|n| (n.path.as_str(), n)).collect();
+    for read in &changes.reads {
+        match current.get(read.path.as_str()) {
+            Some(n) if n.version == read.version => {}
+            _ => {
+                stale.insert(read.path.clone());
+            }
+        }
+    }
+    if nodes_fingerprint(nodes) != changes.nodes_fingerprint {
+        let read: std::collections::BTreeSet<&str> =
+            changes.reads.iter().map(|r| r.path.as_str()).collect();
+        for n in nodes {
+            if n.kind == NodeKind::Document && !read.contains(n.path.as_str()) {
+                stale.insert(n.path.clone());
+            }
+        }
+        if stale.is_empty() {
+            stale.insert("(the set of files has changed)".to_string());
+        }
+    }
+    stale.into_iter().collect()
 }
 
 /// A store that can take a change set. All of it or none of it.

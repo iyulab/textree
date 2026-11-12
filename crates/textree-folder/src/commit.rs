@@ -4,12 +4,11 @@
 //! played backwards and the folder is as it was. Deleted files are first set aside under a
 //! hidden name and only removed for good once everything else has gone through.
 
-use std::collections::BTreeSet;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use textree::{nodes_fingerprint, validate_paths, ChangeSet, CommitError, NodeKind, ReadPort};
+use textree::{validate_paths, ChangeSet, CommitError, ReadPort};
 
 use crate::FolderStore;
 
@@ -198,7 +197,7 @@ fn goes_through_symlink(root: &Path, rel: &str) -> bool {
 /// What can be told about a change set without changing anything: it is well formed, every
 /// path stays inside the root and none goes through a symbolic link (which could lead out).
 pub(crate) fn preflight(store: &FolderStore, changes: &ChangeSet) -> Result<(), CommitError> {
-    if changes.version != 1 {
+    if changes.version != 1 && changes.version != 2 {
         return Err(CommitError::Invalid(format!(
             "unknown change set version {}",
             changes.version
@@ -233,30 +232,9 @@ pub(crate) fn commit(
 
     // Stale? Nothing may have changed since the plan was made.
     let listing = store.list();
-    let mut stale: BTreeSet<String> = BTreeSet::new();
-    let current: std::collections::HashMap<&str, &textree::Node> =
-        listing.nodes.iter().map(|n| (n.path.as_str(), n)).collect();
-    for read in &changes.reads {
-        match current.get(read.path.as_str()) {
-            Some(n) if n.version == read.version => {}
-            _ => {
-                stale.insert(read.path.clone());
-            }
-        }
-    }
-    if nodes_fingerprint(&listing.nodes) != changes.nodes_fingerprint {
-        let read: BTreeSet<&str> = changes.reads.iter().map(|r| r.path.as_str()).collect();
-        for n in &listing.nodes {
-            if n.kind == NodeKind::Document && !read.contains(n.path.as_str()) {
-                stale.insert(n.path.clone());
-            }
-        }
-        if stale.is_empty() {
-            stale.insert("(the set of files has changed)".to_string());
-        }
-    }
+    let stale = textree::stale_paths(&listing.nodes, changes);
     if !stale.is_empty() {
-        return Err(CommitError::Stale(stale.into_iter().collect()));
+        return Err(CommitError::Stale(stale));
     }
 
     // A destination that is taken is a conflict, never an overwrite.

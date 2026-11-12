@@ -144,10 +144,76 @@ pub fn plan(snapshot: &Snapshot, op: &Op, policy: &Policy) -> Result<Plan, PlanE
     if !v.is_empty() {
         return Err(PlanError::Refused(v));
     }
+    let mut planned = plan_op(snapshot, op, policy)?;
+    // The plan records the policy it relies on: `break_links` only when it does leave a link
+    // broken, so a plan cannot be made to claim a permission it never needed.
+    let mut recorded = policy.clone();
+    if policy.break_links {
+        let strict = Policy {
+            break_links: false,
+            ..policy.clone()
+        };
+        recorded.break_links = plan_op(snapshot, op, &strict).is_err();
+    }
+    planned.changes.ops = vec![op.clone()];
+    planned.changes.policy = recorded;
+    Ok(planned)
+}
+
+fn plan_op(snapshot: &Snapshot, op: &Op, policy: &Policy) -> Result<Plan, PlanError> {
     match op {
         Op::Move { from, to } => plan_move(snapshot, from, to, policy),
         Op::Delete { path } => plan_delete(snapshot, path, policy),
         Op::Split { .. } | Op::Merge { .. } => restructure::plan(snapshot, op, policy),
+    }
+}
+
+/// Why a plan that came from outside is not applied.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RecheckError {
+    /// What the plan was made against has changed (the paths that did).
+    Stale(Vec<String>),
+    /// A plan without operations (saved by an older version).
+    NoOperations,
+    /// The plan is not what its operations give on this hierarchy.
+    NotMatching,
+}
+
+impl std::fmt::Display for RecheckError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RecheckError::Stale(paths) => write!(f, "stale: {}", paths.join(", ")),
+            RecheckError::NoOperations => write!(
+                f,
+                "refused [plan]: this plan was saved by an older version and has no operations; make it again"
+            ),
+            RecheckError::NotMatching => write!(
+                f,
+                "refused [plan]: the plan does not match what its operations produce on this folder"
+            ),
+        }
+    }
+}
+
+/// Checks a plan that came from outside (a saved file, another process) against the hierarchy
+/// before it is committed: first that nothing it read has changed, then that its operations,
+/// planned again here, give exactly this plan. Only a plan the engine itself would make now is
+/// returned, so nothing is written that the engine did not work out from the current state.
+pub fn recheck(snapshot: &Snapshot, changes: &ChangeSet) -> Result<Plan, RecheckError> {
+    let stale = crate::change::stale_paths(&snapshot.nodes, changes);
+    if !stale.is_empty() {
+        return Err(RecheckError::Stale(stale));
+    }
+    let [op] = changes.ops.as_slice() else {
+        return Err(if changes.ops.is_empty() {
+            RecheckError::NoOperations
+        } else {
+            RecheckError::NotMatching
+        });
+    };
+    match plan(snapshot, op, &changes.policy) {
+        Ok(planned) if planned.changes == *changes => Ok(planned),
+        _ => Err(RecheckError::NotMatching),
     }
 }
 
@@ -395,7 +461,9 @@ enum MoveKind {
 
 fn empty_changes(snap: &Snapshot) -> ChangeSet {
     ChangeSet {
-        version: 1,
+        version: 2,
+        ops: Vec::new(),
+        policy: Policy::default(),
         nodes_fingerprint: nodes_fingerprint(&snap.nodes),
         reads: Vec::new(),
         moves: Vec::new(),
@@ -621,7 +689,9 @@ fn finish(
         remove_folders.dedup();
     }
     let changes = ChangeSet {
-        version: 1,
+        version: 2,
+        ops: Vec::new(),
+        policy: Policy::default(),
         nodes_fingerprint: nodes_fingerprint(&snap.nodes),
         reads,
         moves: match &kind {

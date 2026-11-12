@@ -15,6 +15,13 @@ Entries describe changes in Textree's own terms — never in terms of a particul
 - A wiki link that starts with a slash (`[[/name]]`) names a path from the root, so a document in
   the root can be told apart from a nearer document with the same name.
 - A collapsed reference link (`[text][]`) now covers its trailing brackets in its text and range.
+- A saved plan has format version 2: it carries the operations it was made from (`ops`, e.g.
+  `{"op": "move", "from": …, "to": …}`) and the policy it relies on (`policy`: `break_links`,
+  recorded only when the plan does leave a link broken, `max_touched`, `max_bytes`). `textree apply`
+  first refuses a stale plan, then plans the operations again on the folder as it is and writes
+  only when that gives exactly the saved plan — an edited plan is refused with
+  `refused [plan]: …` and nothing is written. Version 1 plans, which carry no operations, are
+  refused; make them again.
 - Names, paths, heading fragments and tags compare in Unicode normalization form C. A link written in
   one form now finds a document whose file name is stored in the other (for example a decomposed
   Korean or accented name on disk and a precomposed one typed in a link); tags in both forms are one

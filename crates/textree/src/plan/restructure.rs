@@ -1073,7 +1073,9 @@ fn split(snap: &Snapshot, path: &str, level: u8, policy: &Policy) -> Result<Plan
         }]
     };
     let changes = ChangeSet {
-        version: 1,
+        version: 2,
+        ops: Vec::new(),
+        policy: Policy::default(),
         nodes_fingerprint: nodes_fingerprint(&snap.nodes),
         reads,
         moves,
@@ -1530,7 +1532,9 @@ fn merge(snap: &Snapshot, into: &str, from: &[String], policy: &Policy) -> Resul
         .collect();
     reads.sort_by(|a, b| a.path.cmp(&b.path));
     let changes = ChangeSet {
-        version: 1,
+        version: 2,
+        ops: Vec::new(),
+        policy: Policy::default(),
         nodes_fingerprint: nodes_fingerprint(&snap.nodes),
         reads,
         moves: Vec::new(),

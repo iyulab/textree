@@ -27,13 +27,13 @@ mod resolve;
 
 pub use anchors::{anchors_of, file_stem_of, github_slug};
 pub use change::{
-    nodes_fingerprint, validate_paths, ChangeSet, CommitError, Delete, Move, Op, PlanError, Policy,
-    ReadVersion, Rewrite, Violation, Write, WritePort,
+    nodes_fingerprint, stale_paths, validate_paths, ChangeSet, CommitError, Delete, Move, Op,
+    PlanError, Policy, ReadVersion, Rewrite, Violation, Write, WritePort,
 };
 pub use graph::{
     build_graph, BrokenLink, Definition, DocumentInfo, Graph, Link, LinkKind, ReadError,
 };
-pub use plan::{plan, Plan, Snapshot};
+pub use plan::{plan, recheck, Plan, RecheckError, Snapshot};
 pub use port::{
     content_version, is_document_path, Issue, Listing, MemoryStore, Node, NodeKind, ReadPort,
 };
