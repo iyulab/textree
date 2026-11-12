@@ -144,6 +144,8 @@ pub fn plan(snapshot: &Snapshot, op: &Op, policy: &Policy) -> Result<Plan, PlanE
     if !v.is_empty() {
         return Err(PlanError::Refused(v));
     }
+    // Paths name nodes as the store spells them, whichever normalization form they were typed in.
+    let op = &stored_op(snapshot, op);
     let mut planned = plan_op(snapshot, op, policy)?;
     // The plan records the policy it relies on: `break_links` only when it does leave a link
     // broken, so a plan cannot be made to claim a permission it never needed.
@@ -158,6 +160,36 @@ pub fn plan(snapshot: &Snapshot, op: &Op, policy: &Policy) -> Result<Plan, PlanE
     planned.changes.ops = vec![op.clone()];
     planned.changes.policy = recorded;
     Ok(planned)
+}
+
+/// The operation with each path in the spelling the hierarchy stores it in.
+fn stored_op(snapshot: &Snapshot, op: &Op) -> Op {
+    let spell = |p: &String| {
+        crate::path::stored_spelling(snapshot.nodes.iter().map(|n| n.path.as_str()), p)
+    };
+    match op {
+        Op::Move { from, to } => Op::Move {
+            from: spell(from),
+            to: spell(to),
+        },
+        Op::Delete { path } => Op::Delete { path: spell(path) },
+        Op::Split { path, level } => Op::Split {
+            path: spell(path),
+            level: *level,
+        },
+        Op::Merge { into, from } => Op::Merge {
+            into: spell(into),
+            from: from.iter().map(spell).collect(),
+        },
+        Op::Add { path, content } => Op::Add {
+            path: spell(path),
+            content: content.clone(),
+        },
+        Op::Replace { path, content } => Op::Replace {
+            path: spell(path),
+            content: content.clone(),
+        },
+    }
 }
 
 fn plan_op(snapshot: &Snapshot, op: &Op, policy: &Policy) -> Result<Plan, PlanError> {

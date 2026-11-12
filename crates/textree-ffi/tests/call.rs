@@ -13,7 +13,8 @@ struct Scratch(PathBuf);
 impl Scratch {
     fn new() -> Self {
         let n = NEXT.fetch_add(1, Ordering::SeqCst);
-        let dir = std::env::temp_dir().join(format!("textree-ffi-test-{}-{n}", std::process::id()));
+        let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR"))
+            .join(format!("textree-ffi-test-{}-{n}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         Scratch(dir)
@@ -166,4 +167,21 @@ fn a_bad_request_is_an_error_not_a_crash() {
             .unwrap()
             .starts_with("error: "));
     }
+}
+
+#[test]
+fn a_path_in_the_other_normalization_form_reads_the_stored_document() {
+    // The same syllable, decomposed (as some file systems store names) and composed.
+    let (decomposed, composed) = ("\u{1100}\u{1161}", "\u{AC00}");
+    let s = Scratch::new();
+    s.file(&format!("{decomposed}/{decomposed}.md"), "# A\n");
+    let r = s.call(
+        "read_document",
+        json!({"path": format!("{composed}/{composed}.md")}),
+    );
+    assert_eq!(r["ok"], true, "{r}");
+    assert_eq!(r["result"]["path"], format!("{decomposed}/{decomposed}.md"));
+    let r = s.call("tree", json!({"path": composed}));
+    assert_eq!(r["ok"], true, "{r}");
+    assert_eq!(r["result"]["path"], decomposed);
 }

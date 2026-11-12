@@ -24,6 +24,49 @@ pub fn in_form_of(like: &str, text: &str) -> String {
     }
 }
 
+/// How `given` is spelled among the stored `paths`, read piece by piece from the root: a piece
+/// that is stored as given stays; one that is stored in the other normalization form takes the
+/// stored spelling (when only one such spelling is stored); a piece that is not stored at all (a
+/// new name) and everything after it are kept as given. So a path typed in either form names the
+/// node the store has, and a new name is written as it was typed.
+pub fn stored_spelling<'a>(paths: impl IntoIterator<Item = &'a str>, given: &str) -> String {
+    let mut stored: std::collections::HashSet<&str> = std::collections::HashSet::new();
+    let mut by_form: std::collections::HashMap<String, Vec<&str>> =
+        std::collections::HashMap::new();
+    for p in paths {
+        stored.insert(p);
+        by_form.entry(nfc(p)).or_default().push(p);
+    }
+    if given.is_empty() || stored.contains(given) {
+        return given.to_string();
+    }
+    let mut out = String::new();
+    let mut pieces = given.split('/');
+    for piece in pieces.by_ref() {
+        let candidate = if out.is_empty() {
+            piece.to_string()
+        } else {
+            format!("{out}/{piece}")
+        };
+        if stored.contains(candidate.as_str()) {
+            out = candidate;
+            continue;
+        }
+        match by_form.get(&nfc(&candidate)).map(Vec::as_slice) {
+            Some([one]) => out = (*one).to_string(),
+            _ => {
+                out = candidate;
+                break;
+            }
+        }
+    }
+    for piece in pieces {
+        out.push('/');
+        out.push_str(piece);
+    }
+    out
+}
+
 /// The key two names are compared by: normalization form C, then lower case.
 pub fn fold(text: &str) -> String {
     nfc(text).to_lowercase()

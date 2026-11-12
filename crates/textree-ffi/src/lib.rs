@@ -137,24 +137,31 @@ fn check(store: &FolderStore) -> Value {
 }
 
 /// A path given to a read tool has to name a node of the folder as the engine lists it (hidden
-/// names and what lies behind symbolic links to folders are never listed).
-fn known_node(store: &FolderStore, path: &str) -> Result<NodeKind, Failure> {
+/// names and what lies behind symbolic links to folders are never listed). It is returned as the
+/// folder spells it, whichever normalization form it was given in.
+fn known_node(store: &FolderStore, path: &str) -> Result<(String, NodeKind), Failure> {
     textree::path::check_inside_root(path)
         .map_err(|why| Failure::usage(format!("path {path:?} {why}")))?;
-    store
-        .list()
-        .nodes
+    let nodes = store.list().nodes;
+    let stored = textree::path::stored_spelling(nodes.iter().map(|n| n.path.as_str()), path);
+    nodes
         .iter()
-        .find(|n| n.path == path)
-        .map(|n| n.kind)
+        .find(|n| n.path == stored)
+        .map(|n| (stored.clone(), n.kind))
         .ok_or_else(|| Failure::usage(format!("no such document or folder: {path}")))
 }
 
 fn tree(store: &FolderStore, path: &str) -> Result<Value, Failure> {
     let path = path.trim_end_matches('/');
-    if !path.is_empty() && known_node(store, path)? != NodeKind::Collection {
-        return Err(Failure::usage(format!("not a folder: {path}")));
-    }
+    let path = if path.is_empty() {
+        String::new()
+    } else {
+        match known_node(store, path)? {
+            (stored, NodeKind::Collection) => stored,
+            _ => return Err(Failure::usage(format!("not a folder: {path}"))),
+        }
+    };
+    let path = path.as_str();
     let graph = graph_of(store);
     let titles: std::collections::HashMap<&str, &str> = graph
         .documents
@@ -197,9 +204,11 @@ fn tree(store: &FolderStore, path: &str) -> Result<Value, Failure> {
 }
 
 fn read_document(store: &FolderStore, path: &str) -> Result<Value, Failure> {
-    if known_node(store, path)? != NodeKind::Document {
-        return Err(Failure::usage(format!("not a document: {path}")));
-    }
+    let path = match known_node(store, path)? {
+        (stored, NodeKind::Document) => stored,
+        _ => return Err(Failure::usage(format!("not a document: {path}"))),
+    };
+    let path = path.as_str();
     let bytes = store
         .read(path)
         .map_err(|e| Failure::usage(format!("{path}: {e}")))?;

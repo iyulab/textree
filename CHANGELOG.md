@@ -29,6 +29,9 @@ Entries describe changes in Textree's own terms — never in terms of a particul
   Korean or accented name on disk and a precomposed one typed in a link); tags in both forms are one
   tag, shown in form C. A rewritten link keeps the form its writer used, and paths in the graph keep
   the stored spelling. Names that differ only in normalization form clash.
+- A path given to an operation or a read (`move a.md …`, `read_document`) names the stored node
+  whichever normalization form it is typed in, and a plan records the stored spelling. A new name
+  is written as typed, inside an existing folder's stored spelling.
 - A change set has a `creates` list (new documents, never replacing a file) and a write can carry a
   `note` that the plan shows; both are optional in a saved plan.
 

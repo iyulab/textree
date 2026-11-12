@@ -2,7 +2,7 @@
 //! other. Test data uses Korean text, whose syllables decompose into conjoining letters, and an
 //! accented Latin word.
 
-use textree::path::{in_form_of, nfc};
+use textree::path::{in_form_of, nfc, stored_spelling};
 use textree::{build_graph, plan, MemoryStore, Op, Policy, Snapshot};
 use unicode_normalization::UnicodeNormalization;
 
@@ -120,4 +120,104 @@ fn form_of_a_replacement() {
     assert_eq!(in_form_of(&nfd("가"), &nfc("나")), nfd("나"));
     assert_eq!(in_form_of("plain", &nfd("나")), nfd("나"));
     assert_eq!(in_form_of(&nfc("가"), "ascii"), "ascii");
+}
+
+#[test]
+fn a_path_typed_in_the_other_form_names_the_stored_node() {
+    for (name_form, typed) in [
+        (nfd as fn(&str) -> String, nfc as fn(&str) -> String),
+        (nfc, nfd),
+    ] {
+        let store = folder(name_form, typed);
+        let snap = Snapshot::read(&store);
+        let stored = format!("{}.md", name_form("회의록"));
+        let given = format!("{}.md", typed("회의록"));
+        // A move: the source is found, the plan records the stored spelling, and the new name
+        // is written as it was typed.
+        let to = format!("{}/{given}", typed("기록"));
+        let planned = plan(
+            &snap,
+            &Op::Move {
+                from: given.clone(),
+                to: to.clone(),
+            },
+            &Policy::default(),
+        )
+        .unwrap();
+        assert_eq!(planned.changes.moves[0].from, stored);
+        assert_eq!(planned.changes.moves[0].to, to);
+        assert_eq!(
+            planned.changes.ops,
+            vec![Op::Move {
+                from: stored.clone(),
+                to
+            }]
+        );
+        // The other operations find it too.
+        for op in [
+            Op::Delete {
+                path: given.clone(),
+            },
+            Op::Split {
+                path: given.clone(),
+                level: 2,
+            },
+            Op::Merge {
+                into: "index.md".to_string(),
+                from: vec![given.clone()],
+            },
+            Op::Replace {
+                path: given.clone(),
+                content: format!("# {}\n\n## {}\n", typed("회의록"), typed("결정 사항")),
+            },
+        ] {
+            let policy = Policy {
+                break_links: true,
+                ..Policy::default()
+            };
+            let planned = plan(&snap, &op, &policy);
+            assert!(planned.is_ok(), "{op:?}: {planned:?}");
+        }
+        // A new document in an existing folder named in the other form goes into that folder.
+        let store = store_with_folder(name_form);
+        let snap = Snapshot::read(&store);
+        let planned = plan(
+            &snap,
+            &Op::Add {
+                path: format!("{}/new.md", typed("기록")),
+                content: "# New\n".to_string(),
+            },
+            &Policy::default(),
+        )
+        .unwrap();
+        assert_eq!(
+            planned.changes.creates[0].path,
+            format!("{}/new.md", name_form("기록"))
+        );
+    }
+}
+
+fn store_with_folder(name_form: fn(&str) -> String) -> MemoryStore {
+    MemoryStore::new().with_file(&format!("{}/old.md", name_form("기록")), "# Old\n")
+}
+
+#[test]
+fn stored_spelling_of_a_path() {
+    let stored = [nfd("기록"), format!("{}/{}.md", nfd("기록"), nfd("회의록"))];
+    let paths = || stored.iter().map(String::as_str);
+    assert_eq!(
+        stored_spelling(paths(), &format!("{}/{}.md", nfc("기록"), nfc("회의록"))),
+        stored[1]
+    );
+    // A new name keeps its typed form; the folder it goes in takes the stored one.
+    assert_eq!(
+        stored_spelling(paths(), &format!("{}/{}.md", nfc("기록"), nfc("새"))),
+        format!("{}/{}.md", nfd("기록"), nfc("새"))
+    );
+    assert_eq!(stored_spelling(paths(), "x/y.md"), "x/y.md");
+    // Two stored spellings of one name: only an exact one is taken.
+    let both = [nfc("가.md"), nfd("가.md")];
+    let both = || both.iter().map(String::as_str);
+    assert_eq!(stored_spelling(both(), &nfd("가.md")), nfd("가.md"));
+    assert_eq!(stored_spelling(both(), &nfc("가.md")), nfc("가.md"));
 }
