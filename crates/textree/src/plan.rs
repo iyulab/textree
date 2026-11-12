@@ -259,6 +259,31 @@ fn usage_path(path: &str, what: &str) -> Result<(), PlanError> {
         .map_err(|why| PlanError::Usage(format!("{what} {path:?} {why}")))
 }
 
+/// The first reason a piece of `path` that does not exist yet could not be held on every platform
+/// ([`crate::path::unportable`]). Pieces that already exist are the folder's own and are left alone.
+fn new_pieces_unportable(kinds: &HashMap<&str, NodeKind>, path: &str) -> Option<&'static str> {
+    let mut prefix = String::new();
+    for piece in path.split('/') {
+        if !prefix.is_empty() {
+            prefix.push('/');
+        }
+        prefix.push_str(piece);
+        if !kinds.contains_key(prefix.as_str()) {
+            if let Some(why) = crate::path::unportable(piece) {
+                return Some(why);
+            }
+        }
+    }
+    None
+}
+
+fn kinds_of(snap: &Snapshot) -> HashMap<&str, NodeKind> {
+    snap.nodes
+        .iter()
+        .map(|n| (n.path.as_str(), n.kind))
+        .collect()
+}
+
 fn in_subtree(path: &str, root: &str) -> bool {
     path == root || (path.starts_with(root) && path[root.len()..].starts_with('/'))
 }
@@ -313,6 +338,9 @@ fn plan_move(snap: &Snapshot, from: &str, to: &str, policy: &Policy) -> Result<P
             to,
             "a name that starts with a dot is hidden and is never read",
         );
+    }
+    if let Some(why) = new_pieces_unportable(&kinds, to) {
+        refuse(to, why);
     }
     match from_kind {
         NodeKind::Document if !crate::port::is_document_path(to) => {
@@ -1211,6 +1239,9 @@ fn plan_add(
             path,
             "a name that starts with a dot is hidden and is never read".to_string(),
         );
+    }
+    if let Some(why) = new_pieces_unportable(&kinds_of(snap), path) {
+        refuse(path, why.to_string());
     }
     if !crate::port::is_document_path(path) {
         refuse(path, "a document must have the .md extension".to_string());

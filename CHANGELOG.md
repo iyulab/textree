@@ -9,6 +9,11 @@ Entries describe changes in Textree's own terms — never in terms of a particul
 
 ### Changed
 
+- A new name that some file system cannot hold is refused when the plan is made, on every platform:
+  the characters `< > " | ? *` and control characters, a name that ends in a dot or a space, and the
+  Windows device names (`CON`, `PRN`, `AUX`, `NUL`, `COM1`-`COM9`, `LPT1`-`LPT9`). Such a move used to
+  plan fine and then fail while being applied on Windows (everything was put back). Names that already
+  exist in the folder are not affected.
 - A folder no longer reaches outside itself through a symbolic link: a link to a file outside the
   folder is skipped like a link to a folder (it is not listed, read or changed, and links to it are
   broken). A link to a file inside the folder is still read like the file.

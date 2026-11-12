@@ -67,7 +67,11 @@ fn snapshot(dir: &Path) -> (BTreeMap<String, Vec<u8>>, Vec<String>) {
     ) {
         for e in fs::read_dir(dir).unwrap() {
             let p = e.unwrap().path();
-            let rel = p.strip_prefix(root).unwrap().to_string_lossy().to_string();
+            let rel = p
+                .strip_prefix(root)
+                .unwrap()
+                .to_string_lossy()
+                .replace('\\', "/");
             if p.is_dir() {
                 dirs.push(rel);
                 walk(root, &p, files, dirs);

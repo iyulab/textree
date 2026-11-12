@@ -32,7 +32,11 @@ impl Scratch {
                 if p.is_dir() {
                     walk(root, &p, out);
                 } else {
-                    let rel = p.strip_prefix(root).unwrap().to_string_lossy().to_string();
+                    let rel = p
+                        .strip_prefix(root)
+                        .unwrap()
+                        .to_string_lossy()
+                        .replace('\\', "/");
                     out.insert(rel, fs::read(&p).unwrap());
                 }
             }

@@ -721,8 +721,16 @@ fn names_with_special_characters_keep_their_links() {
                     "{name}"
                 );
             }
-            // A name that a link cannot hold is refused, never half done.
-            Err(PlanError::Refused(v)) => assert_eq!(v[0].invariant, "I2", "{name}: {v:?}"),
+            // A name that a link cannot hold, or that Windows cannot hold, is refused, never half
+            // done.
+            Err(PlanError::Refused(v)) => {
+                let want = if textree::path::unportable(name).is_some() {
+                    "I5"
+                } else {
+                    "I2"
+                };
+                assert_eq!(v[0].invariant, want, "{name}: {v:?}")
+            }
             Err(e) => panic!("{name}: {e:?}"),
         }
     }

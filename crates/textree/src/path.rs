@@ -189,6 +189,40 @@ pub fn check_inside_root(path: &str) -> Result<(), &'static str> {
     Ok(())
 }
 
+/// Why a name the engine would create cannot be held by every file system its folders travel
+/// between, or `None` when it can. Windows refuses the characters `< > " | ? *` and control
+/// characters, a name ending in a dot or a space, and the device names (`CON`, `PRN`, `AUX`, `NUL`,
+/// `COM1`-`COM9`, `LPT1`-`LPT9`, with or without an extension). A folder written elsewhere with
+/// such a name could not be opened there, so a new name is held to the strictest rule everywhere —
+/// which keeps a plan the same on every platform.
+pub fn unportable(name: &str) -> Option<&'static str> {
+    if name
+        .chars()
+        .any(|c| matches!(c, '<' | '>' | '"' | '|' | '?' | '*') || c.is_control())
+    {
+        return Some(
+            "has a character Windows cannot hold in a name (< > \" | ? * or a control character)",
+        );
+    }
+    if name.ends_with('.') || name.ends_with(' ') {
+        return Some("ends in a dot or a space, which Windows drops from a name");
+    }
+    let stem = name
+        .split('.')
+        .next()
+        .unwrap_or("")
+        .trim_end()
+        .to_ascii_lowercase();
+    let device = matches!(stem.as_str(), "con" | "prn" | "aux" | "nul")
+        || (stem.len() == 4
+            && (stem.starts_with("com") || stem.starts_with("lpt"))
+            && matches!(stem.as_bytes()[3], b'1'..=b'9'));
+    if device {
+        return Some("is a device name on Windows");
+    }
+    None
+}
+
 /// The path from the folder `from_dir` to `target`, written with `..` pieces where needed.
 pub fn relative_between(from_dir: &str, target: &str) -> String {
     let from: Vec<&str> = if from_dir.is_empty() {

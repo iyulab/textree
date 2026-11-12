@@ -40,7 +40,11 @@ impl Scratch {
         fn walk(root: &Path, dir: &Path, f: &mut BTreeMap<String, Vec<u8>>, d: &mut Vec<String>) {
             for e in fs::read_dir(dir).unwrap() {
                 let p = e.unwrap().path();
-                let rel = p.strip_prefix(root).unwrap().to_string_lossy().to_string();
+                let rel = p
+                    .strip_prefix(root)
+                    .unwrap()
+                    .to_string_lossy()
+                    .replace('\\', "/");
                 if p.is_dir() {
                     d.push(rel);
                     walk(root, &p, f, d);
@@ -650,9 +654,43 @@ fn several_rewrites_on_one_line_share_one_heading() {
     assert_eq!(out.matches("    - ").count(), 2, "{out}");
 }
 
+/// A new name is held to what every file system can hold, on every platform: a folder written on
+/// one machine has to open on another, and the same plan has to come out everywhere.
+#[test]
+fn a_new_name_that_windows_cannot_hold_is_refused_everywhere() {
+    for name in [
+        "q?.md",
+        "a*b.md",
+        "x|y.md",
+        "say \"hi\".md",
+        "<t>.md",
+        "end /x.md",
+        "CON.md",
+        "aux.md",
+        "com1.md",
+        "LPT9.md",
+        "nul/x.md",
+        "end./x.md",
+    ] {
+        let s = Scratch::new();
+        s.file("a.md", "[t](t.md)\n").file("t.md", "t\n");
+        let (code, out, err) = run(&s, &["move", "t.md", name]);
+        assert_ne!(code, 0, "{name}: {out}");
+        assert!(err.contains("[I5]"), "{name}: {err}");
+        assert_eq!(s.read("t.md"), "t\n", "{name}");
+    }
+    let s = Scratch::new();
+    s.file("a.md", "[t](t.md)\n").file("t.md", "t\n");
+    let (code, out, err) = run(&s, &["move", "t.md", "comfy.md", "--apply"]);
+    assert_eq!(
+        code, 0,
+        "names that only start like a device name are fine: {out} {err}"
+    );
+}
+
 #[test]
 fn any_file_name_can_be_given_to_a_document_that_only_path_links_reach() {
-    for name in ["my (draft).md", "a#b.md", "x[1].md", "q?.md", "50% done.md"] {
+    for name in ["my (draft).md", "a#b.md", "x[1].md", "50% done.md"] {
         let s = Scratch::new();
         s.file("a.md", "[t](t.md) [t again](t.md#top)\n")
             .file("t.md", "t\n");
