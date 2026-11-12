@@ -26,4 +26,7 @@ own terms — never in terms of a particular consuming project.
 - A change set is committed whole or not at all, and never over a stale base version.
 - No content disappears without the change set saying so.
 - Links that resolved before a change still resolve after it.
+- A plan that comes from outside is written only if its operations, planned again on the current hierarchy,
+  give exactly that plan.
+- Textree does not judge whether text is sensitive, and the engine and its MCP server use no network.
 - Tags are read from the document body and from front matter that already exists. By default they are written into the body only; writing front matter is a policy the consumer turns on for a store it owns.
