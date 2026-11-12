@@ -8,10 +8,12 @@
 //!   one nearest to the linking document wins: the same folder first, then the deeper shared
 //!   ancestor folder, then the shorter path, then alphabetical order. The result does not depend
 //!   on the order in which documents were listed.
+//! * Names and paths compare in Unicode normalization form C, so `café` written with a combining
+//!   accent finds a file named with the precomposed one, and the other way round.
 
 use std::collections::HashMap;
 
-use crate::path::{dir_of, name_of, percent_decode, resolve_relative, stem_of};
+use crate::path::{dir_of, fold, name_of, nfc, percent_decode, resolve_relative, stem_of};
 use crate::port::{Node, NodeKind};
 use crate::read::{RawLink, Syntax};
 
@@ -34,6 +36,8 @@ pub enum Resolution {
 /// A lookup over the nodes of a hierarchy.
 pub struct Index {
     kinds: HashMap<String, NodeKind>,
+    /// Path in normalization form C -> the path as stored.
+    by_nfc_path: HashMap<String, String>,
     by_lower_path: HashMap<String, Vec<String>>,
     by_name: HashMap<String, Vec<String>>,
 }
@@ -41,18 +45,22 @@ pub struct Index {
 impl Index {
     pub fn new(nodes: &[Node]) -> Self {
         let mut kinds = HashMap::new();
+        let mut by_nfc_path = HashMap::new();
         let mut by_lower_path: HashMap<String, Vec<String>> = HashMap::new();
         let mut by_name: HashMap<String, Vec<String>> = HashMap::new();
         for node in nodes {
             kinds.insert(node.path.clone(), node.kind);
+            by_nfc_path
+                .entry(nfc(&node.path))
+                .or_insert_with(|| node.path.clone());
             if node.kind == NodeKind::Collection {
                 continue;
             }
             by_lower_path
-                .entry(node.path.to_lowercase())
+                .entry(fold(&node.path))
                 .or_default()
                 .push(node.path.clone());
-            let name = name_of(&node.path).to_lowercase();
+            let name = fold(name_of(&node.path));
             by_name
                 .entry(name.clone())
                 .or_default()
@@ -70,6 +78,7 @@ impl Index {
         }
         Index {
             kinds,
+            by_nfc_path,
             by_lower_path,
             by_name,
         }
@@ -99,6 +108,12 @@ impl Index {
             None => Resolution::Outside,
             Some(path) => {
                 let path = path.trim_end_matches('/').to_string();
+                // A path written in another normalization form names the same file.
+                let path = if self.kinds.contains_key(&path) {
+                    path
+                } else {
+                    self.by_nfc_path.get(&nfc(&path)).cloned().unwrap_or(path)
+                };
                 match self.kinds.get(&path) {
                     Some(&kind) => Resolution::Target {
                         path,
@@ -115,7 +130,7 @@ impl Index {
         let name = name.trim().replace('\\', "/");
         // A leading `/` anchors the name at the root: it is a path even without another `/`.
         let rooted = name.starts_with('/');
-        let lower = name.trim_matches('/').to_lowercase();
+        let lower = fold(name.trim_matches('/'));
         if lower.is_empty() {
             return Resolution::Broken;
         }

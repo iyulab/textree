@@ -72,8 +72,8 @@ impl Run<'_> {
 
     fn rename(&mut self, from: &Path, to: &Path) -> io::Result<()> {
         self.step()?;
-        let same_name_but_case =
-            from.to_string_lossy().to_lowercase() == to.to_string_lossy().to_lowercase();
+        let same_name_but_case = textree::path::fold(&from.to_string_lossy())
+            == textree::path::fold(&to.to_string_lossy());
         if same_name_but_case {
             // On a file system that ignores case a direct rename may be a no-op; go through a
             // temporary name.
@@ -263,7 +263,7 @@ pub(crate) fn commit(
     let mut conflicts = Vec::new();
     for m in &changes.moves {
         let to = under(&store.root, &m.to);
-        let case_only = m.from.to_lowercase() == m.to.to_lowercase();
+        let case_only = textree::path::fold(&m.from) == textree::path::fold(&m.to);
         if !case_only && fs::symlink_metadata(&to).is_ok() {
             conflicts.push(m.to.clone());
         }

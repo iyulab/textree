@@ -161,7 +161,7 @@ fn in_subtree(path: &str, root: &str) -> bool {
 }
 
 fn lower(s: &str) -> String {
-    s.to_lowercase()
+    crate::path::fold(s)
 }
 
 /// The planned listing: nodes after the move, the folders the move creates, and the folders
@@ -481,7 +481,7 @@ fn finish(
         }
         edits.sort_by_key(|e| e.span.start);
         edits.dedup_by(|b, a| a.span == b.span);
-        let (content, spans) = apply_edits(bytes, &edits);
+        let (content, spans) = apply_edits(bytes, &mut edits);
         if !content_preserved(bytes, &content, &edits, &spans) {
             return Err(PlanError::Refused(vec![Violation {
                 invariant: "I1",
@@ -824,7 +824,14 @@ fn wiki_name(
 
 /// Applies edits (sorted, non-overlapping) to the original bytes. Returns the new bytes and,
 /// for each edit, where its replacement sits in them.
-fn apply_edits(bytes: &[u8], edits: &[Edit]) -> (Vec<u8>, Vec<StdRange<usize>>) {
+///
+/// A replacement is written in the Unicode normalization form of the text it replaces, so a
+/// rewritten link keeps the form its writer used even when the file name on disk is in the other.
+fn apply_edits(bytes: &[u8], edits: &mut [Edit]) -> (Vec<u8>, Vec<StdRange<usize>>) {
+    for e in edits.iter_mut() {
+        let was = String::from_utf8_lossy(&bytes[e.span.clone()]);
+        e.replacement = crate::path::in_form_of(&was, &e.replacement);
+    }
     let mut out = Vec::with_capacity(bytes.len());
     let mut spans = Vec::new();
     let mut pos = 0;

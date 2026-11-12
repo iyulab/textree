@@ -15,6 +15,11 @@ Entries describe changes in Textree's own terms — never in terms of a particul
 - A wiki link that starts with a slash (`[[/name]]`) names a path from the root, so a document in
   the root can be told apart from a nearer document with the same name.
 - A collapsed reference link (`[text][]`) now covers its trailing brackets in its text and range.
+- Names, paths, heading fragments and tags compare in Unicode normalization form C. A link written in
+  one form now finds a document whose file name is stored in the other (for example a decomposed
+  Korean or accented name on disk and a precomposed one typed in a link); tags in both forms are one
+  tag, shown in form C. A rewritten link keeps the form its writer used, and paths in the graph keep
+  the stored spelling. Names that differ only in normalization form clash.
 - A change set has a `creates` list (new documents, never replacing a file) and a write can carry a
   `note` that the plan shows; both are optional in a saved plan.
 

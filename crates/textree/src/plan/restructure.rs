@@ -13,6 +13,7 @@ use std::ops::Range as StdRange;
 use super::*;
 use crate::anchors::{anchors_of, file_stem_of, github_slug};
 use crate::graph::Link;
+use crate::path::{fold, nfc};
 use crate::read::{Footnote, Heading, RefDef};
 
 /// What happens to the heading fragment of a link.
@@ -136,15 +137,19 @@ fn span_of(r: &crate::read::Range) -> StdRange<usize> {
 
 /// Whether a fragment, as written in a link, already names the heading that has this anchor.
 fn same_anchor(fragment: &str, anchor: &str) -> bool {
-    fragment.to_lowercase() == anchor || github_slug(fragment) == anchor
+    let (fragment, anchor) = (nfc(fragment), nfc(anchor));
+    fragment.to_lowercase() == anchor || github_slug(&fragment) == anchor
 }
 
 /// Which heading of a document a fragment names: the first whose anchor is the fragment, or
 /// whose anchor is the slug of the fragment (a wiki link writes the heading text).
 fn heading_for(fragment: &str, anchors: &[String]) -> Option<usize> {
+    let fragment = nfc(fragment);
     let lower = fragment.to_lowercase();
-    let slug = github_slug(fragment);
-    anchors.iter().position(|a| *a == lower || *a == slug)
+    let slug = github_slug(&fragment);
+    anchors
+        .iter()
+        .position(|a| nfc(a) == lower || nfc(a) == slug)
 }
 
 // ---- editing the links of one document -------------------------------------------------------
@@ -611,36 +616,31 @@ fn split(snap: &Snapshot, path: &str, level: u8, policy: &Policy) -> Result<Plan
         let cd = join(dir, &stem);
         (format!("{cd}/{}", name_of(path)), cd)
     };
-    if !folder_doc
-        && snap
-            .nodes
-            .iter()
-            .any(|n| n.path.to_lowercase() == child_dir.to_lowercase())
-    {
+    if !folder_doc && snap.nodes.iter().any(|n| fold(&n.path) == fold(&child_dir)) {
         return Err(refuse("I5", &child_dir, None, "already exists".to_string()));
     }
 
     // Names of the new documents.
     let mut taken: HashSet<String> = HashSet::new();
-    taken.insert(name_of(&bundle_path).to_lowercase());
+    taken.insert(fold(name_of(&bundle_path)));
     if folder_doc {
         for n in &snap.nodes {
             if dir_of(&n.path) == child_dir {
-                taken.insert(name_of(&n.path).to_lowercase());
+                taken.insert(fold(name_of(&n.path)));
             }
         }
     }
     let mut part_path: Vec<String> = vec![bundle_path.clone()];
     for k in 1..parts {
-        let base =
-            file_stem_of(&heads[split_idx[k - 1]].text).unwrap_or_else(|| format!("section-{k}"));
+        let base = file_stem_of(&nfc(&heads[split_idx[k - 1]].text))
+            .unwrap_or_else(|| format!("section-{k}"));
         let mut name = base.clone();
         let mut n = 2;
-        while taken.contains(&format!("{name}.md").to_lowercase()) {
+        while taken.contains(&fold(&format!("{name}.md"))) {
             name = format!("{base}-{n}");
             n += 1;
         }
-        taken.insert(format!("{name}.md").to_lowercase());
+        taken.insert(fold(&format!("{name}.md")));
         part_path.push(join(&child_dir, &format!("{name}.md")));
     }
 
@@ -845,7 +845,7 @@ fn split(snap: &Snapshot, path: &str, level: u8, policy: &Policy) -> Result<Plan
                 e.span = e.span.start - d.range.start..e.span.end - d.range.start;
             }
             copy_edits.sort_by_key(|e| e.span.start);
-            let (copied, _) = apply_edits(&def_text, &copy_edits);
+            let (copied, _) = apply_edits(&def_text, &mut copy_edits);
             def_text = copied;
             let t = String::from_utf8_lossy(&def_text).trim_end().to_string();
             if !text_of[q].is_empty() {
@@ -915,7 +915,7 @@ fn split(snap: &Snapshot, path: &str, level: u8, policy: &Policy) -> Result<Plan
         }
         es.sort_by_key(|e| (e.span.start, e.span.end));
         es.dedup_by(|x, y| x.span == y.span && x.replacement == y.replacement);
-        let (content, _) = apply_edits(b, &es);
+        let (content, _) = apply_edits(b, &mut es);
         changed_bytes += push_rewrites(&mut rewrites, p, b, &es);
         writes.push(Write {
             path: p.clone(),

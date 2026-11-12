@@ -1,5 +1,34 @@
 //! Path helpers: the engine's paths are relative to the root and `/`-separated.
 
+use unicode_normalization::UnicodeNormalization;
+
+/// The text in Unicode normalization form C. Names, headings and tags are compared in this
+/// form, so a name written in one form finds a file whose name is stored in the other (as file
+/// systems and keyboards often differ).
+pub fn nfc(text: &str) -> String {
+    text.nfc().collect()
+}
+
+/// `text` in the normalization form `like` is written in: form C, form D, or (when `like` does
+/// not tell — plain ASCII, or mixed) `text` as it is.
+pub fn in_form_of(like: &str, text: &str) -> String {
+    if text.is_ascii() {
+        return text.to_string();
+    }
+    let is_c = unicode_normalization::is_nfc(like);
+    let is_d = unicode_normalization::is_nfd(like);
+    match (is_c, is_d) {
+        (true, false) => nfc(text),
+        (false, true) => text.nfd().collect(),
+        _ => text.to_string(),
+    }
+}
+
+/// The key two names are compared by: normalization form C, then lower case.
+pub fn fold(text: &str) -> String {
+    nfc(text).to_lowercase()
+}
+
 /// The folder part of a path (`""` for a root-level file).
 pub fn dir_of(path: &str) -> &str {
     match path.rfind('/') {

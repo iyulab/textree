@@ -271,18 +271,18 @@ fn is_collection_document(path: &str) -> bool {
     !dir.is_empty() && name_of(dir) == stem_of(name_of(path))
 }
 
-/// Tag -> documents. Tags compare without regard to case; the spelling shown is the one used
-/// most often (ties: the alphabetically first).
+/// Tag -> documents. Tags compare without regard to case or Unicode normalization; the spelling
+/// shown is the one used most often, in normalization form C (ties: the alphabetically first).
 fn collect_tags(documents: &[DocumentInfo]) -> BTreeMap<String, Vec<String>> {
-    let mut spellings: HashMap<String, HashMap<&str, usize>> = HashMap::new();
+    let mut spellings: HashMap<String, HashMap<String, usize>> = HashMap::new();
     let mut users: HashMap<String, BTreeSet<&str>> = HashMap::new();
     for doc in documents {
         for tag in &doc.tags {
-            let key = tag.tag.to_lowercase();
+            let key = crate::path::fold(&tag.tag);
             *spellings
                 .entry(key.clone())
                 .or_default()
-                .entry(tag.tag.as_str())
+                .entry(crate::path::nfc(&tag.tag))
                 .or_insert(0) += 1;
             users.entry(key).or_default().insert(doc.path.as_str());
         }
@@ -292,7 +292,7 @@ fn collect_tags(documents: &[DocumentInfo]) -> BTreeMap<String, Vec<String>> {
         let shown = counts
             .iter()
             .max_by(|a, b| a.1.cmp(b.1).then_with(|| b.0.cmp(a.0)))
-            .map(|(s, _)| (*s).to_string())
+            .map(|(s, _)| s.clone())
             .unwrap_or(key.clone());
         let docs = users
             .remove(&key)
