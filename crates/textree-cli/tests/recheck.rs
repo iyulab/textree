@@ -125,10 +125,8 @@ fn a_saved_plan_carries_its_operation_and_policy() {
         plan["ops"],
         json!([{"op": "move", "from": "notes/trip.md", "to": "archive/trip.md"}])
     );
-    assert_eq!(
-        plan["policy"],
-        json!({"break_links": false, "max_touched": 9, "max_bytes": null})
-    );
+    // Limits decide whether a plan is made; the plan records only the permission it needs.
+    assert_eq!(plan["policy"], json!({"break_links": false}));
 }
 
 #[test]
@@ -203,6 +201,10 @@ fn a_tampered_plan_is_refused_and_nothing_is_written() {
         (
             "an unknown field in the policy",
             Box::new(|p| p["policy"]["extra"] = json!(0)),
+        ),
+        (
+            "a limit added to the policy",
+            Box::new(|p| p["policy"]["max_touched"] = json!(50)),
         ),
         (
             "an empty list left out",

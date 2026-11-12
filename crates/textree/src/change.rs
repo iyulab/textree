@@ -45,6 +45,15 @@ pub struct Policy {
     pub max_changed_bytes: Option<usize>,
 }
 
+/// What a plan records of the policy it was made under: the permissions it needs. Limits
+/// (`max_touched`, `max_bytes`) only decide whether a plan is made, so a plan does not carry
+/// them — what it carries can all be checked by planning again.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Permissions {
+    /// The plan leaves a link broken, which the policy allowed.
+    pub break_links: bool,
+}
+
 /// A version a change set depends on.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ReadVersion {
@@ -102,10 +111,10 @@ pub struct ChangeSet {
     /// when these operations, planned again on the current hierarchy, give the same plan.
     #[serde(default)]
     pub ops: Vec<Op>,
-    /// The policy the operations were planned under. `break_links` is recorded only when the
-    /// plan does leave a link broken.
+    /// What the plan needs of the policy it was planned under: `break_links` only when the plan
+    /// does leave a link broken.
     #[serde(default)]
-    pub policy: Policy,
+    pub policy: Permissions,
     /// Identifies the set of nodes the plan was made against; a store refuses the plan when
     /// documents were added or removed since (a new document can change what a name means).
     pub nodes_fingerprint: String,

@@ -28,7 +28,7 @@ mod resolve;
 pub use anchors::{anchors_of, file_stem_of, github_slug};
 pub use change::{
     nodes_fingerprint, stale_paths, validate_paths, BrokenRef, ChangeSet, CommitError, Delete,
-    Move, Op, PlanError, Policy, ReadVersion, Rewrite, Violation, Write, WritePort,
+    Move, Op, Permissions, PlanError, Policy, ReadVersion, Rewrite, Violation, Write, WritePort,
 };
 pub use graph::{
     build_graph, BrokenLink, Definition, DocumentInfo, Graph, Link, LinkKind, ReadError,

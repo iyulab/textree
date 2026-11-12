@@ -1075,7 +1075,7 @@ fn split(snap: &Snapshot, path: &str, level: u8, policy: &Policy) -> Result<Plan
     let changes = ChangeSet {
         version: 2,
         ops: Vec::new(),
-        policy: Policy::default(),
+        policy: Permissions::default(),
         nodes_fingerprint: nodes_fingerprint(&snap.nodes),
         reads,
         moves,
@@ -1536,7 +1536,7 @@ fn merge(snap: &Snapshot, into: &str, from: &[String], policy: &Policy) -> Resul
     let changes = ChangeSet {
         version: 2,
         ops: Vec::new(),
-        policy: Policy::default(),
+        policy: Permissions::default(),
         nodes_fingerprint: nodes_fingerprint(&snap.nodes),
         reads,
         moves: Vec::new(),

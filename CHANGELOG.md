@@ -19,8 +19,9 @@ Entries describe changes in Textree's own terms — never in terms of a particul
   the root can be told apart from a nearer document with the same name.
 - A collapsed reference link (`[text][]`) now covers its trailing brackets in its text and range.
 - A saved plan has format version 2: it carries the operations it was made from (`ops`, e.g.
-  `{"op": "move", "from": …, "to": …}`) and the policy it relies on (`policy`: `break_links`,
-  recorded only when the plan does leave a link broken, `max_touched`, `max_bytes`). `textree apply`
+  `{"op": "move", "from": …, "to": …}`) and the permission it relies on (`policy`:
+  `{"break_links": …}`, true only when the plan does leave a link broken). Limits
+  (`--max-touched`, `--max-bytes`) decide whether a plan is made and are not recorded. `textree apply`
   first refuses a stale plan, then plans the operations again on the folder as it is and writes
   only when that gives exactly the saved plan, as JSON (a field added, left out or changed counts)
   — an edited plan is refused with `refused [plan]: …` and nothing is written. Version 1 plans, which carry no operations, are

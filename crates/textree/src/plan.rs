@@ -11,8 +11,8 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::ops::Range as StdRange;
 
 use crate::change::{
-    nodes_fingerprint, BrokenRef, ChangeSet, Delete, Move, Op, PlanError, Policy, ReadVersion,
-    Rewrite, Violation, Write,
+    nodes_fingerprint, BrokenRef, ChangeSet, Delete, Move, Op, Permissions, PlanError, Policy,
+    ReadVersion, Rewrite, Violation, Write,
 };
 use crate::graph::{build_graph, Graph};
 use crate::path::{
@@ -147,18 +147,17 @@ pub fn plan(snapshot: &Snapshot, op: &Op, policy: &Policy) -> Result<Plan, PlanE
     // Paths name nodes as the store spells them, whichever normalization form they were typed in.
     let op = &stored_op(snapshot, op);
     let mut planned = plan_op(snapshot, op, policy)?;
-    // The plan records the policy it relies on: `break_links` only when it does leave a link
-    // broken, so a plan cannot be made to claim a permission it never needed.
-    let mut recorded = policy.clone();
-    if policy.break_links {
+    // The plan records the permission it relies on: `break_links` only when it does leave a
+    // link broken, so a plan cannot be made to claim a permission it never needed.
+    let break_links = policy.break_links && {
         let strict = Policy {
             break_links: false,
             ..policy.clone()
         };
-        recorded.break_links = plan_op(snapshot, op, &strict).is_err();
-    }
+        plan_op(snapshot, op, &strict).is_err()
+    };
     planned.changes.ops = vec![op.clone()];
-    planned.changes.policy = recorded;
+    planned.changes.policy = Permissions { break_links };
     Ok(planned)
 }
 
@@ -245,7 +244,11 @@ pub fn recheck(snapshot: &Snapshot, changes: &ChangeSet) -> Result<Plan, Recheck
             RecheckError::NotMatching
         });
     };
-    match plan(snapshot, op, &changes.policy) {
+    let policy = Policy {
+        break_links: changes.policy.break_links,
+        ..Policy::default()
+    };
+    match plan(snapshot, op, &policy) {
         Ok(planned) if planned.changes == *changes => Ok(planned),
         _ => Err(RecheckError::NotMatching),
     }
@@ -499,7 +502,7 @@ fn empty_changes(snap: &Snapshot) -> ChangeSet {
     ChangeSet {
         version: 2,
         ops: Vec::new(),
-        policy: Policy::default(),
+        policy: Permissions::default(),
         nodes_fingerprint: nodes_fingerprint(&snap.nodes),
         reads: Vec::new(),
         moves: Vec::new(),
@@ -790,7 +793,7 @@ fn finish(
     let changes = ChangeSet {
         version: 2,
         ops: Vec::new(),
-        policy: Policy::default(),
+        policy: Permissions::default(),
         nodes_fingerprint: nodes_fingerprint(&snap.nodes),
         reads,
         moves: match &kind {
