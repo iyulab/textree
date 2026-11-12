@@ -527,3 +527,51 @@ fn a_symbolic_link_that_leads_outside_the_folder_is_not_part_of_it() {
         assert!(plan(&snap, &op, &Policy::default()).is_err(), "{op:?}");
     }
 }
+
+#[cfg(unix)]
+#[test]
+fn a_destination_taken_by_a_link_outside_the_folder_is_refused_when_planned() {
+    use textree_folder::edit::{plan_change, FailureKind};
+    let s = Scratch::new();
+    s.file("b.md", "# B\n").file("sub/a.md", "# A\n");
+    let outside = Scratch::new();
+    outside.file("secret.md", "# Secret\n");
+    std::os::unix::fs::symlink(outside.path().join("secret.md"), s.path().join("link.md")).unwrap();
+    std::os::unix::fs::symlink(outside.path(), s.path().join("out")).unwrap();
+    let store = FolderStore::open(s.path()).unwrap();
+    for (op, at) in [
+        (
+            Op::Move {
+                from: "b.md".into(),
+                to: "link.md".into(),
+            },
+            "link.md",
+        ),
+        (
+            Op::Add {
+                path: "link.md".into(),
+                content: "# New\n".into(),
+            },
+            "link.md",
+        ),
+        (
+            Op::Move {
+                from: "sub".into(),
+                to: "out".into(),
+            },
+            "out",
+        ),
+    ] {
+        let failure = plan_change(&store, &op, &Policy::default()).unwrap_err();
+        assert_eq!(failure.kind, FailureKind::Refused, "{op:?}");
+        assert_eq!(
+            failure.lines,
+            [format!("refused [I5] {at}: already exists")],
+            "{op:?}"
+        );
+    }
+    assert_eq!(
+        fs::read(outside.path().join("secret.md")).unwrap(),
+        b"# Secret\n"
+    );
+}

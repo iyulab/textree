@@ -223,6 +223,25 @@ pub(crate) fn preflight(store: &FolderStore, changes: &ChangeSet) -> Result<(), 
     Ok(())
 }
 
+/// The destinations (moved to or created) that something on disk already takes — including what
+/// the listing does not show, such as a symbolic link that leads outside the folder.
+pub(crate) fn taken(store: &FolderStore, changes: &ChangeSet) -> Vec<String> {
+    let mut taken = Vec::new();
+    for m in &changes.moves {
+        let to = under(&store.root, &m.to);
+        let case_only = textree::path::fold(&m.from) == textree::path::fold(&m.to);
+        if !case_only && fs::symlink_metadata(&to).is_ok() {
+            taken.push(m.to.clone());
+        }
+    }
+    for c in &changes.creates {
+        if fs::symlink_metadata(under(&store.root, &c.path)).is_ok() {
+            taken.push(c.path.clone());
+        }
+    }
+    taken
+}
+
 pub(crate) fn commit(
     store: &FolderStore,
     changes: &ChangeSet,
@@ -238,19 +257,7 @@ pub(crate) fn commit(
     }
 
     // A destination that is taken is a conflict, never an overwrite.
-    let mut conflicts = Vec::new();
-    for m in &changes.moves {
-        let to = under(&store.root, &m.to);
-        let case_only = textree::path::fold(&m.from) == textree::path::fold(&m.to);
-        if !case_only && fs::symlink_metadata(&to).is_ok() {
-            conflicts.push(m.to.clone());
-        }
-    }
-    for c in &changes.creates {
-        if fs::symlink_metadata(under(&store.root, &c.path)).is_ok() {
-            conflicts.push(c.path.clone());
-        }
-    }
+    let conflicts = taken(store, changes);
     if !conflicts.is_empty() {
         return Err(CommitError::Conflict(conflicts));
     }

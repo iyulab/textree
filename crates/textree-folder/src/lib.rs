@@ -179,6 +179,12 @@ impl FolderStore {
         commit::preflight(self, changes)
     }
 
+    /// The destinations of a change set that something on disk already takes (also what the
+    /// listing does not show, such as a symbolic link that leads outside the folder).
+    pub fn taken(&self, changes: &ChangeSet) -> Vec<String> {
+        commit::taken(self, changes)
+    }
+
     /// Like [`WritePort::commit`], and `verify` looks at the folder after the changes are made
     /// but before they are final: if it says no, everything is put back.
     pub fn commit_checked(

@@ -86,8 +86,9 @@ impl From<CommitError> for Failure {
     }
 }
 
-/// Plans one operation on the folder as it is now. The plan is also checked against the disk
-/// (a destination behind a symbolic link is refused).
+/// Plans one operation on the folder as it is now. The plan is also checked against the disk:
+/// a destination behind a symbolic link, or one that something the listing does not show
+/// already takes, is refused.
 pub fn plan_change(store: &FolderStore, op: &Op, policy: &Policy) -> Result<Plan, Failure> {
     let snapshot = Snapshot::read(store);
     let planned = match plan(&snapshot, op, policy) {
@@ -105,6 +106,10 @@ pub fn plan_change(store: &FolderStore, op: &Op, policy: &Policy) -> Result<Plan
             kind: FailureKind::Refused,
             lines: vec![format!("refused [I5] {why}")],
         });
+    }
+    let taken = store.taken(&planned.changes);
+    if !taken.is_empty() {
+        return Err(CommitError::Conflict(taken).into());
     }
     Ok(planned)
 }
