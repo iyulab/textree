@@ -25,7 +25,7 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 
 use serde::Deserialize;
 use serde_json::{json, Value};
-use textree::{build_graph, ChangeSet, Graph, NodeKind, Op, Policy, ReadPort};
+use textree::{build_graph, Graph, NodeKind, Op, Policy, ReadPort};
 use textree_folder::edit::{applied_line, apply_outside, plan_change, Failure, FailureKind};
 use textree_folder::FolderStore;
 
@@ -79,9 +79,11 @@ fn handle(request: &str) -> Result<Value, Failure> {
             to_value(&planned.changes)
         }
         "apply" => {
-            let changes: ChangeSet = field(args, "plan")?;
-            apply_outside(&store, &changes)?;
-            Ok(json!({"applied": applied_line(&changes)}))
+            let received = args
+                .get("plan")
+                .ok_or_else(|| Failure::usage("missing argument: plan"))?;
+            let planned = apply_outside(&store, received, "plan")?;
+            Ok(json!({"applied": applied_line(&planned.changes)}))
         }
         other => Err(Failure::usage(format!("unknown op: {other}"))),
     }

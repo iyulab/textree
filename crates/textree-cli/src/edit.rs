@@ -96,13 +96,13 @@ pub fn apply_saved(folder: &str, plan_file: &str) -> ExitCode {
         Ok(text) => text,
         Err(e) => return usage(format!("{plan_file}: {e}")),
     };
-    let changes: ChangeSet = match serde_json::from_str(&text) {
-        Ok(c) => c,
+    let received: serde_json::Value = match serde_json::from_str(&text) {
+        Ok(v) => v,
         Err(e) => return usage(format!("{plan_file}: not a plan: {e}")),
     };
-    match apply_outside(&store, &changes) {
-        Ok(_) => {
-            println!("{}", applied_line(&changes));
+    match apply_outside(&store, &received, &format!("{plan_file}: not a plan")) {
+        Ok(planned) => {
+            println!("{}", applied_line(&planned.changes));
             ExitCode::SUCCESS
         }
         Err(f) => fail(f),

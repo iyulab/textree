@@ -7,6 +7,8 @@ use textree::{
     Policy, RecheckError, Snapshot,
 };
 
+use serde_json::Value;
+
 use crate::FolderStore;
 
 /// What kind of failure.
@@ -123,9 +125,14 @@ pub fn commit_planned(store: &FolderStore, planned: &Plan) -> Result<(), Failure
         .map_err(Failure::from)
 }
 
-/// Writes a plan that came from outside (a saved file, an agent): only when it is well formed,
-/// not stale, and exactly what its operations give on the folder as it is now.
-pub fn apply_outside(store: &FolderStore, changes: &ChangeSet) -> Result<Plan, Failure> {
+/// Writes a plan that came from outside (a saved file, an agent) as the JSON it came in: only
+/// when it is well formed, not stale, and exactly what its operations give on the folder as it
+/// is now — the same JSON value, with no field added, left out or changed. `what` names the plan
+/// in a message that says it is not one.
+pub fn apply_outside(store: &FolderStore, received: &Value, what: &str) -> Result<Plan, Failure> {
+    let changes: ChangeSet = serde_json::from_value(received.clone())
+        .map_err(|e| Failure::usage(format!("{what}: {e}")))?;
+    let changes = &changes;
     validate_paths(changes).map_err(Failure::usage)?;
     store.preflight(changes).map_err(Failure::from)?;
     let planned = match recheck(&Snapshot::read(store), changes) {
@@ -138,6 +145,12 @@ pub fn apply_outside(store: &FolderStore, changes: &ChangeSet) -> Result<Plan, F
             })
         }
     };
+    if serde_json::to_value(&planned.changes).as_ref().ok() != Some(received) {
+        return Err(Failure {
+            kind: FailureKind::Refused,
+            lines: vec![RecheckError::NotMatching.to_string()],
+        });
+    }
     commit_planned(store, &planned)?;
     Ok(planned)
 }

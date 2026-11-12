@@ -22,8 +22,8 @@ Entries describe changes in Textree's own terms — never in terms of a particul
   `{"op": "move", "from": …, "to": …}`) and the policy it relies on (`policy`: `break_links`,
   recorded only when the plan does leave a link broken, `max_touched`, `max_bytes`). `textree apply`
   first refuses a stale plan, then plans the operations again on the folder as it is and writes
-  only when that gives exactly the saved plan — an edited plan is refused with
-  `refused [plan]: …` and nothing is written. Version 1 plans, which carry no operations, are
+  only when that gives exactly the saved plan, as JSON (a field added, left out or changed counts)
+  — an edited plan is refused with `refused [plan]: …` and nothing is written. Version 1 plans, which carry no operations, are
   refused; make them again.
 - A change set may list `new_broken` (links in new text that do not resolve) and `orphaned`
   (documents left with no links to them); both are reported, not refused, and absent when empty.

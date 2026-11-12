@@ -188,6 +188,34 @@ fn a_tampered_plan_is_refused_and_nothing_is_written() {
             "f: the policy",
             Box::new(|p| p["policy"]["break_links"] = json!(true)),
         ),
+        (
+            "an unknown field at the top",
+            Box::new(|p| p["extra"] = json!(1)),
+        ),
+        (
+            "an unknown field in an operation",
+            Box::new(|p| p["ops"][0]["extra"] = json!("x")),
+        ),
+        (
+            "an unknown field in a read version",
+            Box::new(|p| p["reads"][0]["extra"] = json!(true)),
+        ),
+        (
+            "an unknown field in the policy",
+            Box::new(|p| p["policy"]["extra"] = json!(0)),
+        ),
+        (
+            "an empty list left out",
+            Box::new(|p| {
+                p.as_object_mut().unwrap().remove("creates");
+            }),
+        ),
+        (
+            "the policy left out",
+            Box::new(|p| {
+                p.as_object_mut().unwrap().remove("policy");
+            }),
+        ),
     ];
     for (label, change) in tampered {
         let mut p = plan.clone();
