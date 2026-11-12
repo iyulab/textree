@@ -244,6 +244,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "textree-ffi"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "textree",
+ "textree-folder",
+]
+
+[[package]]
 name = "textree-folder"
 version = "0.1.0"
 dependencies = [

@@ -1,6 +1,11 @@
 [workspace]
 resolver = "2"
-members = ["crates/textree", "crates/textree-folder", "crates/textree-cli"]
+members = [
+    "crates/textree",
+    "crates/textree-folder",
+    "crates/textree-cli",
+    "crates/textree-ffi",
+]
 
 [workspace.package]
 version = "0.1.0"

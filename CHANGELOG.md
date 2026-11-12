@@ -34,6 +34,11 @@ Entries describe changes in Textree's own terms — never in terms of a particul
 
 ### Added
 
+- `textree-ffi`: a C interface over a folder — `textree_call(request_json)` returns response JSON,
+  freed with `textree_free`. Operations: `graph`, `check`, `tree`, `read_document`, `plan` and
+  `apply` (which writes a plan only if it is exactly what its operations give now). Errors carry
+  the text the command line prints for the same input. It is the native part of language
+  bindings and adds no rules of its own.
 - Two operations that put text in: `Op::Add { path, content }` creates a document (never over an
   existing one; a name that would take over another document's name links rewrites those links to
   a path), and `Op::Replace { path, content }` replaces the whole text of one (its old text is the
