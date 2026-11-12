@@ -29,8 +29,9 @@ cargo run --release -p textree-cli -- move path/to/notes a.md b.md --plan plan.j
 cargo run --release -p textree-cli -- apply path/to/notes plan.json         # …and apply it if it still holds
 ```
 
-Unicode names compare in normalization form C, so a link typed as `회의록` finds a file whose name the file
-system stores decomposed, and the other way round.
+Unicode names compare in normalization form C, so a link typed as `café` finds a file whose name the file
+system stores decomposed (`cafe` followed by a combining accent), and the other way round. A path given
+to a command or a tool is read the same way.
 
 ## MCP server
 
