@@ -494,3 +494,36 @@ fn a_forged_create_may_not_leave_the_folder() {
     assert!(!outside.path().join("escape.md").exists());
     assert!(s.path().join("a.md").exists());
 }
+
+#[cfg(unix)]
+#[test]
+fn a_symbolic_link_that_leads_outside_the_folder_is_not_part_of_it() {
+    use textree::ReadPort;
+    let s = Scratch::new();
+    s.file("a.md", "# A\n").file("sub/b.md", "# B\n");
+    let outside = Scratch::new();
+    outside.file("secret.md", "# Secret\n");
+    std::os::unix::fs::symlink(outside.path().join("secret.md"), s.path().join("out.md")).unwrap();
+    std::os::unix::fs::symlink(outside.path(), s.path().join("outdir")).unwrap();
+    std::os::unix::fs::symlink(s.path().join("sub/b.md"), s.path().join("in.md")).unwrap();
+    let store = FolderStore::open(s.path()).unwrap();
+    let mut listed: Vec<String> = store.list().nodes.into_iter().map(|n| n.path).collect();
+    listed.sort();
+    assert_eq!(listed, ["a.md", "in.md", "sub", "sub/b.md"]);
+    assert!(store.read("out.md").is_err());
+    assert!(store.read("outdir/secret.md").is_err());
+    assert_eq!(store.read("in.md").unwrap(), b"# B\n");
+    // Nothing can be planned on it.
+    let snap = Snapshot::read(&store);
+    for op in [
+        Op::Delete {
+            path: "out.md".into(),
+        },
+        Op::Move {
+            from: "out.md".into(),
+            to: "x.md".into(),
+        },
+    ] {
+        assert!(plan(&snap, &op, &Policy::default()).is_err(), "{op:?}");
+    }
+}

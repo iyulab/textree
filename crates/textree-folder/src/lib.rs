@@ -1,8 +1,9 @@
 //! A read port over a folder on disk.
 //!
 //! Every Markdown file (`.md`) is a document, every other file is an asset, every folder is a
-//! collection. Names that start with a dot (`.git`, `.obsidian`) are skipped, and symbolic
-//! links to folders are not followed. The folder is only ever read.
+//! collection. Names that start with a dot (`.git`, `.obsidian`) are skipped. A symbolic link
+//! to a file inside the folder is read like the file; one to a folder, or to anything outside
+//! the folder, is skipped, so nothing outside the folder is ever read.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -19,6 +20,9 @@ pub mod edit;
 #[derive(Clone, Debug)]
 pub struct FolderStore {
     root: PathBuf,
+    /// The root with every symbolic link on the way to it resolved: what lies inside the folder
+    /// resolves to a path under it.
+    real_root: PathBuf,
     /// For tests: make the n-th step of a commit fail, to prove that a failure is undone.
     fail_at: Option<usize>,
 }
@@ -29,6 +33,7 @@ impl FolderStore {
         let root = root.as_ref().to_path_buf();
         match fs::metadata(&root) {
             Ok(meta) if meta.is_dir() => Ok(FolderStore {
+                real_root: fs::canonicalize(&root).unwrap_or_else(|_| root.clone()),
                 root,
                 fail_at: None,
             }),
@@ -90,7 +95,11 @@ impl FolderStore {
                 });
                 self.walk(&entry.path(), &path, out);
             } else if file_type.is_file() || file_type.is_symlink() {
-                // A symbolic link to a folder is skipped; one to a file is read like the file.
+                // A symbolic link to a folder is skipped, and so is one that leads outside the
+                // folder; one to a file inside is read like the file.
+                if file_type.is_symlink() && !self.leads_inside(&entry.path()) {
+                    continue;
+                }
                 match fs::metadata(entry.path()) {
                     Ok(meta) if meta.is_dir() => continue,
                     Ok(meta) if is_document_path(&path) => {
@@ -122,6 +131,17 @@ impl FolderStore {
     }
 }
 
+impl FolderStore {
+    /// Whether a symbolic link resolves to somewhere inside the folder. A link that resolves to
+    /// nothing is kept, so the listing can say it cannot be read.
+    fn leads_inside(&self, link: &Path) -> bool {
+        match fs::canonicalize(link) {
+            Ok(target) => target.starts_with(&self.real_root),
+            Err(_) => true,
+        }
+    }
+}
+
 fn join(rel: &str, name: &str) -> String {
     if rel.is_empty() {
         name.to_string()
@@ -144,6 +164,9 @@ impl ReadPort for FolderStore {
                 return Err(format!("not a path inside the folder: {path}"));
             }
             full.push(part);
+        }
+        if fs::symlink_metadata(&full).is_ok() && !self.leads_inside(&full) {
+            return Err(format!("not a path inside the folder: {path}"));
         }
         fs::read(&full).map_err(|e| e.to_string())
     }

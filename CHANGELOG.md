@@ -9,6 +9,9 @@ Entries describe changes in Textree's own terms — never in terms of a particul
 
 ### Changed
 
+- A folder no longer reaches outside itself through a symbolic link: a link to a file outside the
+  folder is skipped like a link to a folder (it is not listed, read or changed, and links to it are
+  broken). A link to a file inside the folder is still read like the file.
 - A tag has to start with a letter or an underscore. Written forms that start with a digit
   (`#123`, `#1577th`, `#2024-goals`) are no longer read as tags; front matter tags are not
   affected.
