@@ -6,6 +6,8 @@
 //!   (and with `--apply` make it); links are rewritten so that they keep meaning what they meant.
 //! * `textree split <folder> <doc>` and `textree merge <folder> <into> <from>...` — turn one
 //!   document into a folder of documents, one per section, or the other way round.
+//! * `textree add <folder> <path> <file>` and `textree replace <folder> <path> <file>` — add a
+//!   document, or replace the text of one, with the text of a file (`-` reads standard input).
 //! * `textree apply <folder> <plan>` — apply a plan that was saved with `--plan`.
 //!
 //! This is an observation and test tool, not a published product.
@@ -93,6 +95,30 @@ enum Command {
         #[command(flatten)]
         opts: edit::Options,
     },
+    /// Add a document with the text of a file; shows the plan, writes with --apply
+    Add {
+        /// The folder to work in
+        folder: String,
+        /// The new document, relative to the folder
+        path: String,
+        /// A file with its text (`-` reads standard input)
+        #[arg(value_name = "FILE")]
+        content: String,
+        #[command(flatten)]
+        opts: edit::Options,
+    },
+    /// Replace the text of a document with the text of a file; shows the plan, writes with --apply
+    Replace {
+        /// The folder to work in
+        folder: String,
+        /// The document, relative to the folder
+        path: String,
+        /// A file with its new text (`-` reads standard input)
+        #[arg(value_name = "FILE")]
+        content: String,
+        #[command(flatten)]
+        opts: edit::Options,
+    },
     /// Apply a plan saved with --plan; refuses when the folder changed since
     Apply {
         /// The folder the plan was made for
@@ -166,6 +192,29 @@ fn main() -> ExitCode {
             from,
             opts,
         } => edit::run(&folder, textree::Op::Merge { into, from }, false, &opts),
+        Command::Add {
+            folder,
+            path,
+            content,
+            opts,
+        } => match edit::read_text(&content) {
+            Ok(content) => edit::run(&folder, textree::Op::Add { path, content }, false, &opts),
+            Err(code) => code,
+        },
+        Command::Replace {
+            folder,
+            path,
+            content,
+            opts,
+        } => match edit::read_text(&content) {
+            Ok(content) => edit::run(
+                &folder,
+                textree::Op::Replace { path, content },
+                false,
+                &opts,
+            ),
+            Err(code) => code,
+        },
         Command::Apply { folder, plan } => edit::apply_saved(&folder, &plan),
     }
 }

@@ -27,6 +27,18 @@ pub struct Options {
     max_bytes: Option<usize>,
 }
 
+/// The text of a file, or of standard input for `-`.
+pub fn read_text(file: &str) -> Result<String, ExitCode> {
+    let bytes = if file == "-" {
+        let mut buf = Vec::new();
+        std::io::Read::read_to_end(&mut std::io::stdin(), &mut buf).map_err(usage)?;
+        buf
+    } else {
+        fs::read(file).map_err(|e| usage(format!("{file}: {e}")))?
+    };
+    String::from_utf8(bytes).map_err(|_| usage(format!("{file}: not valid UTF-8 text")))
+}
+
 fn usage(message: impl std::fmt::Display) -> ExitCode {
     eprintln!("error: {message}");
     ExitCode::from(2)
@@ -72,7 +84,7 @@ pub fn run(folder: &str, op: Op, break_links: bool, opts: &Options) -> ExitCode 
         eprintln!("refused [I5] {why}");
         return ExitCode::from(1);
     }
-    print_plan(changes, matches!(op, Op::Split { .. } | Op::Merge { .. }));
+    print_plan(changes, &op);
     if !opts.apply {
         println!("Dry run: nothing was written. Use --apply to write.");
         return ExitCode::SUCCESS;
@@ -195,6 +207,13 @@ fn applied_line(changes: &ChangeSet) -> String {
     if n > 0 {
         parts.push(format!("{n} deleted"));
     }
+    if parts.is_empty() && !changes.writes.is_empty() {
+        let n = changes.writes.len();
+        parts.push(format!(
+            "{n} {} written",
+            if n == 1 { "document" } else { "documents" }
+        ));
+    }
     format!("Applied: {}.", parts.join(", "))
 }
 
@@ -203,7 +222,7 @@ fn plural(n: usize, one: &str, many: &str) -> String {
 }
 
 /// The plan, as it is shown: what moves and goes, then which links are written differently.
-fn print_plan(changes: &ChangeSet, restructure: bool) {
+fn print_plan(changes: &ChangeSet, op: &Op) {
     for m in &changes.moves {
         println!("move     {} -> {}", m.from, m.to);
     }
@@ -254,8 +273,24 @@ fn print_plan(changes: &ChangeSet, restructure: bool) {
         }
         println!();
     }
-    if restructure {
+    for b in &changes.new_broken {
+        println!(
+            "broken   {}:{}: {} (in the new text; allowed)",
+            b.path,
+            b.line,
+            one_line(&b.link)
+        );
+    }
+    for o in &changes.orphaned {
+        println!("orphan   {o} (nothing links to it any more; allowed)");
+    }
+    if !changes.new_broken.is_empty() || !changes.orphaned.is_empty() {
+        println!();
+    }
+    if matches!(op, Op::Split { .. } | Op::Merge { .. }) {
         println!("checks   nothing disappears · links intact · no name clashes");
+    } else if matches!(op, Op::Add { .. } | Op::Replace { .. }) {
+        println!("checks   links intact · no name clashes");
     } else {
         println!("checks   content kept · links intact · no empty folders · no name clashes");
     }

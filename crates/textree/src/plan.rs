@@ -11,8 +11,8 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::ops::Range as StdRange;
 
 use crate::change::{
-    nodes_fingerprint, ChangeSet, Delete, Move, Op, PlanError, Policy, ReadVersion, Rewrite,
-    Violation, Write,
+    nodes_fingerprint, BrokenRef, ChangeSet, Delete, Move, Op, PlanError, Policy, ReadVersion,
+    Rewrite, Violation, Write,
 };
 use crate::graph::{build_graph, Graph};
 use crate::path::{
@@ -165,6 +165,8 @@ fn plan_op(snapshot: &Snapshot, op: &Op, policy: &Policy) -> Result<Plan, PlanEr
         Op::Move { from, to } => plan_move(snapshot, from, to, policy),
         Op::Delete { path } => plan_delete(snapshot, path, policy),
         Op::Split { .. } | Op::Merge { .. } => restructure::plan(snapshot, op, policy),
+        Op::Add { path, content } => plan_add(snapshot, path, content, policy),
+        Op::Replace { path, content } => plan_replace(snapshot, path, content, policy),
     }
 }
 
@@ -457,6 +459,8 @@ fn settle_folders(
 enum MoveKind {
     Moving { to: String },
     Deleting { removed: BTreeSet<String> },
+    Adding { path: String, bytes: Vec<u8> },
+    Replacing { path: String, bytes: Vec<u8> },
 }
 
 fn empty_changes(snap: &Snapshot) -> ChangeSet {
@@ -472,6 +476,8 @@ fn empty_changes(snap: &Snapshot) -> ChangeSet {
         deletes: Vec::new(),
         remove_folders: Vec::new(),
         rewrites: Vec::new(),
+        new_broken: Vec::new(),
+        orphaned: Vec::new(),
     }
 }
 
@@ -486,7 +492,11 @@ fn finish(
     let new_index = Index::new(&moved.nodes);
     let removed: BTreeSet<String> = match &kind {
         MoveKind::Deleting { removed } => removed.clone(),
-        MoveKind::Moving { .. } => BTreeSet::new(),
+        _ => BTreeSet::new(),
+    };
+    let replaced: Option<&str> = match &kind {
+        MoveKind::Replacing { path, .. } => Some(path.as_str()),
+        _ => None,
     };
     let map = |p: &str| -> String {
         moved
@@ -505,6 +515,25 @@ fn finish(
     for (path, bytes) in &snap.files {
         if removed.contains(path) {
             continue;
+        }
+        if let MoveKind::Replacing {
+            path: target,
+            bytes: text,
+        } = &kind
+        {
+            if path == target {
+                writes.push(Write {
+                    path: path.clone(),
+                    content: String::from_utf8_lossy(text).into_owned(),
+                    note: Some(format!(
+                        "new text, {} replacing {}",
+                        plural_lines(count_lines(text)),
+                        plural_lines(count_lines(bytes))
+                    )),
+                });
+                new_files.insert(path.clone(), text.clone());
+                continue;
+            }
         }
         let (_, reading) = &snap.readings[path];
         let new_path = map(path);
@@ -584,6 +613,18 @@ fn finish(
         delete_violations.sort_by(|a, b| (&a.path, a.line).cmp(&(&b.path, b.line)));
         return Err(PlanError::Refused(delete_violations));
     }
+    let mut creates = Vec::new();
+    if let MoveKind::Adding { path, bytes } = &kind {
+        creates.push(Write {
+            path: path.clone(),
+            content: String::from_utf8_lossy(bytes).into_owned(),
+            note: Some(format!(
+                "new document, {}",
+                plural_lines(count_lines(bytes))
+            )),
+        });
+        new_files.insert(path.clone(), bytes.clone());
+    }
     writes.sort_by(|a, b| a.path.cmp(&b.path));
     rewrites.sort_by(|a, b| (&a.path, a.line, &a.before).cmp(&(&b.path, b.line, &b.before)));
 
@@ -617,19 +658,45 @@ fn finish(
     });
     let old_graph = snap.graph();
     let mut violations = Vec::new();
+    let mut orphaned = Vec::new();
     check_links(
         &old_graph,
         &expected,
         &map,
         &removed,
+        replaced,
+        match &kind {
+            MoveKind::Adding { path, .. } => Some(path.as_str()),
+            _ => None,
+        },
         policy,
         &mut violations,
+        &mut orphaned,
     );
+    if let Some(target) = replaced {
+        check_headings_kept(&old_graph, &expected, target, &mut violations);
+    }
+    // Links in the new text that do not resolve are allowed and reported.
+    let written = match &kind {
+        MoveKind::Adding { path, .. } | MoveKind::Replacing { path, .. } => Some(path.as_str()),
+        _ => None,
+    };
+    let new_broken: Vec<BrokenRef> = expected
+        .broken
+        .iter()
+        .filter(|b| Some(b.from.as_str()) == written)
+        .map(|b| BrokenRef {
+            path: b.from.clone(),
+            line: b.line,
+            link: b.link.clone(),
+        })
+        .collect();
 
     // I4: budget.
     let root_path = match &kind {
         MoveKind::Moving { to } => to.clone(),
         MoveKind::Deleting { removed } => removed.iter().next().cloned().unwrap_or_default(),
+        MoveKind::Adding { path, .. } | MoveKind::Replacing { path, .. } => path.clone(),
     };
     let mut touched: BTreeSet<&str> = writes.iter().map(|w| w.path.as_str()).collect();
     touched.insert(root_path.as_str());
@@ -696,15 +763,21 @@ fn finish(
         reads,
         moves: match &kind {
             MoveKind::Moving { .. } => moved.moves.clone(),
-            MoveKind::Deleting { .. } => Vec::new(),
+            _ => Vec::new(),
         },
-        creates: Vec::new(),
+        creates,
         writes,
         deletes,
         remove_folders,
         rewrites,
+        new_broken,
+        orphaned,
     };
     Ok(Plan { changes, expected })
+}
+
+fn plural_lines(n: usize) -> String {
+    format!("{n} {}", if n == 1 { "line" } else { "lines" })
 }
 
 fn count_lines(bytes: &[u8]) -> usize {
@@ -933,13 +1006,17 @@ fn content_preserved(old: &[u8], new: &[u8], edits: &[Edit], spans: &[StdRange<u
 
 /// I2 and I3: every link that resolved still resolves to the same document, every link that was
 /// broken is untouched, and nothing that was linked to loses all its links.
+#[allow(clippy::too_many_arguments)]
 fn check_links(
     old: &Graph,
     new: &Graph,
     map: &dyn Fn(&str) -> String,
     removed: &BTreeSet<String>,
+    replaced: Option<&str>,
+    added: Option<&str>,
     policy: &Policy,
     out: &mut Vec<Violation>,
+    orphaned: &mut Vec<String>,
 ) {
     let mut old_by_doc: BTreeMap<&str, Vec<&crate::graph::Link>> = BTreeMap::new();
     for l in &old.links {
@@ -950,7 +1027,8 @@ fn check_links(
         new_by_doc.entry(l.from.as_str()).or_default().push(l);
     }
     for (doc, links) in &old_by_doc {
-        if removed.contains(*doc) {
+        // The links of a document whose text is replaced go with its old text.
+        if removed.contains(*doc) || Some(*doc) == replaced {
             continue;
         }
         let new_doc = map(doc);
@@ -992,6 +1070,8 @@ fn check_links(
                     message: format!("{} would no longer reach the same document", a.link),
                 }),
                 (None, None) if b.link == a.link => {}
+                // A link that waited for the document just added now finds it.
+                (None, Some(t2)) if Some(t2.as_str()) == added && b.link == a.link => {}
                 (None, _) => out.push(Violation {
                     invariant: "I2",
                     path: new_doc.clone(),
@@ -1016,6 +1096,12 @@ fn check_links(
             if removed.contains(s) {
                 continue;
             }
+            if Some(s.as_str()) == replaced {
+                if still.is_empty() && !orphaned.contains(&new_target) {
+                    orphaned.push(new_target.clone());
+                }
+                continue;
+            }
             if !still.contains(map(s).as_str()) {
                 out.push(Violation {
                     invariant: "I3",
@@ -1026,6 +1112,179 @@ fn check_links(
             }
         }
     }
+}
+
+/// I2 for a replaced text: every link from another document that named one of its headings still
+/// names a heading of the new text.
+fn check_headings_kept(old: &Graph, new: &Graph, target: &str, out: &mut Vec<Violation>) {
+    let anchors = |g: &Graph| -> Vec<String> {
+        g.documents
+            .iter()
+            .find(|d| d.path == target)
+            .map(|d| {
+                let titles: Vec<&str> = d.headings.iter().map(|h| h.text.as_str()).collect();
+                crate::anchors::anchors_of(&titles)
+            })
+            .unwrap_or_default()
+    };
+    let (before, after) = (anchors(old), anchors(new));
+    for l in &old.links {
+        if l.from == target || l.to.as_deref() != Some(target) {
+            continue;
+        }
+        let Some(fragment) = &l.heading else { continue };
+        if restructure::heading_for(fragment, &before).is_some()
+            && restructure::heading_for(fragment, &after).is_none()
+        {
+            out.push(Violation {
+                invariant: "I2",
+                path: l.from.clone(),
+                line: Some(l.line),
+                message: format!("{} names a heading the new text does not have", l.link),
+            });
+        }
+    }
+}
+
+/// A text as a document keeps it: ending with a line break.
+fn with_final_newline(content: &str) -> Vec<u8> {
+    let mut text = content.to_string();
+    if !text.ends_with('\n') {
+        text.push('\n');
+    }
+    text.into_bytes()
+}
+
+fn plan_add(
+    snap: &Snapshot,
+    path: &str,
+    content: &str,
+    policy: &Policy,
+) -> Result<Plan, PlanError> {
+    usage_path(path, "path")?;
+    let mut violations = Vec::new();
+    let mut refuse = |at: &str, message: String| {
+        violations.push(Violation {
+            invariant: "I5",
+            path: at.to_string(),
+            line: None,
+            message,
+        })
+    };
+    if path.split('/').any(|piece| piece.starts_with('.')) {
+        refuse(
+            path,
+            "a name that starts with a dot is hidden and is never read".to_string(),
+        );
+    }
+    if !crate::port::is_document_path(path) {
+        refuse(path, "a document must have the .md extension".to_string());
+    }
+    let kinds: HashMap<&str, NodeKind> = snap
+        .nodes
+        .iter()
+        .map(|n| (n.path.as_str(), n.kind))
+        .collect();
+    let mut prefix = String::new();
+    let pieces: Vec<&str> = path.split('/').collect();
+    for piece in &pieces[..pieces.len() - 1] {
+        if !prefix.is_empty() {
+            prefix.push('/');
+        }
+        prefix.push_str(piece);
+        if matches!(kinds.get(prefix.as_str()), Some(k) if *k != NodeKind::Collection) {
+            refuse(&prefix, "is not a folder".to_string());
+        }
+    }
+    for n in &snap.nodes {
+        if lower(dir_of(&n.path)) == lower(dir_of(path))
+            && lower(name_of(&n.path)) == lower(name_of(path))
+        {
+            if n.path == path {
+                refuse(path, "already exists".to_string());
+            } else {
+                refuse(
+                    path,
+                    format!(
+                        "clashes with {} (names that differ only in case or form)",
+                        n.path
+                    ),
+                );
+            }
+        }
+    }
+    if !violations.is_empty() {
+        return Err(PlanError::Refused(violations));
+    }
+    let bytes = with_final_newline(content);
+    let mut nodes = snap.nodes.clone();
+    nodes.push(Node {
+        path: path.to_string(),
+        kind: NodeKind::Document,
+        version: crate::port::content_version(&bytes),
+    });
+    let (nodes, remove_folders) = settle_folders(snap, &mut nodes, &HashMap::new(), Some(path));
+    let moved = Moved {
+        mapping: HashMap::new(),
+        nodes,
+        remove_folders,
+        moves: Vec::new(),
+    };
+    finish(
+        snap,
+        &moved,
+        MoveKind::Adding {
+            path: path.to_string(),
+            bytes,
+        },
+        policy,
+    )
+}
+
+fn plan_replace(
+    snap: &Snapshot,
+    path: &str,
+    content: &str,
+    policy: &Policy,
+) -> Result<Plan, PlanError> {
+    usage_path(path, "path")?;
+    let Some(old) = snap.files.get(path) else {
+        return Err(PlanError::Usage(format!("no such document: {path}")));
+    };
+    let bytes = with_final_newline(content);
+    if bytes == *old {
+        return Ok(Plan {
+            changes: empty_changes(snap),
+            expected: snap.graph(),
+        });
+    }
+    let nodes: Vec<Node> = snap
+        .nodes
+        .iter()
+        .map(|n| Node {
+            version: if n.path == path {
+                crate::port::content_version(&bytes)
+            } else {
+                n.version.clone()
+            },
+            ..n.clone()
+        })
+        .collect();
+    let moved = Moved {
+        mapping: HashMap::new(),
+        nodes,
+        remove_folders: Vec::new(),
+        moves: Vec::new(),
+    };
+    finish(
+        snap,
+        &moved,
+        MoveKind::Replacing {
+            path: path.to_string(),
+            bytes,
+        },
+        policy,
+    )
 }
 
 fn plan_delete(snap: &Snapshot, path: &str, policy: &Policy) -> Result<Plan, PlanError> {

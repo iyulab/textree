@@ -24,6 +24,11 @@ pub enum Op {
     Split { path: String, level: u8 },
     /// Merge documents into another one: each becomes a section of it and is deleted.
     Merge { into: String, from: Vec<String> },
+    /// Add a new document with this text. A text that does not end with a line break gets one.
+    Add { path: String, content: String },
+    /// Replace the whole text of a document. Its old text is the declared removal; the links
+    /// that came to it have to keep working, headings they name included.
+    Replace { path: String, content: String },
 }
 
 /// Limits and switches for planning.
@@ -115,6 +120,20 @@ pub struct ChangeSet {
     /// Folders that the change leaves empty; a store removes them when they really are.
     pub remove_folders: Vec<String>,
     pub rewrites: Vec<Rewrite>,
+    /// Links in the new text that do not resolve — allowed, and said so.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub new_broken: Vec<BrokenRef>,
+    /// Documents that no longer have any link to them after the change — allowed, and said so.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub orphaned: Vec<String>,
+}
+
+/// A link that does not resolve.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BrokenRef {
+    pub path: String,
+    pub line: usize,
+    pub link: String,
 }
 
 impl ChangeSet {

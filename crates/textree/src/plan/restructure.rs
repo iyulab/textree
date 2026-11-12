@@ -143,7 +143,7 @@ fn same_anchor(fragment: &str, anchor: &str) -> bool {
 
 /// Which heading of a document a fragment names: the first whose anchor is the fragment, or
 /// whose anchor is the slug of the fragment (a wiki link writes the heading text).
-fn heading_for(fragment: &str, anchors: &[String]) -> Option<usize> {
+pub(super) fn heading_for(fragment: &str, anchors: &[String]) -> Option<usize> {
     let fragment = nfc(fragment);
     let lower = fragment.to_lowercase();
     let slug = github_slug(&fragment);
@@ -1084,6 +1084,8 @@ fn split(snap: &Snapshot, path: &str, level: u8, policy: &Policy) -> Result<Plan
         deletes: Vec::new(),
         remove_folders: Vec::new(),
         rewrites,
+        new_broken: Vec::new(),
+        orphaned: Vec::new(),
     };
     Ok(Plan { changes, expected })
 }
@@ -1543,6 +1545,8 @@ fn merge(snap: &Snapshot, into: &str, from: &[String], policy: &Policy) -> Resul
         deletes,
         remove_folders,
         rewrites,
+        new_broken: Vec::new(),
+        orphaned: Vec::new(),
     };
     Ok(Plan { changes, expected })
 }

@@ -22,6 +22,8 @@ Entries describe changes in Textree's own terms — never in terms of a particul
   only when that gives exactly the saved plan — an edited plan is refused with
   `refused [plan]: …` and nothing is written. Version 1 plans, which carry no operations, are
   refused; make them again.
+- A change set may list `new_broken` (links in new text that do not resolve) and `orphaned`
+  (documents left with no links to them); both are reported, not refused, and absent when empty.
 - Names, paths, heading fragments and tags compare in Unicode normalization form C. A link written in
   one form now finds a document whose file name is stored in the other (for example a decomposed
   Korean or accented name on disk and a precomposed one typed in a link); tags in both forms are one
@@ -32,6 +34,13 @@ Entries describe changes in Textree's own terms — never in terms of a particul
 
 ### Added
 
+- Two operations that put text in: `Op::Add { path, content }` creates a document (never over an
+  existing one; a name that would take over another document's name links rewrites those links to
+  a path), and `Op::Replace { path, content }` replaces the whole text of one (its old text is the
+  declared removal; links from other documents keep working, and a replacement that drops a
+  heading another document links to is refused). A text that does not end with a line break gets
+  one. On the command line: `textree add <folder> <path> <file>` and
+  `textree replace <folder> <path> <file>` (`-` reads standard input).
 - Scope and planned contracts (design stage).
 - `textree` crate: reads Markdown documents (links, wiki links, tags, headings, with byte ranges; code is
   never read) and derives a relation graph — resolved links, backlinks, tags, broken links and orphans.
