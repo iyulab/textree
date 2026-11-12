@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <Description>Textree for .NET: a deterministic engine for hierarchical Markdown folders — links, backlinks, tags, and changes that keep links intact.</Description>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+  <!--
+    The native library. By default it is built from the Rust workspace with cargo (release).
+    Set TextreeNativeLibrary to a prebuilt file (for another platform) to use that instead.
+  -->
+  <PropertyGroup>
+    <TextreeNativeName Condition="$([MSBuild]::IsOSPlatform('OSX'))">libtextree_ffi.dylib</TextreeNativeName>
+    <TextreeNativeName Condition="$([MSBuild]::IsOSPlatform('Linux'))">libtextree_ffi.so</TextreeNativeName>
+    <TextreeNativeName Condition="$([MSBuild]::IsOSPlatform('Windows'))">textree_ffi.dll</TextreeNativeName>
+  </PropertyGroup>
+
+  <Target Name="BuildTextreeNative" BeforeTargets="AssignTargetPaths" Condition="'$(TextreeNativeLibrary)' == ''">
+    <Exec Command="cargo build --release --quiet -p textree-ffi" WorkingDirectory="$(TextreeCargoRoot)" />
+    <PropertyGroup>
+      <TextreeNativeLibrary>$(TextreeCargoRoot)/target/release/$(TextreeNativeName)</TextreeNativeLibrary>
+    </PropertyGroup>
+  </Target>
+
+  <Target Name="IncludeTextreeNative" BeforeTargets="AssignTargetPaths" DependsOnTargets="BuildTextreeNative">
+    <ItemGroup>
+      <None Include="$(TextreeNativeLibrary)" Link="%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+    </ItemGroup>
+  </Target>
+</Project>

@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <Description>An MCP server (stdio) over a folder of Markdown documents: read the hierarchy and its links, and change it without breaking them.</Description>
+    <AssemblyName>Textree.Mcp</AssemblyName>
+    <RootNamespace>Textree.Mcp</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="ModelContextProtocol" Version="2.4.0" />
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.15" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Textree/Textree.csproj" />
+  </ItemGroup>
+</Project>

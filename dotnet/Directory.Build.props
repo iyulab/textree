@@ -1,0 +1,15 @@
+<Project>
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <Version>0.1.0</Version>
+    <Authors>iyulab</Authors>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <RepositoryUrl>https://github.com/iyulab/textree</RepositoryUrl>
+    <!-- The Rust workspace that builds the native library. -->
+    <TextreeCargoRoot>$(MSBuildThisFileDirectory)..</TextreeCargoRoot>
+  </PropertyGroup>
+</Project>

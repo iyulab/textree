@@ -34,6 +34,15 @@ Entries describe changes in Textree's own terms — never in terms of a particul
 
 ### Added
 
+- `Textree` for .NET (`dotnet/src/Textree`): a `Folder` over the C interface — graph, check, tree,
+  read a document, plan an operation, apply a plan. The native library is built with cargo.
+- `Textree.Mcp` (`dotnet/src/Textree.Mcp`): an MCP server over stdio for one folder
+  (`--root <folder>`). Eleven tools: `tree`, `read_document`, `graph` and `check` read;
+  `move`, `delete`, `split`, `merge`, `add_document` and `replace_document` return a plan and write
+  nothing; `apply_plan` is the only tool that writes. Every tool carries its safety hints. Results
+  are the engine's JSON (as structured content, and as text); refusals and bad arguments are tool
+  errors whose text is what the command line prints. The server reads no configuration from the
+  environment, uses no network, and writes nothing to standard output but MCP messages.
 - `textree-ffi`: a C interface over a folder — `textree_call(request_json)` returns response JSON,
   freed with `textree_free`. Operations: `graph`, `check`, `tree`, `read_document`, `plan` and
   `apply` (which writes a plan only if it is exactly what its operations give now). Errors carry
