@@ -40,10 +40,34 @@ public static class Arguments
             {
                 continue;
             }
-            var types = TypesOf(property);
-            if (types.Count > 0 && !types.Any(t => Fits(t, value)))
+            if (Mismatch(name, property, value) is { } problem)
             {
-                return $"error: {name}: expected {string.Join(" or ", types.Where(t => t != "null"))}";
+                return problem;
+            }
+        }
+        return null;
+    }
+
+    /// <summary>What is wrong with a value for a schema (an array's elements included), or null.</summary>
+    private static string? Mismatch(string name, JsonElement schema, JsonElement value)
+    {
+        var types = TypesOf(schema);
+        if (types.Count > 0 && !types.Any(t => Fits(t, value)))
+        {
+            return $"error: {name}: expected {string.Join(" or ", types.Where(t => t != "null"))}";
+        }
+        if (value.ValueKind == JsonValueKind.Array
+            && schema.TryGetProperty("items", out var items)
+            && items.ValueKind == JsonValueKind.Object)
+        {
+            var i = 0;
+            foreach (var element in value.EnumerateArray())
+            {
+                if (Mismatch($"{name}[{i}]", items, element) is { } problem)
+                {
+                    return problem;
+                }
+                i++;
             }
         }
         return null;

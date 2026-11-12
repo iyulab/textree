@@ -53,8 +53,8 @@ public sealed class Tools(Folder folder)
     public CallToolResult Move(
         [Description("What to move, relative to the knowledge folder.")] string from,
         [Description("Its new full path, relative to the knowledge folder.")] string to,
-        [Description("Refuse a change that would touch more than this many documents.")] int? max_touched = null,
-        [Description("Refuse a change that would rewrite more than this many bytes of links.")] int? max_bytes = null)
+        [Description("Refuse a change that would touch more than this many nodes.")] long? max_touched = null,
+        [Description("Refuse a change that would rewrite more than this many bytes of links.")] long? max_bytes = null)
         => Plan(new JsonObject { ["op"] = "move", ["from"] = from, ["to"] = to }, false, max_touched, max_bytes);
 
     [McpServerTool(Name = "delete", Title = "Plan a delete", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
@@ -62,17 +62,17 @@ public sealed class Tools(Folder folder)
     public CallToolResult Delete(
         [Description("What to delete, relative to the knowledge folder.")] string path,
         [Description("Allow links to the deleted things to be left pointing at nothing.")] bool break_links = false,
-        [Description("Refuse a change that would touch more than this many documents.")] int? max_touched = null,
-        [Description("Refuse a change that would rewrite more than this many bytes of links.")] int? max_bytes = null)
+        [Description("Refuse a change that would touch more than this many nodes.")] long? max_touched = null,
+        [Description("Refuse a change that would rewrite more than this many bytes of links.")] long? max_bytes = null)
         => Plan(new JsonObject { ["op"] = "delete", ["path"] = path }, break_links, max_touched, max_bytes);
 
     [McpServerTool(Name = "split", Title = "Plan a split", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
     [Description("Plans splitting a document at its headings of one level: it becomes a folder whose own document keeps the text before the first such heading and a list of links, and each section becomes a document. Links that named a section follow it. Returns the plan; nothing is written until apply_plan.")]
     public CallToolResult Split(
         [Description("The document to split, relative to the knowledge folder.")] string path,
-        [Description("The heading level to split at (1-6, default 2).")] int level = 2,
-        [Description("Refuse a change that would touch more than this many documents.")] int? max_touched = null,
-        [Description("Refuse a change that would rewrite more than this many bytes of links.")] int? max_bytes = null)
+        [Description("The heading level to split at (1-6, default 2).")] long level = 2,
+        [Description("Refuse a change that would touch more than this many nodes.")] long? max_touched = null,
+        [Description("Refuse a change that would rewrite more than this many bytes of links.")] long? max_bytes = null)
         => Plan(new JsonObject { ["op"] = "split", ["path"] = path, ["level"] = level }, false, max_touched, max_bytes);
 
     [McpServerTool(Name = "merge", Title = "Plan a merge", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
@@ -80,8 +80,8 @@ public sealed class Tools(Folder folder)
     public CallToolResult Merge(
         [Description("The document that receives the others.")] string into,
         [Description("The documents to merge in, in the order of their sections.")] string[] from,
-        [Description("Refuse a change that would touch more than this many documents.")] int? max_touched = null,
-        [Description("Refuse a change that would rewrite more than this many bytes of links.")] int? max_bytes = null)
+        [Description("Refuse a change that would touch more than this many nodes.")] long? max_touched = null,
+        [Description("Refuse a change that would rewrite more than this many bytes of links.")] long? max_bytes = null)
         => Plan(new JsonObject { ["op"] = "merge", ["into"] = into, ["from"] = new JsonArray(from.Select(f => (JsonNode?)JsonValue.Create(f)).ToArray()) }, false, max_touched, max_bytes);
 
     [McpServerTool(Name = "add_document", Title = "Plan a new document", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
@@ -89,8 +89,8 @@ public sealed class Tools(Folder folder)
     public CallToolResult AddDocument(
         [Description("The new document, relative to the knowledge folder, ending in .md.")] string path,
         [Description("Its Markdown text.")] string content,
-        [Description("Refuse a change that would touch more than this many documents.")] int? max_touched = null,
-        [Description("Refuse a change that would rewrite more than this many bytes of links.")] int? max_bytes = null)
+        [Description("Refuse a change that would touch more than this many nodes.")] long? max_touched = null,
+        [Description("Refuse a change that would rewrite more than this many bytes of links.")] long? max_bytes = null)
         => Plan(new JsonObject { ["op"] = "add", ["path"] = path, ["content"] = content }, false, max_touched, max_bytes);
 
     [McpServerTool(Name = "replace_document", Title = "Plan new text for a document", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
@@ -98,8 +98,8 @@ public sealed class Tools(Folder folder)
     public CallToolResult ReplaceDocument(
         [Description("The document, relative to the knowledge folder.")] string path,
         [Description("Its new Markdown text.")] string content,
-        [Description("Refuse a change that would touch more than this many documents.")] int? max_touched = null,
-        [Description("Refuse a change that would rewrite more than this many bytes of links.")] int? max_bytes = null)
+        [Description("Refuse a change that would touch more than this many nodes.")] long? max_touched = null,
+        [Description("Refuse a change that would rewrite more than this many bytes of links.")] long? max_bytes = null)
         => Plan(new JsonObject { ["op"] = "replace", ["path"] = path, ["content"] = content }, false, max_touched, max_bytes);
 
     // ---- writing --------------------------------------------------------------------------------
@@ -112,7 +112,7 @@ public sealed class Tools(Folder folder)
 
     // ---- helpers --------------------------------------------------------------------------------
 
-    private CallToolResult Plan(JsonObject operation, bool breakLinks, int? maxTouched, int? maxBytes)
+    private CallToolResult Plan(JsonObject operation, bool breakLinks, long? maxTouched, long? maxBytes)
     {
         var policy = new JsonObject
         {

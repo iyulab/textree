@@ -145,6 +145,14 @@ public sealed class ServerTests
         var outside = await Call(client, "read_document", new { path = "../x.md" });
         Assert.True(outside.IsError);
         Assert.StartsWith("error: ", Text(outside));
+        var element = await Call(client, "merge", new { into = "index.md", from = new object[] { 1 } });
+        Assert.True(element.IsError);
+        Assert.Equal("error: from[0]: expected string\n", Text(element));
+        var large = await Call(client, "move", new { from = "plan.md", to = "p.md", max_touched = 3000000000L });
+        Assert.NotEqual(true, large.IsError);
+        var huge = await Call(client, "move", new { from = "plan.md", to = "p.md", max_touched = 1e20 });
+        Assert.True(huge.IsError);
+        Assert.Equal("error: max_touched: expected integer\n", Text(huge));
         var check = await Call(client, "check");
         Assert.NotEqual(true, check.IsError);
         Assert.Equal("no broken links\n", JsonNode.Parse(Text(check))!["text"]!.GetValue<string>());
