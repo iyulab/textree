@@ -5,10 +5,8 @@ use std::fs;
 use std::process::ExitCode;
 
 use clap::Args;
-use textree::{
-    build_graph, plan, recheck, validate_paths, ChangeSet, CommitError, Graph, Op, Plan, PlanError,
-    Policy, RecheckError, Snapshot,
-};
+use textree::{ChangeSet, Op, Policy};
+use textree_folder::edit::{applied_line, apply_outside, commit_planned, plan_change, Failure};
 use textree_folder::FolderStore;
 
 #[derive(Args, Debug)]
@@ -44,6 +42,11 @@ fn usage(message: impl std::fmt::Display) -> ExitCode {
     ExitCode::from(2)
 }
 
+fn fail(f: Failure) -> ExitCode {
+    eprint!("{}", f.text());
+    ExitCode::from(f.exit_code())
+}
+
 pub fn run(folder: &str, op: Op, break_links: bool, opts: &Options) -> ExitCode {
     let store = match FolderStore::open(folder) {
         Ok(store) => store,
@@ -54,16 +57,9 @@ pub fn run(folder: &str, op: Op, break_links: bool, opts: &Options) -> ExitCode 
         max_changed_bytes: opts.max_bytes,
         break_links,
     };
-    let snapshot = Snapshot::read(&store);
-    let planned = match plan(&snapshot, &op, &policy) {
+    let planned = match plan_change(&store, &op, &policy) {
         Ok(planned) => planned,
-        Err(PlanError::Usage(message)) => return usage(message),
-        Err(PlanError::Refused(violations)) => {
-            for v in &violations {
-                eprintln!("{v}");
-            }
-            return ExitCode::from(1);
-        }
+        Err(f) => return fail(f),
     };
     let changes = &planned.changes;
     if changes.is_empty() {
@@ -79,18 +75,13 @@ pub fn run(folder: &str, op: Op, break_links: bool, opts: &Options) -> ExitCode 
             return usage(format!("{file}: {e}"));
         }
     }
-    // The disk can say no where the plan cannot: a destination behind a symbolic link.
-    if let Err(CommitError::Invalid(why)) = store.preflight(changes) {
-        eprintln!("refused [I5] {why}");
-        return ExitCode::from(1);
-    }
     print_plan(changes, &op);
     if !opts.apply {
         println!("Dry run: nothing was written. Use --apply to write.");
         return ExitCode::SUCCESS;
     }
-    if let Err(e) = commit_verified(&store, &planned) {
-        return report_commit_error(e);
+    if let Err(f) = commit_planned(&store, &planned) {
+        return fail(f);
     }
     println!("{}", applied_line(changes));
     ExitCode::SUCCESS
@@ -109,112 +100,13 @@ pub fn apply_saved(folder: &str, plan_file: &str) -> ExitCode {
         Ok(c) => c,
         Err(e) => return usage(format!("{plan_file}: not a plan: {e}")),
     };
-    if let Err(why) = validate_paths(&changes) {
-        return usage(format!("{plan_file}: {why}"));
-    }
-    if let Err(e) = store.preflight(&changes) {
-        return report_commit_error(e);
-    }
-    // Only a plan that the engine would make now, from its operations, is written.
-    let planned = match recheck(&Snapshot::read(&store), &changes) {
-        Ok(planned) => planned,
-        Err(RecheckError::Stale(paths)) => return report_commit_error(CommitError::Stale(paths)),
-        Err(e) => {
-            eprintln!("{e}");
-            return ExitCode::from(1);
-        }
-    };
-    match commit_verified(&store, &planned) {
-        Ok(()) => {
+    match apply_outside(&store, &changes) {
+        Ok(_) => {
             println!("{}", applied_line(&changes));
             ExitCode::SUCCESS
         }
-        Err(e) => report_commit_error(e),
+        Err(f) => fail(f),
     }
-}
-
-/// Commits a plan; after writing, and before it is final, the folder has to be what the plan
-/// said it would be — if it is not, everything is put back.
-fn commit_verified(store: &FolderStore, planned: &Plan) -> Result<(), CommitError> {
-    let verify = |s: &FolderStore| -> Result<(), String> {
-        if same_links(&planned.expected, &build_graph(s)) {
-            Ok(())
-        } else {
-            Err("the folder after writing does not match the plan".to_string())
-        }
-    };
-    store.commit_checked(&planned.changes, &verify).map(|_| ())
-}
-
-fn report_commit_error(e: CommitError) -> ExitCode {
-    match e {
-        CommitError::Invalid(why) => usage(why),
-        CommitError::Stale(paths) => {
-            for p in paths {
-                eprintln!("stale: {p}");
-            }
-            eprintln!("the folder changed since the plan was made; nothing was written");
-            ExitCode::from(1)
-        }
-        CommitError::Conflict(paths) => {
-            for p in paths {
-                eprintln!("refused [I5] {p}: already exists");
-            }
-            ExitCode::from(1)
-        }
-        CommitError::Failed { path, message } => {
-            if path.is_empty() {
-                eprintln!("error: {message}");
-            } else {
-                eprintln!("failed at {path}: {message}");
-            }
-            ExitCode::from(1)
-        }
-    }
-}
-
-fn same_links(a: &Graph, b: &Graph) -> bool {
-    let project = |g: &Graph| -> Vec<(String, String, Option<String>)> {
-        let mut v: Vec<_> = g
-            .links
-            .iter()
-            .map(|l| (l.from.clone(), l.link.clone(), l.to.clone()))
-            .collect();
-        v.sort();
-        v
-    };
-    project(a) == project(b) && a.errors.is_empty() == b.errors.is_empty()
-}
-
-fn applied_line(changes: &ChangeSet) -> String {
-    let mut parts = Vec::new();
-    let n = changes.moves.len();
-    if n > 0 {
-        parts.push(format!("{n} {}", if n == 1 { "move" } else { "moves" }));
-    }
-    let n = changes.creates.len();
-    if n > 0 {
-        parts.push(format!("{n} created"));
-    }
-    let n = changes.rewrites.len();
-    if n > 0 {
-        parts.push(format!(
-            "{n} {} rewritten",
-            if n == 1 { "link" } else { "links" }
-        ));
-    }
-    let n = changes.deletes.len();
-    if n > 0 {
-        parts.push(format!("{n} deleted"));
-    }
-    if parts.is_empty() && !changes.writes.is_empty() {
-        let n = changes.writes.len();
-        parts.push(format!(
-            "{n} {} written",
-            if n == 1 { "document" } else { "documents" }
-        ));
-    }
-    format!("Applied: {}.", parts.join(", "))
 }
 
 fn plural(n: usize, one: &str, many: &str) -> String {

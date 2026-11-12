@@ -13,6 +13,7 @@ use textree::{
 };
 
 mod commit;
+pub mod edit;
 
 /// A hierarchy of documents stored in a folder.
 #[derive(Clone, Debug)]
