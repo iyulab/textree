@@ -188,6 +188,19 @@ fn stored_op(snapshot: &Snapshot, op: &Op) -> Op {
             path: spell(path),
             content: content.clone(),
         },
+        Op::Append { path, content } => Op::Append {
+            path: spell(path),
+            content: content.clone(),
+        },
+        Op::EditSection {
+            path,
+            heading,
+            content,
+        } => Op::EditSection {
+            path: spell(path),
+            heading: heading.clone(),
+            content: content.clone(),
+        },
     }
 }
 
@@ -198,7 +211,234 @@ fn plan_op(snapshot: &Snapshot, op: &Op, policy: &Policy) -> Result<Plan, PlanEr
         Op::Split { .. } | Op::Merge { .. } => restructure::plan(snapshot, op, policy),
         Op::Add { path, content } => plan_add(snapshot, path, content, policy),
         Op::Replace { path, content } => plan_replace(snapshot, path, content, policy),
+        Op::Append { path, content } => {
+            let old = existing_text(snapshot, path)?;
+            let mut text = old;
+            if !text.is_empty() {
+                if !text.ends_with('\n') {
+                    text.push('\n');
+                }
+                text.push('\n');
+            }
+            text.push_str(content.trim_start_matches('\n'));
+            plan_replace(snapshot, path, &text, policy)
+        }
+        Op::EditSection {
+            path,
+            heading,
+            content,
+        } => {
+            let text = edit_section_text(snapshot, path, heading, content)?;
+            plan_replace(snapshot, path, &text, policy)
+        }
     }
+}
+
+/// The text of an existing document (without a byte order mark).
+fn existing_text(snap: &Snapshot, path: &str) -> Result<String, PlanError> {
+    usage_path(path, "path")?;
+    let Some(bytes) = snap.files.get(path) else {
+        return Err(PlanError::Usage(format!("no such document: {path}")));
+    };
+    let body = bytes
+        .strip_prefix(&[0xEF, 0xBB, 0xBF])
+        .unwrap_or(&bytes[..]);
+    Ok(String::from_utf8_lossy(body).into_owned())
+}
+
+/// The document's text with the body of the section under `heading` replaced by `content`.
+fn edit_section_text(
+    snap: &Snapshot,
+    path: &str,
+    heading: &str,
+    content: &str,
+) -> Result<String, PlanError> {
+    let text = existing_text(snap, path)?;
+    let (offset, reading) = &snap.readings[path];
+    let headings: Vec<&crate::read::Heading> =
+        reading.headings.iter().filter(|h| !h.nested).collect();
+    let wanted = crate::path::nfc(heading.trim());
+    let mut found: Vec<usize> = headings
+        .iter()
+        .enumerate()
+        .filter(|(_, h)| crate::path::nfc(h.text.trim()) == wanted)
+        .map(|(i, _)| i)
+        .collect();
+    if found.is_empty() {
+        let folded = crate::path::fold(heading.trim());
+        found = headings
+            .iter()
+            .enumerate()
+            .filter(|(_, h)| crate::path::fold(h.text.trim()) == folded)
+            .map(|(i, _)| i)
+            .collect();
+    }
+    let i = match found.as_slice() {
+        [i] => *i,
+        [] => {
+            return Err(PlanError::Usage(format!(
+                "no heading {heading:?} in {path}"
+            )))
+        }
+        _ => {
+            let lines: Vec<String> = found
+                .iter()
+                .map(|i| headings[*i].line.to_string())
+                .collect();
+            return Err(PlanError::Usage(format!(
+                "{path} has more than one heading {heading:?} (lines {}); name one that is unique",
+                lines.join(", ")
+            )));
+        }
+    };
+    let h = headings[i];
+    // The body starts after the heading's line.
+    let heading_end = h.range.end - offset;
+    let start = text[heading_end..]
+        .find('\n')
+        .map(|n| heading_end + n + 1)
+        .unwrap_or(text.len());
+    let end = headings[i + 1..]
+        .iter()
+        .find(|next| next.level <= h.level)
+        .map(|next| next.range.start - offset)
+        .unwrap_or(text.len());
+    let end = end.max(start);
+    let mut body = content.trim_matches('\n').to_string();
+    if !body.is_empty() {
+        body.insert(0, '\n');
+        body.push('\n');
+    }
+    if end < text.len() {
+        body.push('\n');
+    }
+    let mut out = String::with_capacity(text.len() + content.len());
+    out.push_str(&text[..start]);
+    out.push_str(&body);
+    out.push_str(&text[end..]);
+    Ok(out)
+}
+
+/// Plans several operations as one change, one after another: each is planned on the hierarchy
+/// as the ones before it leave it. Only operations that write the text of documents (add,
+/// replace, append, edit_section) can be planned together, each on a different document.
+pub fn plan_many(snapshot: &Snapshot, ops: &[Op], policy: &Policy) -> Result<Plan, PlanError> {
+    match ops {
+        [] => return Err(PlanError::Usage("no operations".to_string())),
+        [op] => return plan(snapshot, op, policy),
+        _ => {}
+    }
+    let mut targets = BTreeSet::new();
+    for op in ops {
+        let path = match op {
+            Op::Add { path, .. }
+            | Op::Replace { path, .. }
+            | Op::Append { path, .. }
+            | Op::EditSection { path, .. } => path,
+            _ => return Err(PlanError::Usage(
+                "a plan with several operations takes only add, replace, append and edit_section"
+                    .to_string(),
+            )),
+        };
+        if !targets.insert(crate::path::fold(path)) {
+            return Err(PlanError::Usage(format!(
+                "a plan with several operations writes each document once: {path}"
+            )));
+        }
+    }
+    let strict = Policy {
+        break_links: false,
+        ..policy.clone()
+    };
+    let mut current: Option<Snapshot> = None;
+    let mut combined: Option<ChangeSet> = None;
+    let mut expected = None;
+    let mut stored = Vec::new();
+    for op in ops {
+        let snap = current.as_ref().unwrap_or(snapshot);
+        let one = plan(snap, op, &strict)?;
+        stored.extend(one.changes.ops.iter().cloned());
+        let next = materialize(snap, &one.changes);
+        combined = Some(match combined {
+            None => one.changes,
+            Some(mut all) => {
+                for c in one.changes.creates {
+                    all.creates.retain(|w| w.path != c.path);
+                    all.creates.push(c);
+                }
+                for w in one.changes.writes {
+                    if let Some(created) = all.creates.iter_mut().find(|c| c.path == w.path) {
+                        created.content = w.content;
+                    } else {
+                        all.writes.retain(|x| x.path != w.path);
+                        all.writes.push(w);
+                    }
+                }
+                all.rewrites.extend(one.changes.rewrites);
+                for b in one.changes.new_broken {
+                    if !all.new_broken.contains(&b) {
+                        all.new_broken.push(b);
+                    }
+                }
+                for o in one.changes.orphaned {
+                    if !all.orphaned.contains(&o) {
+                        all.orphaned.push(o);
+                    }
+                }
+                all
+            }
+        });
+        expected = Some(one.expected);
+        current = Some(next);
+    }
+    let mut changes = combined.expect("at least two operations");
+    changes.ops = stored;
+    changes.policy = Permissions { break_links: false };
+    changes.creates.sort_by(|a, b| a.path.cmp(&b.path));
+    changes.writes.sort_by(|a, b| a.path.cmp(&b.path));
+    changes
+        .rewrites
+        .sort_by(|a, b| (&a.path, a.line, &a.before).cmp(&(&b.path, b.line, &b.before)));
+    Ok(Plan {
+        changes,
+        expected: expected.expect("at least two operations"),
+    })
+}
+
+/// The hierarchy as a change set of written texts (no moves or deletions) leaves it.
+fn materialize(snap: &Snapshot, changes: &ChangeSet) -> Snapshot {
+    let mut nodes = snap.nodes.clone();
+    let mut files = snap.files.clone();
+    for w in changes.creates.iter().chain(changes.writes.iter()) {
+        let bytes = w.content.clone().into_bytes();
+        let version = crate::port::content_version(&bytes);
+        match nodes.iter_mut().find(|n| n.path == w.path) {
+            Some(n) => n.version = version,
+            None => {
+                nodes.push(Node {
+                    path: w.path.clone(),
+                    kind: NodeKind::Document,
+                    version,
+                });
+                let mut dir = dir_of(&w.path).to_string();
+                while !dir.is_empty() {
+                    if !nodes.iter().any(|n| n.path == dir) {
+                        nodes.push(Node {
+                            path: dir.clone(),
+                            kind: NodeKind::Collection,
+                            version: String::new(),
+                        });
+                    }
+                    dir = dir_of(&dir).to_string();
+                }
+            }
+        }
+        files.insert(w.path.clone(), bytes);
+    }
+    Snapshot::read(&SnapshotStore {
+        nodes: &nodes,
+        files: &files,
+    })
 }
 
 /// Why a plan that came from outside is not applied.
@@ -237,18 +477,14 @@ pub fn recheck(snapshot: &Snapshot, changes: &ChangeSet) -> Result<Plan, Recheck
     if !stale.is_empty() {
         return Err(RecheckError::Stale(stale));
     }
-    let [op] = changes.ops.as_slice() else {
-        return Err(if changes.ops.is_empty() {
-            RecheckError::NoOperations
-        } else {
-            RecheckError::NotMatching
-        });
-    };
+    if changes.ops.is_empty() {
+        return Err(RecheckError::NoOperations);
+    }
     let policy = Policy {
         break_links: changes.policy.break_links,
         ..Policy::default()
     };
-    match plan(snapshot, op, &policy) {
+    match plan_many(snapshot, &changes.ops, &policy) {
         Ok(planned) if planned.changes == *changes => Ok(planned),
         _ => Err(RecheckError::NotMatching),
     }

@@ -33,7 +33,7 @@ pub use change::{
 pub use graph::{
     build_graph, BrokenLink, Definition, DocumentInfo, Graph, Link, LinkKind, ReadError,
 };
-pub use plan::{plan, recheck, Plan, RecheckError, Snapshot};
+pub use plan::{plan, plan_many, recheck, Plan, RecheckError, Snapshot};
 pub use port::{
     content_version, is_document_path, Issue, Listing, MemoryStore, Node, NodeKind, ReadPort,
 };

@@ -119,6 +119,33 @@ enum Command {
         #[command(flatten)]
         opts: edit::Options,
     },
+    /// Add the text of a file at the end of a document; shows the plan, writes with --apply
+    Append {
+        /// The folder to work in
+        folder: String,
+        /// The document, relative to the folder
+        path: String,
+        /// A file with the text to add (`-` reads standard input)
+        #[arg(value_name = "FILE")]
+        content: String,
+        #[command(flatten)]
+        opts: edit::Options,
+    },
+    /// Replace the body of one section (under a heading) with the text of a file; shows the plan,
+    /// writes with --apply
+    EditSection {
+        /// The folder to work in
+        folder: String,
+        /// The document, relative to the folder
+        path: String,
+        /// The heading's text, as written (without the `#` marks)
+        heading: String,
+        /// A file with the section's new body (`-` reads standard input)
+        #[arg(value_name = "FILE")]
+        content: String,
+        #[command(flatten)]
+        opts: edit::Options,
+    },
     /// Apply a plan saved with --plan; refuses when the folder changed since
     Apply {
         /// The folder the plan was made for
@@ -210,6 +237,34 @@ fn main() -> ExitCode {
             Ok(content) => edit::run(
                 &folder,
                 textree::Op::Replace { path, content },
+                false,
+                &opts,
+            ),
+            Err(code) => code,
+        },
+        Command::Append {
+            folder,
+            path,
+            content,
+            opts,
+        } => match edit::read_text(&content) {
+            Ok(content) => edit::run(&folder, textree::Op::Append { path, content }, false, &opts),
+            Err(code) => code,
+        },
+        Command::EditSection {
+            folder,
+            path,
+            heading,
+            content,
+            opts,
+        } => match edit::read_text(&content) {
+            Ok(content) => edit::run(
+                &folder,
+                textree::Op::EditSection {
+                    path,
+                    heading,
+                    content,
+                },
                 false,
                 &opts,
             ),

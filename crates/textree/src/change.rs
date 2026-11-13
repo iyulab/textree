@@ -29,6 +29,16 @@ pub enum Op {
     /// Replace the whole text of a document. Its old text is the declared removal; the links
     /// that came to it have to keep working, headings they name included.
     Replace { path: String, content: String },
+    /// Add text at the end of a document, after a blank line. Nothing already in it changes.
+    Append { path: String, content: String },
+    /// Replace the body of one section of a document: the text under the heading whose text is
+    /// `heading`, up to the next heading of the same or a higher level. The heading line and
+    /// everything outside the section stay as they are; the old body is the declared removal.
+    EditSection {
+        path: String,
+        heading: String,
+        content: String,
+    },
 }
 
 /// Limits and switches for planning.

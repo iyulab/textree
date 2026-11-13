@@ -17,7 +17,7 @@
 //! | `check` | — | `{broken: [{path, line, link}], text}` (`text` as `textree check` prints it) |
 //! | `tree` | `path?` | the folder and document hierarchy, from `path` (default: the root) |
 //! | `read_document` | `path` | `{path, text, headings, tags, links, backlinks}` |
-//! | `plan` | `operation`, `policy?` | the plan (a change set, format 2) |
+//! | `plan` | `operation` (or `operations`, several written-text operations as one plan), `policy?` | the plan (a change set, format 2) |
 //! | `apply` | `plan` | `{applied}` — the plan is written only if it is exactly what its operations give now |
 
 use std::ffi::{c_char, CStr, CString};
@@ -26,7 +26,7 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use textree::{build_graph, Graph, NodeKind, Op, Policy, ReadPort};
-use textree_folder::edit::{applied_line, apply_outside, plan_change, Failure, FailureKind};
+use textree_folder::edit::{applied_line, apply_outside, plan_changes, Failure, FailureKind};
 use textree_folder::FolderStore;
 
 #[derive(Deserialize)]
@@ -70,12 +70,15 @@ fn handle(request: &str) -> Result<Value, Failure> {
         "tree" => tree(&store, optional_str(args, "path")?.unwrap_or("")),
         "read_document" => read_document(&store, required_str(args, "path")?),
         "plan" => {
-            let op: Op = field(args, "operation")?;
+            let ops: Vec<Op> = match args.get("operations") {
+                None | Some(Value::Null) => vec![field(args, "operation")?],
+                Some(_) => field(args, "operations")?,
+            };
             let policy: Policy = match args.get("policy") {
                 None | Some(Value::Null) => Policy::default(),
                 Some(_) => field(args, "policy")?,
             };
-            let planned = plan_change(&store, &op, &policy)?;
+            let planned = plan_changes(&store, &ops, &policy)?;
             to_value(&planned.changes)
         }
         "apply" => {

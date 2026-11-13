@@ -3,7 +3,7 @@
 //! thing for the same input.
 
 use textree::{
-    build_graph, plan, recheck, validate_paths, ChangeSet, CommitError, Graph, Op, Plan, PlanError,
+    build_graph, recheck, validate_paths, ChangeSet, CommitError, Graph, Op, Plan, PlanError,
     Policy, RecheckError, Snapshot,
 };
 
@@ -90,8 +90,14 @@ impl From<CommitError> for Failure {
 /// a destination behind a symbolic link, or one that something the listing does not show
 /// already takes, is refused.
 pub fn plan_change(store: &FolderStore, op: &Op, policy: &Policy) -> Result<Plan, Failure> {
+    plan_changes(store, std::slice::from_ref(op), policy)
+}
+
+/// Plans several operations as one change ([`textree::plan_many`]) on the folder as it is now,
+/// with the same checks against the disk as [`plan_change`].
+pub fn plan_changes(store: &FolderStore, ops: &[Op], policy: &Policy) -> Result<Plan, Failure> {
     let snapshot = Snapshot::read(store);
-    let planned = match plan(&snapshot, op, policy) {
+    let planned = match textree::plan_many(&snapshot, ops, policy) {
         Ok(planned) => planned,
         Err(PlanError::Usage(message)) => return Err(Failure::usage(message)),
         Err(PlanError::Refused(violations)) => {

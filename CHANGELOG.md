@@ -7,6 +7,17 @@ Entries describe changes in Textree's own terms — never in terms of a particul
 
 ## [Unreleased]
 
+### Added
+
+- `append` adds text at the end of a document after a blank line; nothing already in it changes.
+  `edit_section` replaces the body of one section — the text under a heading, up to the next
+  heading of the same or a higher level — and keeps the heading line and everything outside the
+  section. Both are operations of a plan, a command (`textree append`, `textree edit-section`) and
+  part of the C interface. A section edit that drops a heading another document links to is refused.
+- A plan can carry several operations that write the text of documents (add, replace, append,
+  edit_section), each on a different document: they are planned one after another and committed as
+  one change. The C interface takes them as `operations`; applying such a plan rechecks all of them.
+
 ### Changed
 
 - A new name that some file system cannot hold is refused when the plan is made, on every platform:

@@ -181,7 +181,10 @@ fn print_plan(changes: &ChangeSet, op: &Op) {
     }
     if matches!(op, Op::Split { .. } | Op::Merge { .. }) {
         println!("checks   nothing disappears · links intact · no name clashes");
-    } else if matches!(op, Op::Add { .. } | Op::Replace { .. }) {
+    } else if matches!(
+        op,
+        Op::Add { .. } | Op::Replace { .. } | Op::Append { .. } | Op::EditSection { .. }
+    ) {
         println!("checks   links intact · no name clashes");
     } else {
         println!("checks   content kept · links intact · no empty folders · no name clashes");
