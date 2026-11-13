@@ -17,13 +17,10 @@ public sealed record Proportion(double Value, double Low, double High, int Succe
         return new Proportion(Round(p), Round(centre - half), Round(centre + half), successes, n);
     }
 
-    /// <summary>Whether this interval lies wholly above <paramref name="other"/>'s.</summary>
-    public bool Above(Proportion other) => Low > other.High;
-
     private static double Round(double v) => Math.Round(v, 4);
 }
 
-/// <summary>A measured mean of scores in [0, 1], with a normal-approximation 95% interval.</summary>
+/// <summary>A measured mean of scores (in [0, 1], or differences of such scores), with a normal-approximation 95% interval.</summary>
 public sealed record Mean(double Value, double Low, double High, int N)
 {
     public static Mean Of(IReadOnlyList<double> scores)
@@ -37,8 +34,6 @@ public sealed record Mean(double Value, double Low, double High, int N)
         var half = 1.96 * sd / Math.Sqrt(scores.Count);
         return new Mean(Math.Round(m, 4), Math.Round(m - half, 4), Math.Round(m + half, 4), scores.Count);
     }
-
-    public bool Above(Mean other) => Low > other.High;
 }
 
 public static class Median

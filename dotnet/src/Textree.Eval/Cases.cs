@@ -145,6 +145,17 @@ public static class Cases
     }
 
     /// <summary>Whether every placement is one of the accepted places, the phrases to keep are in the folder, and the piece count is as expected.</summary>
+    /// <summary>Whether a new document or new folder sits directly in <paramref name="folder"/> (not deeper).</summary>
+    private static bool Directly(Placement p, string folder)
+    {
+        var parent = Hierarchy.DirOf(p.Target);
+        if (p.Form == "add_folder")
+        {
+            parent = Hierarchy.DirOf(parent);
+        }
+        return parent.Normalize(NormalizationForm.FormC) == folder.TrimEnd('/').Normalize(NormalizationForm.FormC);
+    }
+
     private static (bool, string?) CheckPlacement(IngestResult result, JsonObject expected, SortedDictionary<string, byte[]> after)
     {
         if (result.Outcome != "planned")
@@ -157,7 +168,7 @@ public static class Cases
         {
             var ok = anyOf.Count == 0 || anyOf.Any(a =>
                 (a["edit"] is { } e && p.Form is "append_section" or "add_to_section" && p.Target.Normalize(NormalizationForm.FormC) == e.GetValue<string>().Normalize(NormalizationForm.FormC))
-                || (a["add_under"] is { } u && p.Form is "add_document" or "add_folder" && Gates.Under(p.Target, u.GetValue<string>()))
+                || (a["add_under"] is { } u && p.Form is "add_document" or "add_folder" && Directly(p, u.GetValue<string>()))
                 || (a["in"] is { } f && Gates.Under(p.Target, f.GetValue<string>())));
             if (!ok)
             {

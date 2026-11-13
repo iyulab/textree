@@ -106,17 +106,23 @@ public static partial class LeaveOneOut
         {
             summary[arm] = Summarize(rows);
         }
+        // Each comparison twice: whether the intervals are apart, and the difference on the same
+        // documents (paired, the document as the unit) with its interval.
         var comparisons = new JsonObject();
-        if (Hit(summary, "harness") is { } h)
+        if (arms.TryGetValue("harness", out var harnessRows))
         {
             foreach (var other in new[] { "b0", "b1", "b2", "gil" })
             {
-                if (Hit(summary, other) is { } o)
+                if (arms.TryGetValue(other, out var otherRows))
                 {
+                    var h = Interval(summary, "harness");
+                    var o = Interval(summary, other);
                     comparisons[$"harness_above_{other}"] = new JsonObject
                     {
-                        ["hit_at_1"] = h.Hit.Above(o.Hit),
-                        ["partial"] = h.Partial.Above(o.Partial),
+                        ["hit_at_1"] = h.HitLow > o.HitHigh,
+                        ["partial"] = h.PartialLow > o.PartialHigh,
+                        ["paired_hit_difference"] = Json.Of(Paired(harnessRows, otherRows, "hit")),
+                        ["paired_partial_difference"] = Json.Of(Paired(harnessRows, otherRows, "partial")),
                     };
                 }
             }
@@ -325,12 +331,18 @@ public static partial class LeaveOneOut
 
     private static JsonObject Summarize(List<JsonObject> rows)
     {
-        var hits = rows.Count(r => r["hit"]!.GetValue<bool>());
-        var partial = rows.Select(r => r["partial"]!.GetValue<double>()).ToList();
+        // The document is the unit: repeated runs of one document are not independent trials.
+        var hit = ByDocument(rows, "hit");
+        var partial = ByDocument(rows, "partial");
+        var runs = rows.GroupBy(r => r["doc"]!.GetValue<string>(), StringComparer.Ordinal).Max(g => g.Count());
         var o = new JsonObject
         {
-            ["hit_at_1"] = Json.Of(Proportion.Of(hits, rows.Count)),
-            ["partial"] = Json.Of(Mean.Of(partial)),
+            ["documents"] = hit.Count,
+            ["runs"] = runs,
+            ["hit_at_1"] = runs == 1
+                ? Json.Of(Proportion.Of(hit.Values.Count(v => v == 1), hit.Count))
+                : Json.Of(Mean.Of(hit.Values.ToList())),
+            ["partial"] = Json.Of(Mean.Of(partial.Values.ToList())),
         };
         var forms = rows.Where(r => r["form"] is not null).GroupBy(r => r["form"]!.GetValue<string>()).OrderBy(g => g.Key, StringComparer.Ordinal);
         if (forms.Any())
@@ -361,17 +373,27 @@ public static partial class LeaveOneOut
         return o;
     }
 
-    private static (Proportion Hit, Mean Partial)? Hit(JsonObject summary, string arm)
+    private static (double HitLow, double HitHigh, double PartialLow, double PartialHigh) Interval(JsonObject summary, string arm)
     {
-        if (summary[arm] is not JsonObject a)
-        {
-            return null;
-        }
-        var h = a["hit_at_1"]!;
-        var p = a["partial"]!;
         double D(JsonNode? n) => n?.GetValue<double>() ?? double.NaN;
-        return (new Proportion(D(h["value"]), D(h["low"]), D(h["high"]), h["successes"]!.GetValue<int>(), h["n"]!.GetValue<int>()),
-                new Mean(D(p["value"]), D(p["low"]), D(p["high"]), p["n"]!.GetValue<int>()));
+        var a = summary[arm]!;
+        return (D(a["hit_at_1"]!["low"]), D(a["hit_at_1"]!["high"]), D(a["partial"]!["low"]), D(a["partial"]!["high"]));
+    }
+
+    /// <summary>A row's score: 1 or 0 for a hit, else the partial score.</summary>
+    private static double Score(JsonObject row, string measure) =>
+        measure == "hit" ? (row["hit"]!.GetValue<bool>() ? 1 : 0) : row["partial"]!.GetValue<double>();
+
+    /// <summary>Each document's score, averaged over its runs.</summary>
+    private static Dictionary<string, double> ByDocument(List<JsonObject> rows, string measure) =>
+        rows.GroupBy(r => r["doc"]!.GetValue<string>(), StringComparer.Ordinal).ToDictionary(g => g.Key, g => g.Average(r => Score(r, measure)), StringComparer.Ordinal);
+
+    /// <summary>The mean difference a − b over the documents both arms placed.</summary>
+    private static Mean Paired(List<JsonObject> a, List<JsonObject> b, string measure)
+    {
+        var da = ByDocument(a, measure);
+        var db = ByDocument(b, measure);
+        return Mean.Of(da.Keys.Where(db.ContainsKey).Order(StringComparer.Ordinal).Select(k => da[k] - db[k]).ToList());
     }
 
     [GeneratedRegex(@"!?\[(?<label>[^\]]*)\]\((?<dest>[^)\s]*)(?:\s+""[^""]*"")?\)")]
