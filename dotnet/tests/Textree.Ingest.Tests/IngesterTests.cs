@@ -85,6 +85,24 @@ public sealed class IngesterTests
     }
 
     [Fact]
+    public async Task A_folder_found_wrong_on_a_closer_look_is_left_once_and_not_offered_again()
+    {
+        using var s = Garden();
+        var wheres = 0;
+        var chat = new ScriptedChat((prompt, _) =>
+            ScriptedChat.AsksWhere(prompt) ? (++wheres == 1 ? """{"choice":"F1"}""" : """{"choice":"H"}""")
+            : prompt.Contains("You are in: garden/") ? """{"action":"back"}"""
+            : """{"action":"new_document","name":"bread","title":"Bread"}""");
+        var result = await new Ingester(new Folder(s.Root), chat).IngestAsync(new IngestRequest("Sourdough starter: flour and water."), null, Ct);
+        Assert.Equal("planned", result.Outcome);
+        Assert.Equal(("add_document", "bread.md"), (Assert.Single(result.Placement).Form, result.Placement[0].Target));
+        var whereAgain = chat.Prompts.Where(ScriptedChat.AsksWhere).ElementAt(1);
+        Assert.DoesNotContain("garden/", whereAgain);
+        // Only one way back: the folder chosen after it does not offer to go back again.
+        Assert.DoesNotContain("\"back\"", chat.Prompts.Last());
+    }
+
+    [Fact]
     public async Task The_same_text_again_is_an_empty_outcome_without_asking_the_model()
     {
         using var s = Garden().File("garden/watering.md", "# Watering\n\nDrip lines   use half\nthe water.\n");
