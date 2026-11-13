@@ -20,8 +20,11 @@ public sealed class Ingester(Folder folder, IChatClient chat, ISummaryCache? sum
 
     private readonly ISummaryCache _summaries = summaries ?? new MemorySummaryCache();
 
-    /// <summary>Sampling settings sent with every model call; null sends none (the server's own).</summary>
-    public ChatOptions? Sampling { get; init; }
+    /// <summary>
+    /// Sampling settings sent with every model call. By default temperature 0: each call is a
+    /// decision, and the same question should get the same answer. Null sends none (the server's own).
+    /// </summary>
+    public ChatOptions? Sampling { get; init; } = new() { Temperature = 0 };
 
     public async Task<IngestResult> IngestAsync(IngestRequest request, IngestOptions? options = null, CancellationToken ct = default)
     {

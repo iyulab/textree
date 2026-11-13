@@ -14,7 +14,7 @@ public static class Cli
         {
             return (RecordingChatClient.Replay(replay), null);
         }
-        var live = Llm.Connect(opts.Require("llm-endpoint"), opts.Require("llm-model"), opts.Get("key-env"));
+        var live = Llm.Connect(opts.Require("llm-endpoint"), opts.Require("llm-model"), opts.Get("key-env"), Temperature(opts));
         if (opts.Get("record") is { } record)
         {
             var recorder = RecordingChatClient.Record(live, record);
@@ -22,6 +22,10 @@ public static class Cli
         }
         return (live, null);
     }
+
+    /// <summary>--temperature: a number (default 0), or <c>none</c> to send none.</summary>
+    private static float? Temperature(Options opts) =>
+        opts.Get("temperature") is { } t ? (t == "none" ? null : float.Parse(t, System.Globalization.CultureInfo.InvariantCulture)) : 0f;
 
     /// <summary>Writes a report: to --out, else to standard output. A replayed report has no time stamp.</summary>
     private static void Write(Options opts, System.Text.Json.Nodes.JsonObject report)
@@ -55,7 +59,7 @@ public static class Cli
             case "try":
             {
                 var folder = new Folder(Path.GetFullPath(opts.Require("root")));
-                var chat = Llm.Connect(opts.Require("llm-endpoint"), opts.Require("llm-model"));
+                var chat = Llm.Connect(opts.Require("llm-endpoint"), opts.Require("llm-model"), opts.Get("key-env"), Temperature(opts));
                 var ingester = new Ingester(folder, chat);
                 var result = await ingester.IngestAsync(new IngestRequest(File.ReadAllText(opts.Require("text"))));
                 Console.WriteLine(JsonSerializer.Serialize(new { result.Outcome, result.Placement, result.Violations, trace = new { result.Trace.ModelCalls, result.Trace.InputTokens, result.Trace.OutputTokens, result.Trace.Repairs, result.Trace.UnseenCitations, elapsed = result.Trace.Elapsed.TotalSeconds, steps = result.Trace.Steps } }, Pretty));

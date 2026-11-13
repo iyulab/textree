@@ -58,10 +58,7 @@ if (endpoint is not null && model is not null)
     var key = Environment.GetEnvironmentVariable("TEXTREE_LLM_KEY");
     var client = new OpenAIClient(new ApiKeyCredential(string.IsNullOrEmpty(key) ? "none" : key), new OpenAIClientOptions { Endpoint = new Uri(endpoint) });
     IChatClient chat = client.GetChatClient(model).AsIChatClient();
-    ingester = new Ingester(folder, chat)
-    {
-        Sampling = temperature is null ? null : new ChatOptions { Temperature = temperature },
-    };
+    ingester = temperature is null ? new Ingester(folder, chat) : new Ingester(folder, chat) { Sampling = new ChatOptions { Temperature = temperature } };
 }
 
 // An empty builder: no configuration from the environment or files, no logging to the console.
