@@ -27,9 +27,9 @@ Entries describe changes in Textree's own terms — never in terms of a particul
   (a taken name gets a number; otherwise the affected pieces choose again, told why) up to a limit,
   and then the outcome is a failure with the reasons — never a plan that breaks the folder's
   invariants. Folder summaries and proposals go through ports (`ISummaryCache`, `IProposalLog`);
-  nothing is written into the knowledge folder. Model calls are sent with temperature 0 unless
-  `Sampling` says otherwise (`--llm-temperature` on the MCP server), so the same question gets the
-  same answer.
+  nothing is written into the knowledge folder. No sampling values are sent unless `Sampling` sets
+  them (`--llm-temperature` on the MCP server); temperature 0 makes the same question get the same
+  answer.
 - The MCP server has two more tools: `edit_section` (plans a new body for one section) and
   `ingest` (plans where new text goes; the one tool that reaches outside, to the language model
   given with `--llm-endpoint` and `--llm-model`, with the key, if any, in `TEXTREE_LLM_KEY`).

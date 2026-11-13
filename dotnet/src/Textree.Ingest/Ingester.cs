@@ -21,10 +21,11 @@ public sealed class Ingester(Folder folder, IChatClient chat, ISummaryCache? sum
     private readonly ISummaryCache _summaries = summaries ?? new MemorySummaryCache();
 
     /// <summary>
-    /// Sampling settings sent with every model call. By default temperature 0: each call is a
-    /// decision, and the same question should get the same answer. Null sends none (the server's own).
+    /// Sampling settings sent with every model call. None by default: the endpoint's own apply, and
+    /// endpoints that refuse sampling values still work. Set <c>Temperature = 0</c> for the same answer
+    /// to the same question.
     /// </summary>
-    public ChatOptions? Sampling { get; init; } = new() { Temperature = 0 };
+    public ChatOptions? Sampling { get; init; }
 
     public async Task<IngestResult> IngestAsync(IngestRequest request, IngestOptions? options = null, CancellationToken ct = default)
     {
