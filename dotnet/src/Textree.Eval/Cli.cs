@@ -124,6 +124,27 @@ public static class Cli
                 Write(opts, report);
                 return 0;
             }
+            case "labels-export":
+            case "labels-score":
+            {
+                var settings = new LeaveOneOut.Settings(opts.Int("per-stratum", 5), (ulong)opts.Int("seed", 1), 1, opts.Int("min-chars", 200), false, new HashSet<string>());
+                if (args[0] == "labels-export")
+                {
+                    var harness = opts.Get("harness-report") is { } hr ? System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(hr))!.AsObject() : null;
+                    Labels.Export(opts.Require("root"), settings, harness, opts.Require("html"));
+                    return 0;
+                }
+                var report = Labels.Score(opts.Require("root"), settings, opts.Require("answers"), opts.Get("labeller") ?? "owner");
+                Write(opts, report);
+                return 0;
+            }
+            case "agreement":
+            {
+                var a = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(opts.Require("a")))!.AsObject();
+                var b = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(opts.Require("b")))!.AsObject();
+                Write(opts, Labels.Agreement(a, opts.Require("a-arm"), b, opts.Require("b-arm")));
+                return 0;
+            }
             default:
                 Console.Error.WriteLine($"unknown command: {args[0]}");
                 return 2;

@@ -142,6 +142,34 @@ public static partial class LeaveOneOut
         };
     }
 
+    /// <summary>A sampled document as a labeller sees it: an opaque id, and its text with location hints removed.</summary>
+    public sealed record MaskedCase(string Id, string Path, string Folder, string Text);
+
+    /// <summary>The same sample and masking the arms use, for labelling.</summary>
+    public static List<MaskedCase> MaskedCases(string root, Settings settings)
+    {
+        using var baseline = new Workspace(root);
+        var hierarchy = Hierarchy.Read(new Folder(baseline.Root));
+        var population = hierarchy.Documents
+            .Where(d => hierarchy.FolderDocument(d.Folder)?.Path != d.Path)
+            .Where(d => Body(d.Text).Length >= settings.MinChars)
+            .ToList();
+        var strata = population.GroupBy(d => StratumOf(d.Path))
+            .OrderBy(g => g.Key, StringComparer.Ordinal)
+            .Select(g => new PopulationStratum(g.Key, g.Select(d => d.Path).Order(StringComparer.Ordinal).ToList()))
+            .ToList();
+        var sample = ReviewSampler.DrawPilot(strata, settings.PerStratum, settings.Seed);
+        var cases = new List<MaskedCase>();
+        var i = 0;
+        foreach (var path in sample.Strata.SelectMany(s => s.Selected))
+        {
+            var doc = hierarchy.Document(path)!;
+            using var ws = new Workspace(baseline.Root);
+            cases.Add(new MaskedCase($"c{++i:00}", path, doc.Folder, TakeOut(ws.Root, doc, mask: true)));
+        }
+        return cases;
+    }
+
     private static string StratumOf(string path)
     {
         var i = path.IndexOf('/');
