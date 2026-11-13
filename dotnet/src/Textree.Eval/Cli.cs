@@ -74,6 +74,42 @@ public static class Cli
                 var failures = report["summary"]!["gate_failures"]!.AsObject().Count;
                 return failures == 0 ? 0 : 1;
             }
+            case "loo":
+            {
+                var (chat, recorder) = Chat(opts);
+                var arms = (opts.Get("arms") ?? "harness,b0,b1,b2,gil").Split(',', StringSplitOptions.RemoveEmptyEntries).ToHashSet(StringComparer.Ordinal);
+                var settings = new LeaveOneOut.Settings(opts.Int("per-stratum", 5), (ulong)opts.Int("seed", 1), opts.Int("runs", 1), opts.Int("min-chars", 200), opts.Has("unmasked"), arms);
+                var report = await LeaveOneOut.RunAsync(opts.Require("root"), chat, settings);
+                recorder?.Save();
+                Write(opts, report);
+                return 0;
+            }
+            case "scale":
+            {
+                var (chat, recorder) = Chat(opts);
+                var sizes = (opts.Get("sizes") ?? "100,1000,10000").Split(',').Select(int.Parse).ToList();
+                var report = await Scale.RunAsync(chat, sizes);
+                recorder?.Save();
+                Write(opts, report);
+                return 0;
+            }
+            case "settle":
+            {
+                var (chat, recorder) = Chat(opts);
+                var report = await Settle.RunAsync(opts.Require("corpus"), chat, opts.Require("records"));
+                recorder?.Save();
+                Write(opts, report);
+                return report["read_error"] is null ? 0 : 1;
+            }
+            case "rebuild":
+            {
+                var (chat, recorder) = Chat(opts);
+                var folders = opts.Require("folders").Split(',', StringSplitOptions.RemoveEmptyEntries);
+                var report = await Rebuild.RunAsync(opts.Require("root"), folders, chat, opts.Int("seed", 1));
+                recorder?.Save();
+                Write(opts, report);
+                return 0;
+            }
             default:
                 Console.Error.WriteLine($"unknown command: {args[0]}");
                 return 2;

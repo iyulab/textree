@@ -659,7 +659,15 @@ public sealed class Ingester(Folder folder, IChatClient chat, ISummaryCache? sum
                 new(ChatRole.System, "You organize a folder of Markdown notes. You answer with one JSON object and nothing else."),
                 new(ChatRole.User, problem is null ? prompt : prompt + "\n\nYour last answer was not a JSON object. Answer with the JSON object only."),
             };
-            var response = await chat.GetResponseAsync(messages, options, ct);
+            ChatResponse response;
+            try
+            {
+                response = await chat.GetResponseAsync(messages, options, ct);
+            }
+            catch (Exception e) when (e is not OperationCanceledException)
+            {
+                throw new ModelAnswerException($"the language model could not be reached: {e.Message}");
+            }
             trace.ModelCalls++;
             trace.InputTokens += response.Usage?.InputTokenCount ?? 0;
             trace.OutputTokens += response.Usage?.OutputTokenCount ?? 0;
