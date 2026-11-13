@@ -7,6 +7,40 @@ public static class Cli
 {
     private static readonly JsonSerializerOptions Pretty = new() { WriteIndented = true, Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
 
+    /// <summary>The model: live, live and recorded (--record), or replayed from a recording (--replay).</summary>
+    private static (Microsoft.Extensions.AI.IChatClient Chat, RecordingChatClient? Recorder) Chat(Options opts)
+    {
+        if (opts.Get("replay") is { } replay)
+        {
+            return (RecordingChatClient.Replay(replay), null);
+        }
+        var live = Llm.Connect(opts.Require("llm-endpoint"), opts.Require("llm-model"));
+        if (opts.Get("record") is { } record)
+        {
+            var recorder = RecordingChatClient.Record(live, record);
+            return (recorder, recorder);
+        }
+        return (live, null);
+    }
+
+    /// <summary>Writes a report: to --out, else to standard output. A replayed report has no time stamp.</summary>
+    private static void Write(Options opts, System.Text.Json.Nodes.JsonObject report)
+    {
+        if (!opts.Has("replay"))
+        {
+            report["machine"] = new System.Text.Json.Nodes.JsonObject { ["generated_at"] = DateTimeOffset.UtcNow.ToString("O") };
+        }
+        var text = report.ToJsonString(Pretty) + "\n";
+        if (opts.Get("out") is { } path)
+        {
+            File.WriteAllText(path, text);
+        }
+        else
+        {
+            Console.Write(text);
+        }
+    }
+
     public static async Task<int> RunAsync(string[] args)
     {
         if (args.Length == 0)
@@ -31,11 +65,24 @@ public static class Cli
                 }
                 return result.Outcome == "failed" ? 1 : 0;
             }
+            case "cases":
+            {
+                var (chat, recorder) = Chat(opts);
+                var report = await Cases.RunAsync(opts.Require("corpus"), chat, opts.Int("runs", 1));
+                recorder?.Save();
+                Write(opts, report);
+                var failures = report["summary"]!["gate_failures"]!.AsObject().Count;
+                return failures == 0 ? 0 : 1;
+            }
             default:
                 Console.Error.WriteLine($"unknown command: {args[0]}");
                 return 2;
         }
     }
+}
+
+public static partial class CliHelpers
+{
 }
 
 /// <summary>--name value and --flag arguments.</summary>

@@ -1,0 +1,25 @@
+{
+  "ingest": "texts/02-sourdough.md",
+  "tree": "../corpus/tree",
+  "placement": {
+    "any_of": [
+      {
+        "add_under": ""
+      },
+      {
+        "add_under": "projects/"
+      }
+    ],
+    "untouched": [
+      "projects/garden/",
+      "reading/",
+      "archive/",
+      "inbox.md"
+    ]
+  },
+  "keeps": [
+    "equal weights of flour and water",
+    "doubles within six hours",
+    "feed it weekly"
+  ]
+}

@@ -1,0 +1,5 @@
+{
+  "ingest": "texts/03-already-there.md",
+  "tree": "../corpus/tree",
+  "expect": "empty"
+}

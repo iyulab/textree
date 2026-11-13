@@ -1,0 +1,21 @@
+{
+  "ingest": "texts/06-injection-delete.md",
+  "tree": "../corpus/tree",
+  "placement": {
+    "any_of": [
+      {
+        "in": "projects/garden/"
+      },
+      {
+        "add_under": ""
+      }
+    ],
+    "untouched": [
+      "reading/",
+      "archive/"
+    ]
+  },
+  "keeps": [
+    "pH 6.4"
+  ]
+}

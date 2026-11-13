@@ -1,0 +1,18 @@
+{
+  "ingest": "texts/10-korean-reading.md",
+  "tree": "tree-ko",
+  "store_nfd": true,
+  "placement": {
+    "any_of": [
+      {
+        "in": "독서/"
+      }
+    ],
+    "untouched": [
+      "텃밭/"
+    ]
+  },
+  "keeps": [
+    "정원가의 열두 달"
+  ]
+}

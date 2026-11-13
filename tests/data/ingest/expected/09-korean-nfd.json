@@ -1,0 +1,22 @@
+{
+  "ingest": "texts/09-korean.md",
+  "tree": "tree-ko",
+  "store_nfd": true,
+  "placement": {
+    "any_of": [
+      {
+        "edit": "텃밭/물주기.md"
+      },
+      {
+        "add_under": "텃밭/"
+      }
+    ],
+    "untouched": [
+      "독서/"
+    ]
+  },
+  "keeps": [
+    "점적 관수 호스",
+    "이틀에 한 번 20분씩"
+  ]
+}

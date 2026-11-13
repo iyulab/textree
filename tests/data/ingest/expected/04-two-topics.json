@@ -1,0 +1,24 @@
+{
+  "ingest": "texts/04-two-topics.md",
+  "tree": "../corpus/tree",
+  "placement": {
+    "any_of": [
+      {
+        "in": "projects/garden/"
+      },
+      {
+        "in": "reading/"
+      }
+    ],
+    "untouched": [
+      "archive/",
+      "inbox.md"
+    ]
+  },
+  "min_pieces": 2,
+  "distinct_folders": true,
+  "keeps": [
+    "soaker hose",
+    "a to-do list is a menu, not a mandate"
+  ]
+}

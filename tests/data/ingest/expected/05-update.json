@@ -1,0 +1,22 @@
+{
+  "ingest": "texts/05-update.md",
+  "tree": "../corpus/tree",
+  "placement": {
+    "any_of": [
+      {
+        "edit": "projects/garden/watering.md"
+      },
+      {
+        "add_under": "projects/garden/"
+      }
+    ],
+    "untouched": [
+      "reading/",
+      "archive/",
+      "inbox.md"
+    ]
+  },
+  "keeps": [
+    "more than 5 mm overnight"
+  ]
+}

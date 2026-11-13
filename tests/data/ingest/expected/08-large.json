@@ -1,0 +1,20 @@
+{
+  "ingest": "texts/08-large.md",
+  "tree": "../corpus/tree",
+  "placement": {
+    "any_of": [
+      {
+        "in": "projects/"
+      }
+    ],
+    "untouched": [
+      "reading/",
+      "archive/",
+      "inbox.md"
+    ]
+  },
+  "keeps": [
+    "two parts brown to one part green",
+    "every two weeks"
+  ]
+}
