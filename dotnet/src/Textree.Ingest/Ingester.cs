@@ -811,7 +811,8 @@ public sealed class Ingester(Folder folder, IChatClient chat, ISummaryCache? sum
                 {
                     try
                     {
-                        if (JsonNode.Parse(text[start..(i + 1)]) is JsonObject o)
+                        // A key given twice is ambiguous: such an answer is not used (the question is asked again).
+                        if (JsonNode.Parse(text[start..(i + 1)], documentOptions: new JsonDocumentOptions { AllowDuplicateProperties = false }) is JsonObject o)
                         {
                             return o;
                         }

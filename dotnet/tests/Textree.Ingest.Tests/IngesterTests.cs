@@ -223,5 +223,6 @@ public sealed class IngesterTests
     {
         Assert.Equal("x", Ingester.ParseObject("Sure!\n```json\n{\"action\": \"x\", \"n\": \"}\"}\n```")!["action"]!.GetValue<string>());
         Assert.Null(Ingester.ParseObject("no object here"));
+        Assert.Null(Ingester.ParseObject("{\"groups\": [1], \"groups\": [2]}"));
     }
 }
