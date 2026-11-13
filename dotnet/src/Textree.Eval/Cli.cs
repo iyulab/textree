@@ -14,7 +14,7 @@ public static class Cli
         {
             return (RecordingChatClient.Replay(replay), null);
         }
-        var live = Llm.Connect(opts.Require("llm-endpoint"), opts.Require("llm-model"));
+        var live = Llm.Connect(opts.Require("llm-endpoint"), opts.Require("llm-model"), opts.Get("key-env"));
         if (opts.Get("record") is { } record)
         {
             var recorder = RecordingChatClient.Record(live, record);
@@ -81,6 +81,19 @@ public static class Cli
                 var settings = new LeaveOneOut.Settings(opts.Int("per-stratum", 5), (ulong)opts.Int("seed", 1), opts.Int("runs", 1), opts.Int("min-chars", 200), opts.Has("unmasked"), arms);
                 var report = await LeaveOneOut.RunAsync(opts.Require("root"), chat, settings);
                 recorder?.Save();
+                // A labeller of the panel: the single-call arm, run with another model, under its own name.
+                if (opts.Get("label") is { } label)
+                {
+                    foreach (var part in new[] { "summary", "arms" })
+                    {
+                        if (report[part]?["b2"] is { } node)
+                        {
+                            report[part]!.AsObject().Remove("b2");
+                            report[part]!.AsObject()[label] = node;
+                        }
+                    }
+                    report["labeller"] = new System.Text.Json.Nodes.JsonObject { ["name"] = label, ["model"] = opts.Get("llm-model") };
+                }
                 Write(opts, report);
                 return 0;
             }
