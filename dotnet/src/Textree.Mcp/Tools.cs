@@ -16,7 +16,8 @@ public sealed class Tools(Folder folder)
 {
     public const string Instructions =
         "A folder of Markdown documents (the knowledge folder). Read it with tree, read_document, graph and check. " +
-        "To change it, call move, delete, split, merge, add_document or replace_document: each returns a plan and writes nothing. " +
+        "To change it, call move, delete, split, merge, add_document, replace_document or edit_section: each returns a plan and writes nothing. " +
+        "To file new text where it belongs, call ingest: it returns a plan too. " +
         "Then pass that plan, unchanged, to apply_plan, which is the only tool that writes. " +
         "Links between documents are kept working: a plan rewrites the links a change would break, and a change that cannot keep them is refused with the reason. " +
         "A plan is refused if it was edited, or if the folder changed since it was made — make it again. " +
@@ -102,10 +103,20 @@ public sealed class Tools(Folder folder)
         [Description("Refuse a change that would rewrite more than this many bytes of links.")] long? max_bytes = null)
         => Plan(new JsonObject { ["op"] = "replace", ["path"] = path, ["content"] = content }, false, max_touched, max_bytes);
 
+    [McpServerTool(Name = "edit_section", Title = "Plan new text for a section", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
+    [Description("Plans replacing the body of one section of a document: the text under the heading, up to the next heading of the same or a higher level. The heading line and everything outside the section stay as they are. A new body that drops a heading another document links to is refused. Returns the plan; nothing is written until apply_plan.")]
+    public CallToolResult EditSection(
+        [Description("The document, relative to the knowledge folder.")] string path,
+        [Description("The section's heading text, as written (without the # marks).")] string heading,
+        [Description("The section's new body in Markdown (without its heading line).")] string content,
+        [Description("Refuse a change that would touch more than this many nodes.")] long? max_touched = null,
+        [Description("Refuse a change that would rewrite more than this many bytes of links.")] long? max_bytes = null)
+        => Plan(new JsonObject { ["op"] = "edit_section", ["path"] = path, ["heading"] = heading, ["content"] = content }, false, max_touched, max_bytes);
+
     // ---- writing --------------------------------------------------------------------------------
 
     [McpServerTool(Name = "apply_plan", Title = "Apply a plan", ReadOnly = false, Destructive = true, Idempotent = true, OpenWorld = false)]
-    [Description("Writes a plan returned by move, delete, split, merge, add_document or replace_document. Pass the plan unchanged. It is written only if nothing it read has changed and it is exactly what its operations give on the folder now; otherwise it is refused and nothing is written. Applying the same plan twice changes nothing the second time.")]
+    [Description("Writes a plan returned by move, delete, split, merge, add_document, replace_document, edit_section or ingest. Pass the plan unchanged. It is written only if nothing it read has changed and it is exactly what its operations give on the folder now; otherwise it is refused and nothing is written. Applying the same plan twice changes nothing the second time.")]
     public CallToolResult ApplyPlan(
         [Description("The plan object, exactly as a planning tool returned it.")] JsonElement plan)
         => Result(folder.Apply(JsonNode.Parse(plan.GetRawText())!));
@@ -123,7 +134,7 @@ public sealed class Tools(Folder folder)
         return Result(folder.Plan(operation, policy));
     }
 
-    private static CallToolResult Result(EngineResult result)
+    internal static CallToolResult Result(EngineResult result)
     {
         if (result.Error is { } error)
         {

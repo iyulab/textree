@@ -71,14 +71,14 @@ public sealed class ServerTests
     private static string Text(CallToolResult r) => ((TextContentBlock)r.Content[0]).Text;
 
     [Fact]
-    public async Task Lists_eleven_tools_with_safety_hints()
+    public async Task Lists_thirteen_tools_with_safety_hints()
     {
         using var s = Folder();
         await using var client = await Start(s);
         var tools = await client.ListToolsAsync(cancellationToken: TestContext.Current.CancellationToken);
         var names = tools.Select(t => t.Name).Order(StringComparer.Ordinal).ToArray();
         Assert.Equal(
-            new[] { "add_document", "apply_plan", "check", "delete", "graph", "merge", "move", "read_document", "replace_document", "split", "tree" },
+            new[] { "add_document", "apply_plan", "check", "delete", "edit_section", "graph", "ingest", "merge", "move", "read_document", "replace_document", "split", "tree" },
             names);
         foreach (var tool in tools)
         {
@@ -88,8 +88,34 @@ public sealed class ServerTests
             Assert.Equal(!writes, a.ReadOnlyHint);
             Assert.Equal(writes, a.DestructiveHint);
             Assert.True(a.IdempotentHint);
-            Assert.False(a.OpenWorldHint);
+            // Only ingest reaches outside: it calls the configured language model.
+            Assert.Equal(tool.Name == "ingest", a.OpenWorldHint);
         }
+    }
+
+    [Fact]
+    public async Task Ingest_without_a_language_model_is_an_error_and_the_other_tools_still_work()
+    {
+        using var s = Folder();
+        await using var client = await Start(s);
+        var r = await Call(client, "ingest", new { text = "A new note." });
+        Assert.True(r.IsError);
+        Assert.Contains("no language model is configured", Text(r));
+        var tree = await Call(client, "tree", new { });
+        Assert.NotEqual(true, tree.IsError);
+    }
+
+    [Fact]
+    public async Task Edit_section_plans_a_new_body_under_one_heading()
+    {
+        using var s = new Scratch().File("a.md", "# A\n\n## Part\n\nold\n\n## Next\n\nkeep\n");
+        await using var client = await Start(s);
+        var plan = await Call(client, "edit_section", new { path = "a.md", heading = "Part", content = "new" });
+        Assert.NotEqual(true, plan.IsError);
+        Assert.Equal("# A\n\n## Part\n\nold\n\n## Next\n\nkeep\n", s.Read("a.md"));
+        var applied = await Call(client, "apply_plan", new { plan = JsonNode.Parse(Text(plan)) });
+        Assert.NotEqual(true, applied.IsError);
+        Assert.Equal("# A\n\n## Part\n\nnew\n\n## Next\n\nkeep\n", s.Read("a.md"));
     }
 
     [Fact]

@@ -39,6 +39,16 @@ public sealed class Folder
     /// <summary>A document's text, headings, tags, links and the links that come to it.</summary>
     public EngineResult ReadDocument(string path) => Call("read_document", new JsonObject { ["path"] = path });
 
+    /// <summary>Every readable document with its text and headings, in one call.</summary>
+    public EngineResult Documents() => Call("documents", null);
+
+    /// <summary>
+    /// Plans several operations that write the text of documents (add, replace, append,
+    /// edit_section — each on a different document) as one change. Writes nothing.
+    /// </summary>
+    public EngineResult PlanMany(JsonArray operations, JsonNode? policy = null) =>
+        Call("plan", new JsonObject { ["operations"] = operations.DeepClone(), ["policy"] = policy?.DeepClone() });
+
     /// <summary>Plans an operation (<c>{"op": "move", ...}</c>). Writes nothing.</summary>
     public EngineResult Plan(JsonNode operation, JsonNode? policy = null) =>
         Call("plan", new JsonObject { ["operation"] = operation.DeepClone(), ["policy"] = policy?.DeepClone() });

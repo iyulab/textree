@@ -17,6 +17,21 @@ Entries describe changes in Textree's own terms — never in terms of a particul
 - A plan can carry several operations that write the text of documents (add, replace, append,
   edit_section), each on a different document: they are planned one after another and committed as
   one change. The C interface takes them as `operations`; applying such a plan rechecks all of them.
+- The C interface has `documents`: every readable document with its text and headings in one call.
+- `Textree.Ingest` (.NET): places new text in a folder. It cuts the text into pieces by topic,
+  walks the folders from the top with a language model (`IChatClient`) showing one folder at a
+  time, and turns each choice into engine operations — a new section of a document, an addition to
+  one section, a new document or a new folder — planned and checked as one change. A model answer
+  that names a folder or document it was not shown is not used. Paragraphs already in the folder are
+  not added again, so ingesting the same text twice gives nothing to do. A refused plan is repaired
+  (a taken name gets a number; otherwise the affected pieces choose again, told why) up to a limit,
+  and then the outcome is a failure with the reasons — never a plan that breaks the folder's
+  invariants. Folder summaries and proposals go through ports (`ISummaryCache`, `IProposalLog`);
+  nothing is written into the knowledge folder.
+- The MCP server has two more tools: `edit_section` (plans a new body for one section) and
+  `ingest` (plans where new text goes; the one tool that reaches outside, to the language model
+  given with `--llm-endpoint` and `--llm-model`, with the key, if any, in `TEXTREE_LLM_KEY`).
+  Without a language model `ingest` answers with an error and the other tools work as before.
 
 ### Changed
 

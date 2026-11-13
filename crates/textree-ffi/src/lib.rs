@@ -17,6 +17,7 @@
 //! | `check` | — | `{broken: [{path, line, link}], text}` (`text` as `textree check` prints it) |
 //! | `tree` | `path?` | the folder and document hierarchy, from `path` (default: the root) |
 //! | `read_document` | `path` | `{path, text, headings, tags, links, backlinks}` |
+//! | `documents` | — | `{documents: [{path, text, headings}], unreadable: [{path, message}]}` — every readable document in one call |
 //! | `plan` | `operation` (or `operations`, several written-text operations as one plan), `policy?` | the plan (a change set, format 2) |
 //! | `apply` | `plan` | `{applied}` — the plan is written only if it is exactly what its operations give now |
 
@@ -69,6 +70,7 @@ fn handle(request: &str) -> Result<Value, Failure> {
         "check" => Ok(check(&store)),
         "tree" => tree(&store, optional_str(args, "path")?.unwrap_or("")),
         "read_document" => read_document(&store, required_str(args, "path")?),
+        "documents" => documents(&store),
         "plan" => {
             let ops: Vec<Op> = match args.get("operations") {
                 None | Some(Value::Null) => vec![field(args, "operation")?],
@@ -206,6 +208,30 @@ fn tree(store: &FolderStore, path: &str) -> Result<Value, Failure> {
             .collect()
     }
     Ok(json!({"path": path, "kind": "collection", "children": build(path, &nodes, &titles)}))
+}
+
+fn documents(store: &FolderStore) -> Result<Value, Failure> {
+    let snapshot = textree::Snapshot::read(store);
+    let graph = snapshot.graph();
+    let mut docs = Vec::new();
+    for d in &graph.documents {
+        let Ok(bytes) = store.read(&d.path) else {
+            continue;
+        };
+        let body = bytes
+            .strip_prefix(&[0xEF, 0xBB, 0xBF])
+            .unwrap_or(&bytes[..]);
+        let Ok(text) = std::str::from_utf8(body) else {
+            continue;
+        };
+        docs.push(json!({"path": d.path, "text": text, "headings": d.headings}));
+    }
+    let unreadable: Vec<Value> = snapshot
+        .unreadable
+        .iter()
+        .map(|i| json!({"path": i.path, "message": i.message}))
+        .collect();
+    Ok(json!({"documents": docs, "unreadable": unreadable}))
 }
 
 fn read_document(store: &FolderStore, path: &str) -> Result<Value, Failure> {
