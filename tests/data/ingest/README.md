@@ -17,3 +17,8 @@ accepted ones.
 | `placement.untouched` | Path prefixes that must not change |
 | `keeps` | Phrases that must be in the folder afterwards |
 | `min_pieces`, `distinct_folders` | For a text about several topics: how many pieces at least, and whether they go to different folders |
+
+`recorded-answers.json` holds one model's answers to every question the cases ask, keyed by a
+hash of the question. Replaying it (`Textree.Eval cases --replay`) needs no model and gives the same
+report every time; the `Textree.Eval.Tests` suite checks that. Re-record it when a prompt changes:
+`Textree.Eval cases --corpus tests/data/ingest --record tests/data/ingest/recorded-answers.json --llm-endpoint … --llm-model …`.
