@@ -49,6 +49,7 @@ public static class Cli
             return 2;
         }
         var opts = Options.Parse(args.Skip(1));
+        Baselines.JsonFormat = !opts.Has("no-json-format");
         switch (args[0])
         {
             case "try":
@@ -78,7 +79,7 @@ public static class Cli
             {
                 var (chat, recorder) = Chat(opts);
                 var arms = (opts.Get("arms") ?? "harness,b0,b1,b2,gil").Split(',', StringSplitOptions.RemoveEmptyEntries).ToHashSet(StringComparer.Ordinal);
-                var settings = new LeaveOneOut.Settings(opts.Int("per-stratum", 5), (ulong)opts.Int("seed", 1), opts.Int("runs", 1), opts.Int("min-chars", 200), opts.Has("unmasked"), arms);
+                var settings = new LeaveOneOut.Settings(opts.Int("per-stratum", 5), (ulong)opts.Int("seed", 1), opts.Int("runs", 1), opts.Int("min-chars", 200), opts.Has("unmasked"), arms, opts.Get("only"));
                 var report = await LeaveOneOut.RunAsync(opts.Require("root"), chat, settings);
                 recorder?.Save();
                 // A labeller of the panel: the single-call arm, run with another model, under its own name.

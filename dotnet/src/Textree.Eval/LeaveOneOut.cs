@@ -15,7 +15,7 @@ namespace Textree.Eval;
 /// </summary>
 public static partial class LeaveOneOut
 {
-    public sealed record Settings(int PerStratum, ulong Seed, int Runs, int MinChars, bool Unmasked, IReadOnlySet<string> Arms);
+    public sealed record Settings(int PerStratum, ulong Seed, int Runs, int MinChars, bool Unmasked, IReadOnlySet<string> Arms, string? Only = null);
 
     /// <summary>One document taken out: where it was, its text with location hints removed, and the masked tree.</summary>
     private sealed record Case(string Path, string Folder, string Stratum, string Text);
@@ -36,7 +36,8 @@ public static partial class LeaveOneOut
             .Select(g => new PopulationStratum(g.Key, g.Select(d => d.Path).Order(StringComparer.Ordinal).ToList()))
             .ToList();
         var sample = ReviewSampler.DrawPilot(strata, settings.PerStratum, settings.Seed);
-        var picked = sample.Strata.SelectMany(s => s.Selected.Select(id => (Stratum: s.Name, Path: id))).ToList();
+        var picked = sample.Strata.SelectMany(s => s.Selected.Select(id => (Stratum: s.Name, Path: id)))
+            .Where(p => settings.Only is null || p.Path == settings.Only).ToList();
 
         var arms = new Dictionary<string, List<JsonObject>>(StringComparer.Ordinal);
         void Add(string arm, JsonObject row)
@@ -244,6 +245,7 @@ public static partial class LeaveOneOut
         row["model_calls"] = result.Trace.ModelCalls;
         row["tokens"] = result.Trace.InputTokens + result.Trace.OutputTokens;
         row["repairs"] = result.Trace.Repairs;
+        row["violations"] = result.Violations is null ? null : new JsonArray(result.Violations.Select(v => (JsonNode)v).ToArray());
         row["unseen_refused"] = result.Trace.UnseenCitations;
         row["path_taken"] = string.Join(" > ", result.Trace.Steps.Where(s => s.Refusal is null).Select(s => s.At.Length == 0 ? "(top)" : s.At));
         row["machine"] = new JsonObject { ["seconds"] = Math.Round(seconds, 2) };

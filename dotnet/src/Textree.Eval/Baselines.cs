@@ -9,6 +9,9 @@ namespace Textree.Eval;
 /// <summary>What the harness is measured against.</summary>
 public static class Baselines
 {
+    /// <summary>Whether the single-call arm asks the server for a JSON response format (some compatible endpoints refuse it; the answer is parsed from text either way).</summary>
+    public static bool JsonFormat { get; set; } = true;
+
     // ---- B1: the folder of the most similar document (character trigrams, tf-idf, cosine) --------
 
     public static string? Nearest(Hierarchy h, string text)
@@ -80,7 +83,7 @@ public static class Baselines
             sb.AppendLine($"{i + 1}. {(folders[i].Length == 0 ? "(top)" : folders[i].Normalize(NormalizationForm.FormC) + "/")} — {string.Join("; ", titles)}");
         }
         sb.AppendLine("""Which folder does the note belong in? Answer with JSON only: {"folder": <number>}""");
-        var options = new ChatOptions { ResponseFormat = ChatResponseFormat.Json };
+        var options = JsonFormat ? new ChatOptions { ResponseFormat = ChatResponseFormat.Json } : new ChatOptions();
         var response = await chat.GetResponseAsync(
             [new ChatMessage(ChatRole.System, "You answer with one JSON object and nothing else."), new ChatMessage(ChatRole.User, sb.ToString())],
             options, ct);
