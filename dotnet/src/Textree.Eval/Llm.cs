@@ -13,8 +13,41 @@ public static class Llm
         var key = Environment.GetEnvironmentVariable(keyVariable ?? "TEXTREE_LLM_KEY");
         var client = new OpenAIClient(new ApiKeyCredential(string.IsNullOrEmpty(key) ? "none" : key), new OpenAIClientOptions { Endpoint = new Uri(endpoint), NetworkTimeout = TimeSpan.FromMinutes(5) });
         var chat = client.GetChatClient(model).AsIChatClient();
-        return temperature is null ? chat : new WithTemperature(chat, temperature.Value);
+        IChatClient patient = new Patient(chat);
+        return temperature is null ? patient : new WithTemperature(patient, temperature.Value);
     }
+}
+
+/// <summary>
+/// Asks again, after a pause, when the server fails in a way that may pass (a 5xx answer, 429, a
+/// dropped connection or a timeout). One passing failure must not end an evaluation of hours.
+/// </summary>
+public sealed class Patient(IChatClient inner, int tries = 5) : DelegatingChatClient(inner)
+{
+    public override async Task<ChatResponse> GetResponseAsync(IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default)
+    {
+        var list = messages as IList<ChatMessage> ?? messages.ToList();
+        for (var attempt = 1; ; attempt++)
+        {
+            try
+            {
+                return await base.GetResponseAsync(list, options, cancellationToken);
+            }
+            catch (Exception e) when (attempt < tries && Passing(e) && !cancellationToken.IsCancellationRequested)
+            {
+                Console.Error.WriteLine($"model call failed ({e.Message.Split('\n')[0]}); asking again ({attempt}/{tries - 1})");
+                await Task.Delay(TimeSpan.FromSeconds(5 * attempt), cancellationToken);
+            }
+        }
+    }
+
+    public static bool Passing(Exception e) => e switch
+    {
+        ClientResultException c => c.Status is 0 or 408 or 429 || c.Status >= 500,
+        HttpRequestException or TimeoutException or IOException => true,
+        TaskCanceledException => true,
+        _ => e.InnerException is { } inner && Passing(inner),
+    };
 }
 
 /// <summary>Sends a temperature with every call that does not set its own.</summary>

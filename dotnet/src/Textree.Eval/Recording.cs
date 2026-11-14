@@ -10,6 +10,9 @@ namespace Textree.Eval;
 /// A chat client that records each answer under the hash of its question, or answers from such a
 /// recording without a model. Replaying a recording makes an evaluation repeatable byte for byte.
 /// A question asked more than once (repeated runs) keeps one answer per occurrence, in order.
+/// Recording into a file that already holds answers continues it: questions it holds are answered
+/// from it, new ones are asked and added, and the file is saved as it grows — an evaluation that
+/// stops part way loses at most the last few answers and resumes where it was.
 /// </summary>
 public sealed class RecordingChatClient : IChatClient
 {
@@ -17,6 +20,9 @@ public sealed class RecordingChatClient : IChatClient
     private readonly Dictionary<string, List<JsonObject>> _answers;
     private readonly Dictionary<string, int> _cursor = new();
     private readonly string? _saveTo;
+    private readonly object _writing = new();
+    private DateTime _savedAt = DateTime.UtcNow;
+    private static readonly TimeSpan SaveEvery = TimeSpan.FromSeconds(20);
 
     private RecordingChatClient(IChatClient? inner, Dictionary<string, List<JsonObject>> answers, string? saveTo)
     {
@@ -25,15 +31,20 @@ public sealed class RecordingChatClient : IChatClient
         _saveTo = saveTo;
     }
 
-    /// <summary>Asks <paramref name="inner"/> and records every answer, saved to <paramref name="path"/> by <see cref="Save"/>.</summary>
-    public static RecordingChatClient Record(IChatClient inner, string path) => new(inner, new(), path);
+    /// <summary>
+    /// Asks <paramref name="inner"/> and records every answer to <paramref name="path"/>; if that file
+    /// already holds a recording, continues it.
+    /// </summary>
+    public static RecordingChatClient Record(IChatClient inner, string path) =>
+        new(inner, File.Exists(path) ? Load(path) : new(), path);
 
     /// <summary>Answers from the recording at <paramref name="path"/>; a question it does not hold is an error.</summary>
-    public static RecordingChatClient Replay(string path)
+    public static RecordingChatClient Replay(string path) => new(null, Load(path), null);
+
+    private static Dictionary<string, List<JsonObject>> Load(string path)
     {
         var json = JsonNode.Parse(File.ReadAllText(path))!.AsObject();
-        var answers = json.ToDictionary(kv => kv.Key, kv => kv.Value!.AsArray().Select(a => a!.AsObject()).ToList());
-        return new(null, answers, null);
+        return json.ToDictionary(kv => kv.Key, kv => kv.Value!.AsArray().Select(a => a!.AsObject()).ToList());
     }
 
     public void Save()
@@ -42,33 +53,60 @@ public sealed class RecordingChatClient : IChatClient
         {
             return;
         }
-        var o = new JsonObject();
-        foreach (var (k, list) in _answers.OrderBy(kv => kv.Key, StringComparer.Ordinal))
+        string text;
+        lock (_answers)
         {
-            o[k] = new JsonArray(list.Select(a => (JsonNode)a.DeepClone()).ToArray());
+            var o = new JsonObject();
+            foreach (var (k, list) in _answers.OrderBy(kv => kv.Key, StringComparer.Ordinal))
+            {
+                o[k] = new JsonArray(list.Select(a => (JsonNode)a.DeepClone()).ToArray());
+            }
+            text = o.ToJsonString(new JsonSerializerOptions { WriteIndented = true });
+            _savedAt = DateTime.UtcNow;
         }
-        File.WriteAllText(_saveTo, o.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+        // Written beside and moved over, so a stop during the write leaves the last whole recording.
+        lock (_writing)
+        {
+            var temp = _saveTo + ".tmp";
+            File.WriteAllText(temp, text);
+            File.Move(temp, _saveTo, overwrite: true);
+        }
     }
 
     public async Task<ChatResponse> GetResponseAsync(IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default)
     {
         var list = messages.ToList();
         var key = Key(list);
-        var index = _cursor.GetValueOrDefault(key);
-        _cursor[key] = index + 1;
-        if (_inner is null)
+        JsonObject? held = null;
+        lock (_answers)
         {
-            if (!_answers.TryGetValue(key, out var recorded) || recorded.Count == 0)
+            var index = _cursor.GetValueOrDefault(key);
+            _cursor[key] = index + 1;
+            if (_answers.TryGetValue(key, out var recorded) && recorded.Count > 0)
             {
-                throw new InvalidOperationException("this question is not in the recording");
+                if (_inner is null)
+                {
+                    held = recorded[Math.Min(index, recorded.Count - 1)];
+                }
+                else if (index < recorded.Count)
+                {
+                    held = recorded[index];
+                }
             }
-            var a = recorded[Math.Min(index, recorded.Count - 1)];
-            return new ChatResponse(new ChatMessage(ChatRole.Assistant, a["text"]!.GetValue<string>()))
+        }
+        if (held is not null)
+        {
+            return new ChatResponse(new ChatMessage(ChatRole.Assistant, held["text"]!.GetValue<string>()))
             {
-                Usage = new UsageDetails { InputTokenCount = a["input"]?.GetValue<long>(), OutputTokenCount = a["output"]?.GetValue<long>() },
+                Usage = new UsageDetails { InputTokenCount = held["input"]?.GetValue<long>(), OutputTokenCount = held["output"]?.GetValue<long>() },
             };
         }
+        if (_inner is null)
+        {
+            throw new InvalidOperationException("this question is not in the recording");
+        }
         var response = await _inner.GetResponseAsync(list, options, cancellationToken);
+        bool due;
         lock (_answers)
         {
             if (!_answers.TryGetValue(key, out var answers))
@@ -81,6 +119,15 @@ public sealed class RecordingChatClient : IChatClient
                 ["input"] = response.Usage?.InputTokenCount,
                 ["output"] = response.Usage?.OutputTokenCount,
             });
+            due = _saveTo is not null && DateTime.UtcNow - _savedAt >= SaveEvery;
+            if (due)
+            {
+                _savedAt = DateTime.UtcNow;
+            }
+        }
+        if (due)
+        {
+            Save();
         }
         return response;
     }
