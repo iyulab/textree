@@ -4,13 +4,13 @@
       "text": "{\n\u0022subject\u0022: \u0022Composting plan\u0022,\n\u0022choice\u0022: \u0022F4\u0022\n}",
       "input": 523,
       "output": 21,
-      "seconds": 3.035
+      "seconds": 2.433
     },
     {
       "text": "{\n\u0022subject\u0022: \u0022Composting plan\u0022,\n\u0022choice\u0022: \u0022F4\u0022\n}",
       "input": 523,
       "output": 21,
-      "seconds": 1.095
+      "seconds": 0.893
     }
   ],
   "2ca62de1d2ed0480ef7af6d90fe88cde": [
@@ -18,7 +18,7 @@
       "text": "{\n\u0022action\u0022: \u0022add_to_section\u0022,\n\u0022item\u0022: \u0022D1\u0022,\n\u0022section\u0022: \u0022\uC77C\uC815\u0022\n}",
       "input": 600,
       "output": 29,
-      "seconds": 3.418
+      "seconds": 2.741
     }
   ],
   "30d0ebf9bac121d354459cde336b83e1": [
@@ -26,13 +26,13 @@
       "text": "{\n\u0022subject\u0022: \u0022Garden watering schedule\u0022,\n\u0022choice\u0022: \u0022F4\u0022\n}",
       "input": 414,
       "output": 22,
-      "seconds": 3.21
+      "seconds": 1.998
     },
     {
       "text": "{\n\u0022subject\u0022: \u0022Garden watering schedule\u0022,\n\u0022choice\u0022: \u0022F4\u0022\n}",
       "input": 414,
       "output": 22,
-      "seconds": 1.15
+      "seconds": 0.954
     }
   ],
   "39a6cbcd3b37060376f3a2dc1d30a76c": [
@@ -40,13 +40,13 @@
       "text": "{\n\u0022subject\u0022: \u0022Book Review: Four Thousand Weeks\u0022,\n\u0022choice\u0022: \u0022F5\u0022\n}",
       "input": 430,
       "output": 24,
-      "seconds": 2.809
+      "seconds": 1.934
     },
     {
       "text": "{\n\u0022subject\u0022: \u0022Book Review: Four Thousand Weeks\u0022,\n\u0022choice\u0022: \u0022F5\u0022\n}",
       "input": 430,
       "output": 24,
-      "seconds": 1.39
+      "seconds": 0.972
     }
   ],
   "3dee903ba6bb18ba1ebb2339d910dac6": [
@@ -54,13 +54,13 @@
       "text": "{\n\u0022subject\u0022: \u0022Tomato watering schedule\u0022,\n\u0022choice\u0022: \u0022F4\u0022\n}",
       "input": 431,
       "output": 22,
-      "seconds": 3.314
+      "seconds": 1.897
     },
     {
       "text": "{\n\u0022subject\u0022: \u0022Tomato watering schedule\u0022,\n\u0022choice\u0022: \u0022F4\u0022\n}",
       "input": 431,
       "output": 22,
-      "seconds": 1.016
+      "seconds": 1.021
     }
   ],
   "40dd3a885bc7e76a467edb57c0069883": [
@@ -68,7 +68,7 @@
       "text": "{\n\u0022subject\u0022: \u0022system administration instruction\u0022,\n\u0022choice\u0022: \u0022H\u0022\n}",
       "input": 421,
       "output": 20,
-      "seconds": 1.94
+      "seconds": 1.857
     }
   ],
   "539569a5972e8b838ba56e0ea8035cc1": [
@@ -76,7 +76,7 @@
       "text": "{\n  \u0022action\u0022: \u0022append\u0022,\n  \u0022item\u0022: \u0022D3\u0022,\n  \u0022heading\u0022: \u0022Schedule\u0022\n}",
       "input": 570,
       "output": 29,
-      "seconds": 3.239
+      "seconds": 2.835
     }
   ],
   "69010a7bf17966e199da59062e85e22e": [
@@ -84,7 +84,7 @@
       "text": "{\n\u0022groups\u0022: [\n[1],\n[2]\n]\n}",
       "input": 308,
       "output": 19,
-      "seconds": 2.039
+      "seconds": 1.429
     }
   ],
   "6beabba5803d1b676e688fe98ec3fc95": [
@@ -92,13 +92,13 @@
       "text": "{\n\u0022subject\u0022: \u0022Garden watering schedule\u0022,\n\u0022choice\u0022: \u0022F4\u0022\n}",
       "input": 445,
       "output": 22,
-      "seconds": 1.448
+      "seconds": 2.347
     },
     {
       "text": "{\n\u0022subject\u0022: \u0022Garden watering schedule\u0022,\n\u0022choice\u0022: \u0022F4\u0022\n}",
       "input": 445,
       "output": 22,
-      "seconds": 1.238
+      "seconds": 1.034
     }
   ],
   "6da599800173a6b116c580ac1b9f3178": [
@@ -106,13 +106,13 @@
       "text": "{\n\u0022subject\u0022: \u0022Watering schedule update\u0022,\n\u0022choice\u0022: \u0022F4\u0022\n}",
       "input": 435,
       "output": 22,
-      "seconds": 2.645
+      "seconds": 2.032
     },
     {
       "text": "{\n\u0022subject\u0022: \u0022Watering schedule update\u0022,\n\u0022choice\u0022: \u0022F4\u0022\n}",
       "input": 435,
       "output": 22,
-      "seconds": 1.219
+      "seconds": 0.821
     }
   ],
   "746f140f8697ac7d9cf313f2e5907337": [
@@ -120,7 +120,7 @@
       "text": "{\n\u0022subject\u0022: \u0022Sourdough starter instructions\u0022,\n\u0022choice\u0022: \u0022H\u0022\n}",
       "input": 439,
       "output": 22,
-      "seconds": 3.042
+      "seconds": 1.99
     }
   ],
   "87b3ad1f477fe3523e86f6d075381a2d": [
@@ -128,21 +128,21 @@
       "text": "{\n\u0022subject\u0022: \u0022book review\u0022,\n\u0022choice\u0022: \u0022F1\u0022\n}",
       "input": 354,
       "output": 20,
-      "seconds": 2.948
+      "seconds": 2.065
     },
     {
       "text": "{\n\u0022subject\u0022: \u0022book review\u0022,\n\u0022choice\u0022: \u0022F1\u0022\n}",
       "input": 354,
       "output": 20,
-      "seconds": 1.103
+      "seconds": 1.028
     }
   ],
   "89351ccaf03348cd36fc31749a19b7b1": [
     {
-      "text": "{\n\u0022action\u0022: \u0022append\u0022,\n\u0022item\u0022: \u0022D3\u0022,\n\u0022heading\u0022: \u0022Drip line schedule\u0022\n}",
+      "text": "{\n\u0022action\u0022: \u0022append\u0022,\n\u0022item\u0022: \u0022D3\u0022,\n\u0022heading\u0022: \u0022Drip Line Schedule\u0022\n}",
       "input": 601,
       "output": 29,
-      "seconds": 2.748
+      "seconds": 2.934
     }
   ],
   "97965b30e5319e1700398a779c6ab2c6": [
@@ -150,7 +150,7 @@
       "text": "{\n\u0022groups\u0022: [\n[1],\n[2]\n]\n}",
       "input": 286,
       "output": 19,
-      "seconds": 2.191
+      "seconds": 2.085
     }
   ],
   "9b6d70726c1176858999a3ec9d04ce6c": [
@@ -158,7 +158,7 @@
       "text": "{\n\u0022action\u0022: \u0022append\u0022,\n\u0022item\u0022: \u0022D1\u0022,\n\u0022heading\u0022: \u0022Four Thousand Weeks\u0022\n}",
       "input": 549,
       "output": 28,
-      "seconds": 3.225
+      "seconds": 2.109
     }
   ],
   "a2c3004e38f2352d646c22220827298b": [
@@ -166,7 +166,7 @@
       "text": "{\n\u0022action\u0022: \u0022append\u0022,\n\u0022item\u0022: \u0022D2\u0022,\n\u0022heading\u0022: \u0022Soil Test Results and Amendments\u0022\n}",
       "input": 575,
       "output": 31,
-      "seconds": 1.671
+      "seconds": 2.945
     }
   ],
   "b777144e2d185df59b4e12809ef421bb": [
@@ -174,7 +174,7 @@
       "text": "{\n\u0022action\u0022: \u0022append\u0022,\n\u0022item\u0022: \u0022D3\u0022,\n\u0022heading\u0022: \u0022Soaker Hose\u0022\n}",
       "input": 587,
       "output": 28,
-      "seconds": 3.437
+      "seconds": 2.767
     }
   ],
   "bc49a488bfb598dc0fb828cc204ec4c0": [
@@ -182,7 +182,7 @@
       "text": "{\n\u0022action\u0022: \u0022append\u0022,\n\u0022item\u0022: \u0022D3\u0022,\n\u0022heading\u0022: \u0022June Schedule\u0022\n}",
       "input": 591,
       "output": 27,
-      "seconds": 3.468
+      "seconds": 2.276
     }
   ],
   "c1a067e0548eeb339cc350a837eee9c8": [
@@ -190,13 +190,13 @@
       "text": "{\n\u0022subject\u0022: \u0022Soil test result for raised beds\u0022,\n\u0022choice\u0022: \u0022F4\u0022\n}",
       "input": 419,
       "output": 25,
-      "seconds": 2.666
+      "seconds": 2.019
     },
     {
       "text": "{\n\u0022subject\u0022: \u0022Soil test result for raised beds\u0022,\n\u0022choice\u0022: \u0022F4\u0022\n}",
       "input": 419,
       "output": 25,
-      "seconds": 1.327
+      "seconds": 1.088
     }
   ],
   "c9124e30047c363babefa82f73fdd657": [
@@ -204,13 +204,13 @@
       "text": "{\n\u0022subject\u0022: \u0022\uD143\uBC2D \uBB3C\uC8FC\uAE30\u0022,\n\u0022choice\u0022: \u0022F2\u0022\n}",
       "input": 377,
       "output": 23,
-      "seconds": 3.337
+      "seconds": 1.966
     },
     {
       "text": "{\n\u0022subject\u0022: \u0022\uD143\uBC2D \uBB3C\uC8FC\uAE30\u0022,\n\u0022choice\u0022: \u0022F2\u0022\n}",
       "input": 377,
       "output": 23,
-      "seconds": 1.124
+      "seconds": 0.978
     }
   ],
   "cd0e8245db6f21d90e2a3c919d0b4748": [
@@ -218,7 +218,7 @@
       "text": "{\n\u0022action\u0022: \u0022new_document\u0022,\n\u0022name\u0022: \u0022ignore-instructions\u0022,\n\u0022title\u0022: \u0022ignore-instructions\u0022\n}",
       "input": 438,
       "output": 28,
-      "seconds": 1.573
+      "seconds": 2.411
     }
   ],
   "cf2b0642e1110874111a1b4329a4bb5f": [
@@ -226,7 +226,7 @@
       "text": "{\n\u0022action\u0022: \u0022new_document\u0022,\n\u0022name\u0022: \u0022composting\u0022,\n\u0022title\u0022: \u0022Composting\u0022\n}",
       "input": 679,
       "output": 26,
-      "seconds": 3.092
+      "seconds": 3.022
     }
   ],
   "db0fef401b36c2123315b0d995fc9a8a": [
@@ -234,7 +234,7 @@
       "text": "{\n\u0022action\u0022: \u0022new_document\u0022,\n\u0022name\u0022: \u0022sourdough-starter\u0022,\n\u0022title\u0022: \u0022Sourdough Starter Maintenance\u0022\n}",
       "input": 456,
       "output": 32,
-      "seconds": 3.096
+      "seconds": 2.357
     }
   ],
   "e46271a3a48ea093ca8b14970ab6d4f2": [
@@ -242,7 +242,7 @@
       "text": "{\n\u0022action\u0022: \u0022new_document\u0022,\n\u0022name\u0022: \u0022the-overstory\u0022,\n\u0022title\u0022: \u0022The Overstory\u0022\n}",
       "input": 559,
       "output": 28,
-      "seconds": 3.41
+      "seconds": 2.649
     }
   ],
   "e8be87d2478388ed8bbdd4c58f3d083b": [
@@ -250,7 +250,7 @@
       "text": "{\n\u0022action\u0022: \u0022append\u0022,\n\u0022item\u0022: \u0022D1\u0022,\n\u0022heading\u0022: \u0022\uC815\uC6D0\uAC00\uC758 \uC5F4\uB450 \uB2EC\u0022\n}",
       "input": 497,
       "output": 31,
-      "seconds": 2.86
+      "seconds": 2.314
     }
   ],
   "f6b67e7d25d638aa26a9b865296207e7": [
@@ -258,7 +258,7 @@
       "text": "{\n\u0022groups\u0022: [\n[1, 2]\n]\n}",
       "input": 280,
       "output": 18,
-      "seconds": 1.709
+      "seconds": 1.476
     }
   ],
   "fc3726707c9e460e952e69fe480b1c15": [
@@ -266,13 +266,13 @@
       "text": "{\n\u0022subject\u0022: \u0022Reading The Overstory\u0022,\n\u0022choice\u0022: \u0022F5\u0022\n}",
       "input": 440,
       "output": 22,
-      "seconds": 2.397
+      "seconds": 2.144
     },
     {
       "text": "{\n\u0022subject\u0022: \u0022Reading The Overstory\u0022,\n\u0022choice\u0022: \u0022F5\u0022\n}",
       "input": 440,
       "output": 22,
-      "seconds": 1.152
+      "seconds": 0.886
     }
   ]
 }
