@@ -358,6 +358,11 @@ public sealed partial class Ingester(Folder folder, IChatClient chat, ISummaryCa
                             problem = "\"heading\" is required: a short heading naming the note's subject";
                             break;
                         }
+                        if (heading != ownHeading && QuotedFrom(piece, heading))
+                        {
+                            problem = $"\"{heading}\" is copied from the note; give a heading in your own words that names its subject";
+                            break;
+                        }
                         trace.Steps.Add(new TraceStep(number, at, shown, answer.ToJsonString(), null));
                         // A new section named like one the document already has is that section: the note continues it.
                         if (ownHeading is null && doc.Headings.Where(x => x.Level >= 2 && Same(x.Text, heading)).ToList() is [var existing])
@@ -375,6 +380,11 @@ public sealed partial class Ingester(Folder folder, IChatClient chat, ISummaryCa
                         if (title.Length == 0)
                         {
                             problem = "\"title\" is required: a short title naming the note's subject";
+                            break;
+                        }
+                        if (title != ownHeading && QuotedFrom(piece, title))
+                        {
+                            problem = $"\"{title}\" is copied from the note; give a title in your own words that names its subject";
                             break;
                         }
                         var name = Slug(answer["name"]?.GetValue<string>() ?? "", title);
@@ -453,7 +463,9 @@ public sealed partial class Ingester(Folder folder, IChatClient chat, ISummaryCa
         var hereList = hereTitles.Count > 0 ? ": " + string.Join("; ", hereTitles) + (here.Count > hereTitles.Count ? "; …" : "") : "";
         prompt.AppendLine($"H. this folder itself — {here.Count} document{(here.Count == 1 ? "" : "s")} directly in it{hereList}");
         prompt.AppendLine();
-        prompt.AppendLine("Answer with JSON only: {\"choice\": \"F<n>\"} to go into that folder (any listed, at any depth), or {\"choice\": \"H\"} to stay here.");
+        // Naming the subject before choosing steadies a model that samples: on a small test folder it cut wrong top-folder
+        // answers from 16 in 150 to 5 in 150.
+        prompt.AppendLine("Answer with JSON only: {\"subject\": \"<what the note is about, in a few words>\", \"choice\": \"F<n>\"} to go into that folder (any listed, at any depth), or with \"choice\": \"H\" to stay here. Name the subject first, then choose.");
         prompt.AppendLine("Go into a folder when the note is the kind of thing that folder holds — judge by its documents, not only its name. A folder that is only near the note's subject is not a fit: if no folder below is about the note's subject, stay here.");
         // One usable answer: a folder shown, or null for here.
         async Task<string?> OneAsync()
@@ -808,6 +820,18 @@ public sealed partial class Ingester(Folder folder, IChatClient chat, ISummaryCa
     {
         var line = (d.SectionBody(heading) ?? "").Split('\n').Select(l => l.Trim()).FirstOrDefault(l => l.Length > 0 && !l.StartsWith('#'));
         return line is null ? "" : $" (starts: {Clip(Show(line), 60)})";
+    }
+
+    /// <summary>
+    /// Whether a title or heading is a run of four or more words found word for word in the note —
+    /// a quote, not a name (an instruction at the head of a note became a heading). Short names the
+    /// note uses, like a book's title, are not quotes.
+    /// </summary>
+    internal static bool QuotedFrom(IEnumerable<string> piece, string title)
+    {
+        var words = Paragraphs.Normalize(title).Trim().TrimEnd('.', ':', ';', ',', '!', '?');
+        return words.Split(' ', StringSplitOptions.RemoveEmptyEntries).Length >= 4
+            && Paragraphs.Normalize(string.Join(" ", piece)).Contains(words, StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>The note's own first heading, or null when it has none.</summary>
