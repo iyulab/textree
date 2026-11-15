@@ -6,9 +6,10 @@ using Textree.Ingest;
 namespace Textree.Eval;
 
 /// <summary>
-/// The runner as a consumer that keeps settled records: every planned case is settled — accepted
-/// when the place is an accepted one, otherwise corrected to the first accepted folder — and the
-/// records are read back by the decision library that reads that line format.
+/// The runner as a consumer that keeps settled records. Every planned case is settled, the three
+/// decisions taken in turn so each kind of line is written: accept the place, correct it to another
+/// folder (an accepted one when the harness missed, else the parent folder), or reject the proposal.
+/// The records are read back by the decision library that reads that line format.
 /// </summary>
 public static class Settle
 {
@@ -22,6 +23,7 @@ public static class Settle
         var at = new DateTimeOffset(2026, 11, 13, 9, 0, 0, TimeSpan.Zero);
         var rows = new JsonArray();
         var strayFiles = 0;
+        var turn = 0;
         foreach (var file in Directory.EnumerateFiles(Path.Combine(corpus, "expected"), "*.json").Order(StringComparer.Ordinal))
         {
             var expected = JsonNode.Parse(File.ReadAllText(file))!.AsObject();
@@ -44,16 +46,23 @@ public static class Settle
             var id = Ingester.ProposalId(result.Plan!);
             var accepted = Accepted(expected).ToList();
             var landing = JsonLinesSettlements.FolderOf(result.Placement[0]);
+            var name = Path.GetFileNameWithoutExtension(file);
             at = at.AddMinutes(5);
-            if (accepted.Count == 0 || accepted.Any(a => Gates.Under(landing, a)))
+            switch (turn++ % 3)
             {
-                log.Settle(id, input, SettlementOutcome.Accepted, at);
-                rows.Add(new JsonObject { ["case"] = Path.GetFileNameWithoutExtension(file), ["settled"] = "accepted", ["folder"] = landing });
-            }
-            else
-            {
-                log.Settle(id, input, SettlementOutcome.Corrected, at, accepted[0]);
-                rows.Add(new JsonObject { ["case"] = Path.GetFileNameWithoutExtension(file), ["settled"] = "corrected", ["from"] = landing, ["to"] = accepted[0] });
+                case 0:
+                    log.Settle(id, input, SettlementOutcome.Accepted, at);
+                    rows.Add(new JsonObject { ["case"] = name, ["settled"] = "accepted", ["folder"] = landing });
+                    break;
+                case 1:
+                    var other = accepted.FirstOrDefault(a => a != landing) ?? Hierarchy.DirOf(landing);
+                    log.Settle(id, input, SettlementOutcome.Corrected, at, other);
+                    rows.Add(new JsonObject { ["case"] = name, ["settled"] = "corrected", ["from"] = landing, ["to"] = other });
+                    break;
+                default:
+                    log.Settle(id, input, SettlementOutcome.Rejected, at);
+                    rows.Add(new JsonObject { ["case"] = name, ["settled"] = "rejected", ["folder"] = landing });
+                    break;
             }
         }
         var lines = File.Exists(log.SettledPath) ? File.ReadAllText(log.SettledPath) : "";
@@ -74,6 +83,8 @@ public static class Settle
             ["settled_lines"] = lines.Split('\n', StringSplitOptions.RemoveEmptyEntries).Length,
             ["read_by_gil"] = read,
             ["read_error"] = readError,
+            ["decisions"] = Json.Object(new SortedDictionary<string, int>(rows.Where(r => r!["settled"] is not null)
+                .GroupBy(r => r!["settled"]!.GetValue<string>()).ToDictionary(g => g.Key, g => g.Count()), StringComparer.Ordinal)),
             ["knowledge_folder_files_changed"] = strayFiles,
             ["rows"] = rows,
         };

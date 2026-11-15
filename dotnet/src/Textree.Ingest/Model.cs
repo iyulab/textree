@@ -37,7 +37,8 @@ public sealed class IngestResult
     [JsonPropertyName("plan"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public JsonNode? Plan { get; init; }
 
-    /// <summary>Why it failed: the last refusal's lines, or what went wrong.</summary>
+    /// <summary>Why it failed: the last refusal's lines, each led by the operation that ran into it
+    /// (<c>add_document: refused [I5] con.md: …</c>), or what went wrong.</summary>
     [JsonPropertyName("violations"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public IReadOnlyList<string>? Violations { get; init; }
 

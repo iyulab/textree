@@ -25,7 +25,8 @@ Entries describe changes in Textree's own terms — never in terms of a particul
   that names a folder or document it was not shown is not used. Paragraphs already in the folder are
   not added again, so ingesting the same text twice gives nothing to do. A refused plan is repaired
   (a taken name gets a number; otherwise the affected pieces choose again, told why) up to a limit,
-  and then the outcome is a failure with the reasons — never a plan that breaks the folder's
+  and then the outcome is a failure with the reasons, each led by the operation that ran into it —
+  never a plan that breaks the folder's
   invariants. Folder summaries and proposals go through ports (`ISummaryCache`, `IProposalLog`);
   nothing is written into the knowledge folder. No sampling values are sent unless `Sampling` sets
   them (`--llm-temperature` on the MCP server); temperature 0 makes the same question get the same

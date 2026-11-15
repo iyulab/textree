@@ -164,7 +164,8 @@ public sealed class IngesterTests
         var result = await new Ingester(new Folder(s.Root), chat).IngestAsync(new IngestRequest(Note), new IngestOptions(MaxRepairs: 3), Ct);
         Assert.Equal("failed", result.Outcome);
         Assert.Null(result.Plan);
-        Assert.Contains(result.Violations!, v => v.Contains("refused"));
+        // Each line names the operation, the invariant and the path.
+        Assert.Contains(result.Violations!, v => v.StartsWith("add_document: ", StringComparison.Ordinal) && v.Contains("[I5]") && v.Contains("con.md"));
         Assert.Equal(4, result.Trace.Repairs);
         Assert.False(s.Exists("con.md"));
     }

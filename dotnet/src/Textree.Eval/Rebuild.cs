@@ -1,4 +1,3 @@
-using System.Text;
 using System.Text.Json.Nodes;
 using Microsoft.Extensions.AI;
 using Textree.Ingest;
@@ -9,10 +8,9 @@ namespace Textree.Eval;
 /// A tree built again by ingest alone: the documents of some folders of an organized tree are
 /// ingested one by one into an empty folder, each plan applied, in several orders. The tree that
 /// results is compared with the original: how documents are grouped (BCubed F1 over the folder each
-/// document's text ends up in) and how the folder trees differ (the share of folder paths that are
-/// in one tree but not the other — the tree edit distance when nodes are only added or removed,
-/// normalized by the size of both trees). No threshold: this is the baseline the reorganization
-/// stage is measured from.
+/// document's text ends up in) and how the trees differ (NTED — <see cref="Nted"/> — over folders
+/// with the documents as leaves). No threshold: this is the baseline the reorganization stage is
+/// measured from.
 /// </summary>
 public static class Rebuild
 {
@@ -69,7 +67,7 @@ public static class Rebuild
             {
                 ["outcomes"] = Json.Object(outcomes),
                 ["bcubed"] = BCubed(truth, landing),
-                ["folder_path_distance"] = PathDistance(FoldersOf(source, docs), built.Documents.SelectMany(x => Ancestors(x.Folder)).ToHashSet(StringComparer.Ordinal)),
+                ["nted"] = Math.Round(Nted.Normalized(Nted.TreeOf(truth), Nted.TreeOf(landing)), 4),
                 ["folders_built"] = built.Documents.Select(x => x.Folder).Distinct().Count(),
                 ["documents_built"] = built.Documents.Count,
                 ["model_calls"] = calls,
@@ -77,11 +75,13 @@ public static class Rebuild
         }
         // How far the orders disagree with each other.
         var spread = new JsonArray();
+        var spreadNted = new JsonArray();
         for (var i = 0; i < finals.Count; i++)
         {
             for (var j = i + 1; j < finals.Count; j++)
             {
                 spread.Add(BCubed(finals[i], finals[j])["f1"]!.DeepClone());
+                spreadNted.Add(Math.Round(Nted.Normalized(Nted.TreeOf(finals[i]), Nted.TreeOf(finals[j])), 4));
             }
         }
         return new JsonObject
@@ -92,6 +92,8 @@ public static class Rebuild
             ["original_folders"] = docs.Select(d => d.Folder).Distinct().Count(),
             ["orders"] = results,
             ["order_agreement_bcubed_f1"] = spread,
+            ["order_distance_nted"] = spreadNted,
+            ["nted_kind"] = "constrained unordered edit distance (Zhang 1996) over folders with the documents as leaves, divided by the size of both trees; never below the unconstrained distance",
             ["gate_failures"] = Json.Object(gateFailures),
             ["corpus_unchanged"] = Workspace.Fingerprint(root) == fingerprint,
         };
@@ -114,26 +116,5 @@ public static class Rebuild
         r /= items.Count;
         var f1 = p + r == 0 ? 0 : 2 * p * r / (p + r);
         return new JsonObject { ["precision"] = Math.Round(p, 4), ["recall"] = Math.Round(r, 4), ["f1"] = Math.Round(f1, 4) };
-    }
-
-    private static HashSet<string> FoldersOf(Hierarchy h, List<Doc> docs) =>
-        docs.SelectMany(d => Ancestors(d.Folder)).ToHashSet(StringComparer.Ordinal);
-
-    private static IEnumerable<string> Ancestors(string folder)
-    {
-        yield return "";
-        for (var f = folder; f.Length > 0; f = Hierarchy.DirOf(f))
-        {
-            yield return f;
-        }
-    }
-
-    /// <summary>Folder paths in one tree but not the other, over the folders of both (0 = the same folder tree).</summary>
-    private static double PathDistance(HashSet<string> a, HashSet<string> b)
-    {
-        var na = a.Select(x => x.Normalize(NormalizationForm.FormC)).ToHashSet();
-        var nb = b.Select(x => x.Normalize(NormalizationForm.FormC)).ToHashSet();
-        var diff = na.Except(nb).Count() + nb.Except(na).Count();
-        return Math.Round((double)diff / (na.Count + nb.Count), 4);
     }
 }

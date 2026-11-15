@@ -127,7 +127,20 @@ public sealed class Ingester(Folder folder, IChatClient chat, ISummaryCache? sum
                 }
             }
         }
-        return new IngestResult { Outcome = "failed", Violations = lastViolations, Trace = trace };
+        return new IngestResult { Outcome = "failed", Violations = Named(lastViolations, choices.Values), Trace = trace };
+    }
+
+    /// <summary>Each refusal led by the operation that ran into it (when one piece's target is named in it).</summary>
+    private static IReadOnlyList<string>? Named(IReadOnlyList<string>? violations, IEnumerable<Choice> choices)
+    {
+        if (violations is null)
+        {
+            return null;
+        }
+        var targets = choices.Select(c => (c.Form, Path: TargetPath(c))).ToList();
+        return violations.Select(v => targets.Where(t => v.Contains(t.Path, StringComparison.Ordinal)).Select(t => t.Form).Distinct().ToList() is { Count: > 0 } forms
+            ? string.Join(", ", forms) + ": " + v
+            : v).ToList();
     }
 
     // ---- cutting the text into pieces ----------------------------------------------------------
