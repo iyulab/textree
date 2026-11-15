@@ -214,7 +214,8 @@ public sealed partial class Ingester(Folder folder, IChatClient chat, ISummaryCa
     private async Task<Choice> WalkAsync(Hierarchy h, List<string> piece, int number, string? refusal, IngestOptions options, IngestTrace trace, CancellationToken ct)
     {
         var at = "";
-        var guessedTitle = GuessTitle(piece);
+        // A heading the note itself has is the only title the harness takes from its text; otherwise the model names it.
+        var ownHeading = OwnHeading(piece);
         // Where the walk chose each folder it went into, and the folders it came back out of: a
         // folder found wrong on a closer look is not offered again.
         var cameFrom = new Stack<string>();
@@ -326,10 +327,15 @@ public sealed partial class Ingester(Folder folder, IChatClient chat, ISummaryCa
                         {
                             var section = (answer["section"]?.GetValue<string>() ?? "").Trim();
                             var matches = doc.Headings.Where(x => x.Level >= 2 && Same(x.Text, section)).ToList();
-                            if (matches.Count != 1 || piece.Any(p => Paragraphs.HeadingLevel(p) > 0))
+                            if (ownHeading is not null)
                             {
-                                // Not a single shown section, or a note with headings of its own: a new section instead.
+                                // A note with headings of its own goes in as a section of its own.
                                 action = "append";
+                            }
+                            else if (matches.Count != 1)
+                            {
+                                problem = "\"section\" must be one of that document's sections exactly as listed; to add the note as a section of its own, use \"append\" with a heading";
+                                    break;
                             }
                             else
                             {
@@ -338,14 +344,28 @@ public sealed partial class Ingester(Folder folder, IChatClient chat, ISummaryCa
                             }
                         }
                         var heading = (answer["heading"]?.GetValue<string>() ?? "").Trim();
+                        if (heading.Length == 0)
+                        {
+                            heading = ownHeading ?? "";
+                        }
+                        if (heading.Length == 0)
+                        {
+                            problem = "\"heading\" is required: a short heading naming the note's subject";
+                            break;
+                        }
                         trace.Steps.Add(new TraceStep(number, at, shown, answer.ToJsonString(), null));
-                        return new Choice("append_section", at, docPath, heading.Length > 0 ? heading : guessedTitle, null, null);
+                        return new Choice("append_section", at, docPath, heading, null, null);
                     case "new_document":
                     case "new_folder":
                         var title = (answer["title"]?.GetValue<string>() ?? "").Trim();
                         if (title.Length == 0)
                         {
-                            title = guessedTitle;
+                            title = ownHeading ?? "";
+                        }
+                        if (title.Length == 0)
+                        {
+                            problem = "\"title\" is required: a short title naming the note's subject";
+                            break;
                         }
                         var name = Slug(answer["name"]?.GetValue<string>() ?? "", title);
                         if (action == "new_document" && !name.EndsWith(".md", StringComparison.Ordinal))
@@ -758,16 +778,9 @@ public sealed partial class Ingester(Folder folder, IChatClient chat, ISummaryCa
     [GeneratedRegex(@"(?<![\w/.:-])(?:[\p{L}\p{N}_-]+/)+(?:[\p{L}\p{N}_.-]+\.md)?|(?<![\w/.:-])[\p{L}\p{N}_-]+\.md\b")]
     private static partial Regex WrittenPath();
 
-    private static string GuessTitle(List<string> piece)
-    {
-        var heading = piece.FirstOrDefault(p => Paragraphs.HeadingLevel(p) > 0);
-        if (heading is not null)
-        {
-            return heading.Trim().TrimStart('#').Trim();
-        }
-        var words = Paragraphs.Normalize(piece[0]).Split(' ', StringSplitOptions.RemoveEmptyEntries).Take(6);
-        return string.Join(' ', words).TrimEnd('.', ',', ':', ';');
-    }
+    /// <summary>The note's own first heading, or null when it has none.</summary>
+    private static string? OwnHeading(List<string> piece) =>
+        piece.FirstOrDefault(p => Paragraphs.HeadingLevel(p) > 0)?.Trim().TrimStart('#').Trim() is { Length: > 0 } h ? h : null;
 
     private static string Lead(Doc d)
     {
