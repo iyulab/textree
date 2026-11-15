@@ -226,7 +226,10 @@ public sealed partial class Ingester(Folder folder, IChatClient chat, ISummaryCa
             // First where: a folder further down, or this one.
             if (Below(h, at, leftBehind).Any())
             {
-                var next = await ChooseFolderAsync(h, piece, number, at, leftBehind, trace, ct);
+                // The walk's first decision — the widest choice, where a wrong folder takes the note into
+                // another area altogether — is settled by agreement; deeper ones choose among neighbours
+                // and can still go back once.
+                var next = await ChooseFolderAsync(h, piece, number, at, leftBehind, agree: cameFrom.Count == 0, trace, ct);
                 if (next is not null)
                 {
                     cameFrom.Push(at);
@@ -284,8 +287,8 @@ public sealed partial class Ingester(Folder folder, IChatClient chat, ISummaryCa
                 prompt.AppendLine("""{"action": "append", "item": "D<n>", "heading": "<a short heading naming the note's subject — never a sentence copied from it>"} — the note is about that document's own subject""");
                 prompt.AppendLine("""{"action": "add_to_section", "item": "D<n>", "section": "<one of its sections, as written>"} — the note continues exactly that section""");
             }
-            prompt.AppendLine("""{"action": "new_document", "name": "<file-name>", "title": "<title>"} — the note is a subject of its own that belongs in this folder""");
-            prompt.AppendLine("""{"action": "new_folder", "name": "<folder-name>", "title": "<title>"} — the note starts a new area that fits none of the folders here""");
+            prompt.AppendLine("""{"action": "new_document", "name": "<file-name>", "title": "<a title naming the note's subject — never a sentence copied from it>"} — the note is a subject of its own that belongs in this folder""");
+            prompt.AppendLine("""{"action": "new_folder", "name": "<folder-name>", "title": "<a title naming the area — never a sentence copied from the note>"} — the note starts a new area that fits none of the folders here""");
             if (canGoBack)
             {
                 prompt.AppendLine("""{"action": "back"} — on a closer look the note is not about what this folder holds at all; go back up and choose another place""");
@@ -406,7 +409,7 @@ public sealed partial class Ingester(Folder folder, IChatClient chat, ISummaryCa
         h.SubfoldersOf(at).Where(f => !leftBehind.Contains(f));
 
     /// <summary>One step of the walk: the folders below <paramref name="at"/> (two levels) or this folder itself. Null means here.</summary>
-    private async Task<string?> ChooseFolderAsync(Hierarchy h, List<string> piece, int number, string at, IReadOnlySet<string> leftBehind, IngestTrace trace, CancellationToken ct)
+    private async Task<string?> ChooseFolderAsync(Hierarchy h, List<string> piece, int number, string at, IReadOnlySet<string> leftBehind, bool agree, IngestTrace trace, CancellationToken ct)
     {
         var ids = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         var shown = new List<string>();
@@ -476,11 +479,12 @@ public sealed partial class Ingester(Folder folder, IChatClient chat, ISummaryCa
         // Going into a folder is decided by agreement: a model that samples can pick a wrong folder
         // now and then, and a wrong folder takes every later choice with it. A second answer that
         // agrees settles it; otherwise a third decides by majority, and with none the note stays here.
-        // Staying is not asked twice — it keeps every folder below untouched.
+        // Staying is not asked twice — it keeps every folder below untouched. Only the decisions the
+        // caller marks are settled this way: each costs one more call, and calls per text must stay nearly flat as a folder grows.
         var first = await OneAsync();
-        if (first is null)
+        if (first is null || !agree)
         {
-            return null;
+            return first;
         }
         var second = await OneAsync();
         if (second == first)

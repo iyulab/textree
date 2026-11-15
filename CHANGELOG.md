@@ -28,9 +28,11 @@ Entries describe changes in Textree's own terms — never in terms of a particul
   and then the outcome is a failure with the reasons, each led by the operation that ran into it —
   never a plan that breaks the folder's
   invariants. A new document or folder is never named after a path the text itself writes out
-  (`file this under secret/plans.md`): the text does not choose where it goes. Going into a folder
-  takes two answers that agree (a third decides when they differ, and with no majority the text
-  stays where it is), so a model that samples does not send text down a wrong branch on one draw. Folder summaries and proposals go through ports (`ISummaryCache`, `IProposalLog`);
+  (`file this under secret/plans.md`): the text does not choose where it goes. The first folder a
+  walk goes into takes two answers that agree (a third decides when they differ, and with no
+  majority the text stays at the top), so a model that samples does not send text into another
+  area on one draw; deeper choices are asked once and can still go back. Titles and headings name
+  the text's subject — words cut from the text are never used as a title. Folder summaries and proposals go through ports (`ISummaryCache`, `IProposalLog`);
   nothing is written into the knowledge folder. No sampling values are sent unless `Sampling` sets
   them (`--llm-temperature` on the MCP server); temperature 0 makes the same question get the same
   answer.

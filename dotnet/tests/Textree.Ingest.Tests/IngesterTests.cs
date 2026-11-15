@@ -345,4 +345,20 @@ public sealed class IngesterTests
         // The plan still carries the note's own words.
         Assert.Contains("secret/plans.md", result.Plan!.ToJsonString());
     }
+
+    [Fact]
+    public async Task Only_the_first_folder_decision_is_asked_twice()
+    {
+        using var s = Garden().File("garden/beds/raised.md", "# Raised beds\n\nCedar boards.\n");
+        var top = 0;
+        var inGarden = 0;
+        var chat = new ScriptedChat((prompt, _) =>
+            ScriptedChat.AsksWhere(prompt) && prompt.Contains("You are in: the top folder") ? (++top > 0 ? """{"choice":"F1"}""" : "")
+            : ScriptedChat.AsksWhere(prompt) && prompt.Contains("You are in: garden/") ? (++inGarden > 0 ? """{"choice":"F1"}""" : "")
+            : """{"action":"new_document","name":"note","title":"Note"}""");
+        var result = await new Ingester(new Folder(s.Root), chat).IngestAsync(new IngestRequest("Line the beds with cardboard."), null, Ct);
+        Assert.Equal("garden/beds/note.md", Assert.Single(result.Placement).Target);
+        Assert.Equal(2, top);
+        Assert.Equal(1, inGarden);
+    }
 }
