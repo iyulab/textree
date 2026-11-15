@@ -6,11 +6,13 @@ namespace Textree.Eval;
 
 /// <summary>
 /// A tree built again by ingest alone: the documents of some folders of an organized tree are
-/// ingested one by one into an empty folder, each plan applied, in several orders. The tree that
-/// results is compared with the original: how documents are grouped (BCubed F1 over the folder each
-/// document's text ends up in) and how the trees differ (NTED — <see cref="Nted"/> — over folders
-/// with the documents as leaves). No threshold: this is the baseline the reorganization stage is
-/// measured from.
+/// ingested one by one into an empty folder, each plan applied, in several orders. The tree on disk
+/// after the last one is compared with the original: how documents are grouped (BCubed F1 over the
+/// folder that holds most of each document's paragraphs at the end) and how the trees differ (NTED —
+/// <see cref="Nted"/> — over folders with the documents as leaves). Where the first piece of each
+/// document landed is reported beside it. No threshold: this is the baseline the reorganization
+/// stage is measured from. The per-step gates are judged without untouched paths (an empty folder
+/// has none), so G5 is not applicable there.
 /// </summary>
 public static class Rebuild
 {
@@ -61,13 +63,20 @@ public static class Rebuild
                 }
             }
             var truth = docs.ToDictionary(d => d.Path, d => d.Folder, StringComparer.Ordinal);
-            finals.Add(landing);
             var built = Hierarchy.Read(folder);
+            var final = FinalFolders(docs, built);
+            finals.Add(final);
             results[name] = new JsonObject
             {
                 ["outcomes"] = Json.Object(outcomes),
-                ["bcubed"] = BCubed(truth, landing),
-                ["nted"] = Math.Round(Nted.Normalized(Nted.TreeOf(truth), Nted.TreeOf(landing)), 4),
+                ["bcubed"] = BCubed(truth, final),
+                ["nted"] = Math.Round(Nted.Normalized(Nted.TreeOf(truth), Nted.TreeOf(final)), 4),
+                ["documents_not_found"] = docs.Count - final.Count,
+                ["first_piece_landing"] = new JsonObject
+                {
+                    ["bcubed"] = BCubed(truth, landing),
+                    ["nted"] = Math.Round(Nted.Normalized(Nted.TreeOf(truth), Nted.TreeOf(landing)), 4),
+                },
                 ["folders_built"] = built.Documents.Select(x => x.Folder).Distinct().Count(),
                 ["documents_built"] = built.Documents.Count,
                 ["model_calls"] = calls,
@@ -93,10 +102,41 @@ public static class Rebuild
             ["orders"] = results,
             ["order_agreement_bcubed_f1"] = spread,
             ["order_distance_nted"] = spreadNted,
+            ["measured_on"] = "the tree on disk after the last document (first_piece_landing: where each document's first piece was placed)",
             ["nted_kind"] = "constrained unordered edit distance (Zhang 1996) over folders with the documents as leaves, divided by the size of both trees; never below the unconstrained distance",
             ["gate_failures"] = Json.Object(gateFailures),
             ["corpus_unchanged"] = Workspace.Fingerprint(root) == fingerprint,
         };
+    }
+
+    /// <summary>
+    /// For each source document, the folder of the built tree that holds most of its body paragraphs
+    /// (ties: the first in ordinal order); a document none of whose paragraphs is found is left out.
+    /// </summary>
+    public static Dictionary<string, string> FinalFolders(IReadOnlyList<Doc> sources, Hierarchy built)
+    {
+        var where = new Dictionary<string, List<string>>(StringComparer.Ordinal);
+        foreach (var d in built.Documents)
+        {
+            foreach (var key in Paragraphs.Split(d.Text).Where(p => Paragraphs.HeadingLevel(p) == 0).Select(Paragraphs.Key).Distinct())
+            {
+                (where.TryGetValue(key, out var l) ? l : where[key] = []).Add(d.Folder);
+            }
+        }
+        var result = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var s in sources)
+        {
+            var votes = Paragraphs.Split(s.Text).Where(p => Paragraphs.HeadingLevel(p) == 0).Select(Paragraphs.Key).Distinct()
+                .SelectMany(k => where.TryGetValue(k, out var l) ? l.Distinct() : [])
+                .GroupBy(f => f, StringComparer.Ordinal)
+                .OrderByDescending(g => g.Count()).ThenBy(g => g.Key, StringComparer.Ordinal)
+                .FirstOrDefault();
+            if (votes is not null)
+            {
+                result[s.Path] = votes.Key;
+            }
+        }
+        return result;
     }
 
     /// <summary>BCubed precision, recall and F1 of a clustering against a reference (items missing from <paramref name="found"/> are singletons).</summary>

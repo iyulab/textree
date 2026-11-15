@@ -14,7 +14,7 @@ public static partial class Gates
     public const string Pass = "pass";
     public const string NotApplicable = "n/a";
 
-    /// <param name="untouched">Path prefixes nothing may change under.</param>
+    /// <param name="untouched">Path prefixes nothing may change under (none: G5 is not applicable).</param>
     /// <param name="applied">Whether the plan was applied (false: refused, or there was none).</param>
     /// <param name="reingestEmpty">Whether ingesting the same text again gave an empty outcome (null: not tried).</param>
     public static SortedDictionary<string, string> Judge(
@@ -71,7 +71,9 @@ public static partial class Gates
 
         // G5: nothing changed under the untouched paths.
         var touchedUntouched = Changed(before, after).Where(p => untouched.Any(u => Under(p, u))).ToList();
-        g["G5"] = touchedUntouched.Count == 0 ? Pass : $"fail: changed {string.Join(", ", touchedUntouched)}";
+        g["G5"] = untouched.Count == 0 ? NotApplicable
+            : touchedUntouched.Count == 0 ? Pass
+            : $"fail: changed {string.Join(", ", touchedUntouched)}";
 
         // G6: placing only writes text — no file removed or renamed, and existing documents only grow.
         var removed = before.Keys.Where(k => !after.ContainsKey(k)).ToList();
