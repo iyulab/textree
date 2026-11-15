@@ -280,7 +280,7 @@ public sealed partial class Ingester(Folder folder, IChatClient chat, ISummaryCa
             prompt.AppendLine("Choose one action. Name folders and documents only by their numbers above (F1, D2, …). Answer with JSON only:");
             if (docs.Count > 0)
             {
-                prompt.AppendLine("""{"action": "append", "item": "D<n>", "heading": "<a short heading for the note as a new section>"} — the note is about that document's own subject""");
+                prompt.AppendLine("""{"action": "append", "item": "D<n>", "heading": "<a short heading naming the note's subject — never a sentence copied from it>"} — the note is about that document's own subject""");
                 prompt.AppendLine("""{"action": "add_to_section", "item": "D<n>", "section": "<one of its sections, as written>"} — the note continues exactly that section""");
             }
             prompt.AppendLine("""{"action": "new_document", "name": "<file-name>", "title": "<title>"} — the note is a subject of its own that belongs in this folder""");
@@ -422,28 +422,50 @@ public sealed partial class Ingester(Folder folder, IChatClient chat, ISummaryCa
         prompt.AppendLine();
         prompt.AppendLine("Answer with JSON only: {\"choice\": \"F<n>\"} to go into that folder (any listed, at any depth), or {\"choice\": \"H\"} to stay here.");
         prompt.AppendLine("Go into a folder when the note is the kind of thing that folder holds — judge by its documents, not only its name. A folder that is only near the note's subject is not a fit: if no folder below is about the note's subject, stay here.");
-        string? problem = null;
-        for (var tries = 0; tries < 3; tries++)
+        // One usable answer: a folder shown, or null for here.
+        async Task<string?> OneAsync()
         {
-            var question = problem is null ? prompt.ToString() : prompt + $"\nYour answer could not be used: {problem}\nAnswer again.";
-            var answer = await AskAsync(question, trace, ct);
-            var choice = (answer["choice"]?.ToString() ?? answer["item"]?.ToString() ?? "").Trim().TrimEnd('.', '/');
-            if (string.Equals(choice, "H", StringComparison.OrdinalIgnoreCase))
+            string? problem = null;
+            for (var tries = 0; tries < 3; tries++)
             {
-                trace.Steps.Add(new TraceStep(number, at, shown, answer.ToJsonString(), null));
-                return null;
+                var question = problem is null ? prompt.ToString() : prompt + $"\nYour answer could not be used: {problem}\nAnswer again.";
+                var answer = await AskAsync(question, trace, ct);
+                var choice = (answer["choice"]?.ToString() ?? answer["item"]?.ToString() ?? "").Trim().TrimEnd('.', '/');
+                if (string.Equals(choice, "H", StringComparison.OrdinalIgnoreCase))
+                {
+                    trace.Steps.Add(new TraceStep(number, at, shown, answer.ToJsonString(), null));
+                    return null;
+                }
+                var target = ids.TryGetValue(choice, out var byId) ? byId : Resolve(choice, shown, at);
+                if (target is not null)
+                {
+                    trace.Steps.Add(new TraceStep(number, at, shown, answer.ToJsonString(), null));
+                    return target;
+                }
+                problem = "\"choice\" must be H or the number of one of the folders shown (F1, F2, …)";
+                trace.UnseenCitations++;
+                trace.Steps.Add(new TraceStep(number, at, shown, answer.ToJsonString(), problem));
             }
-            var target = ids.TryGetValue(choice, out var byId) ? byId : Resolve(choice, shown, at);
-            if (target is not null)
-            {
-                trace.Steps.Add(new TraceStep(number, at, shown, answer.ToJsonString(), null));
-                return target;
-            }
-            problem = "\"choice\" must be H or the number of one of the folders shown (F1, F2, …)";
-            trace.UnseenCitations++;
-            trace.Steps.Add(new TraceStep(number, at, shown, answer.ToJsonString(), problem));
+            throw new ModelAnswerException($"the model gave no usable answer at {(at.Length == 0 ? "the top" : at + "/")}: {problem}");
         }
-        throw new ModelAnswerException($"the model gave no usable answer at {(at.Length == 0 ? "the top" : at + "/")}: {problem}");
+
+        // Going into a folder is decided by agreement: a model that samples can pick a wrong folder
+        // now and then, and a wrong folder takes every later choice with it. A second answer that
+        // agrees settles it; otherwise a third decides by majority, and with none the note stays here.
+        // Staying is not asked twice — it keeps every folder below untouched.
+        var first = await OneAsync();
+        if (first is null)
+        {
+            return null;
+        }
+        var second = await OneAsync();
+        if (second == first)
+        {
+            return first;
+        }
+        trace.Disagreements++;
+        var third = await OneAsync();
+        return third == first || (third is not null && third == second) ? third : null;
     }
 
     /// <summary>The shown item an answer names — by its number, or failing that by its name — or null. A name that was not shown is never used.</summary>

@@ -56,6 +56,8 @@ public sealed class IngestTrace
     public int Repairs { get; set; }
     /// <summary>Model answers refused because they named something they were not shown.</summary>
     public int UnseenCitations { get; set; }
+    /// <summary>Folder decisions where the first two answers disagreed and a third was asked.</summary>
+    public int Disagreements { get; set; }
     public TimeSpan Elapsed { get; set; }
 }
 

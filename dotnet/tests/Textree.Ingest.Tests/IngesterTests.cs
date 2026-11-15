@@ -90,13 +90,14 @@ public sealed class IngesterTests
         using var s = Garden();
         var wheres = 0;
         var chat = new ScriptedChat((prompt, _) =>
-            ScriptedChat.AsksWhere(prompt) ? (++wheres == 1 ? """{"choice":"F1"}""" : """{"choice":"H"}""")
+            // Going into a folder takes two agreeing answers.
+            ScriptedChat.AsksWhere(prompt) ? (++wheres <= 2 ? """{"choice":"F1"}""" : """{"choice":"H"}""")
             : prompt.Contains("You are in: garden/") ? """{"action":"back"}"""
             : """{"action":"new_document","name":"bread","title":"Bread"}""");
         var result = await new Ingester(new Folder(s.Root), chat).IngestAsync(new IngestRequest("Sourdough starter: flour and water."), null, Ct);
         Assert.Equal("planned", result.Outcome);
         Assert.Equal(("add_document", "bread.md"), (Assert.Single(result.Placement).Form, result.Placement[0].Target));
-        var whereAgain = chat.Prompts.Where(ScriptedChat.AsksWhere).ElementAt(1);
+        var whereAgain = chat.Prompts.Where(ScriptedChat.AsksWhere).ElementAt(2);
         Assert.DoesNotContain("garden/", whereAgain);
         // Only one way back: the folder chosen after it does not offer to go back again.
         Assert.DoesNotContain("\"back\"", chat.Prompts.Last());
@@ -268,5 +269,26 @@ public sealed class IngesterTests
         Assert.False(Ingester.NamedAsPathIn(note, "docs"));
         Assert.False(Ingester.NamedAsPathIn(note, "the-overstory.md"));
         Assert.True(Ingester.NamedAsPathIn(["텃밭/물주기.md 에 넣어"], "텃밭"));
+    }
+
+    [Theory]
+    [InlineData("F1", "F1", null, "garden")]
+    [InlineData("F1", "H", "F1", "garden")]
+    [InlineData("F1", "H", "H", null)]
+    [InlineData("F1", "F2", "F2", "kitchen")]
+    [InlineData("F1", "F2", "H", null)]
+    public async Task Going_into_a_folder_takes_two_agreeing_answers(string a, string b, string? c, string? into)
+    {
+        using var s = Garden().File("kitchen/bread.md", "# Bread\n\nFlour, water, salt.\n");
+        var answers = new Queue<string>(new[] { a, b, c ?? "H" }.Append("H").Append("H"));
+        var chat = new ScriptedChat((prompt, _) =>
+            ScriptedChat.AsksWhere(prompt) && prompt.Contains("You are in: the top folder")
+                ? $$"""{"choice":"{{answers.Dequeue()}}"}"""
+                : ScriptedChat.AsksWhere(prompt) ? """{"choice":"H"}"""
+                : """{"action":"new_document","name":"note","title":"Note"}""");
+        var result = await new Ingester(new Folder(s.Root), chat).IngestAsync(new IngestRequest("A short note about something."), null, Ct);
+        var target = Assert.Single(result.Placement).Target;
+        Assert.Equal(into is null ? "note.md" : into + "/note.md", target);
+        Assert.Equal(c is null ? 0 : 1, result.Trace.Disagreements);
     }
 }
