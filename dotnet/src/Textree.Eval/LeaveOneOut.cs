@@ -309,15 +309,11 @@ public static partial class LeaveOneOut
         row["repairs"] = result.Trace.Repairs;
         row["violations"] = result.Violations is null ? null : new JsonArray(result.Violations.Select(v => (JsonNode)v).ToArray());
         row["unseen_refused"] = result.Trace.UnseenCitations;
-        // Section edits: does every paragraph the document had before survive the edit, word for word?
-        var edited = result.Plan?["ops"]?.AsArray().Where(o => o!["op"]!.GetValue<string>() == "edit_section")
-            .Select(o => o!["path"]!.GetValue<string>()).Distinct(StringComparer.Ordinal).ToList() ?? [];
-        if (edited.Count > 0)
+        var (edits, kept) = SectionEdits.Measure(result.Plan, before, after, applied);
+        if (edits > 0)
         {
-            row["section_edits"] = edited.Count;
-            row["section_edits_kept"] = edited.Count(path =>
-                applied && before.TryGetValue(path, out var was) && after.TryGetValue(path, out var now)
-                && Paragraphs.Keys(Encoding.UTF8.GetString(was)).IsSubsetOf(Paragraphs.Keys(Encoding.UTF8.GetString(now))));
+            row["section_edits"] = edits;
+            row["section_edits_kept"] = kept;
         }
         row["path_taken"] = string.Join(" > ", result.Trace.Steps.Where(s => s.Refusal is null).Select(s => s.At.Length == 0 ? "(top)" : s.At));
         row["machine"] = machine;
@@ -408,18 +404,8 @@ public static partial class LeaveOneOut
         {
             o["no_action"] = Json.Of(Proportion.Of(rows.Count(r => r["no_action"]!.GetValue<bool>()), rows.Count));
         }
-        // Section-edit preservation: claim-level recall is the judge's (quality.md §7). What is
-        // measured here is the deterministic floor — every paragraph of the edited document kept verbatim.
-        var sectionEdits = rows.Sum(r => r["section_edits"]?.GetValue<int>() ?? 0);
-        var kept = rows.Sum(r => r["section_edits_kept"]?.GetValue<int>() ?? 0);
-        o["section_edit_preservation"] = sectionEdits == 0
-            ? new JsonObject { ["section_edits"] = 0, ["value"] = null, ["note"] = "no section edits: nothing to preserve" }
-            : new JsonObject
-            {
-                ["section_edits"] = sectionEdits,
-                ["paragraphs_kept_verbatim"] = Json.Of(Proportion.Of(kept, sectionEdits)),
-                ["note"] = "each edited document's earlier paragraphs all kept word for word; claim-level recall is the calibrated judge's (quality.md §7)",
-            };
+        o["section_edit_preservation"] = SectionEdits.Summarize(rows,
+            "n = 0: a document taken out comes back whole, so no section is edited — measured on the written cases (cases)");
         // Cost, per placement: median with its interval and N.
         var cost = new JsonObject();
         if (rows.Any(r => r["model_calls"] is not null))

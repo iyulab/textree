@@ -62,6 +62,7 @@ public static class Cases
                 ["outcomes"] = Json.Object(outcomes),
                 ["gate_failures"] = Json.Object(gateFailures),
                 ["placement"] = Json.Of(Proportion.Of(placementHits, placementN)),
+                ["section_edit_preservation"] = SectionEdits.Summarize(rows, "n = 0: no case edited a section"),
                 ["corpus_unchanged"] = untouched,
             },
             ["cases"] = rows,
@@ -78,7 +79,7 @@ public static class Cases
         var folder = new Folder(ws.Root);
         var before = Workspace.Files(ws.Root);
         var ingester = new Ingester(folder, chat);
-        var clock = System.Diagnostics.Stopwatch.StartNew();
+        var start = Clock.Start(chat);
         var result = await ingester.IngestAsync(new IngestRequest(input), null, ct);
         var applied = false;
         string? applyError = null;
@@ -95,7 +96,7 @@ public static class Cases
             var second = await ingester.IngestAsync(new IngestRequest(input), null, ct);
             again = second.Outcome == "empty";
         }
-        var seconds = clock.Elapsed.TotalSeconds;
+        var machine = Clock.Machine(chat, start);
 
         var placementSpec = expected["placement"] as JsonObject;
         var untouched = (placementSpec?["untouched"]?.AsArray() ?? [])
@@ -139,8 +140,14 @@ public static class Cases
             ["unseen_refused"] = result.Trace.UnseenCitations,
             ["violations"] = result.Violations is null ? null : new JsonArray(result.Violations.Select(v => (JsonNode)v).ToArray()),
             ["apply_error"] = applyError,
-            ["machine"] = new JsonObject { ["seconds"] = Math.Round(seconds, 2) },
+            ["machine"] = machine,
         };
+        var (edits, kept) = SectionEdits.Measure(result.Plan, before, after, applied);
+        if (edits > 0)
+        {
+            row["section_edits"] = edits;
+            row["section_edits_kept"] = kept;
+        }
         return row;
     }
 
