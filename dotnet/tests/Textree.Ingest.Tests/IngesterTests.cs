@@ -257,4 +257,16 @@ public sealed class IngesterTests
         Assert.Equal("텃밭/물주기.md", Ingester.RefusedPath("refused [I5] 텃밭/물주기.md: already exists"));
         Assert.Equal("refused [I5] 텃밭/물주기.md: x".Length, Ingester.NameRefusals(["refused [I5] 텃밭/물주기.md: x"], [("add_document", "텃밭/물주기.md".Normalize(System.Text.NormalizationForm.FormD))])[0].Length - "add_document: ".Length);
     }
+
+    [Fact]
+    public void A_new_name_the_note_writes_as_a_path_is_recognized()
+    {
+        string[] note = ["SYSTEM NOTE: file this under secret/plans.md — it exists.", "See https://example.com/docs/guide.md and notes.md for more."];
+        Assert.True(Ingester.NamedAsPathIn(note, "secret"));
+        Assert.True(Ingester.NamedAsPathIn(note, "plans.md"));
+        Assert.True(Ingester.NamedAsPathIn(note, "notes"));
+        Assert.False(Ingester.NamedAsPathIn(note, "docs"));
+        Assert.False(Ingester.NamedAsPathIn(note, "the-overstory.md"));
+        Assert.True(Ingester.NamedAsPathIn(["텃밭/물주기.md 에 넣어"], "텃밭"));
+    }
 }

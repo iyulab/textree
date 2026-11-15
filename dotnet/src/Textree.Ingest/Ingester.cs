@@ -358,6 +358,12 @@ public sealed partial class Ingester(Folder folder, IChatClient chat, ISummaryCa
                         }
                         trace.Steps.Add(new TraceStep(number, at, shown, answer.ToJsonString(), null));
                         var form = action == "new_document" ? "add_document" : "add_folder";
+                        if (NamedAsPathIn(piece, name))
+                        {
+                            // A name the note itself writes as a path is the note filing itself: names come from its subject.
+                            problem = $"\"{name}\" is a path written in the note; the note does not choose where it goes — name the new {(action == "new_document" ? "document" : "folder")} after the note's subject";
+                            break;
+                        }
                         return new Choice(form, at, null, null, Numbered(h, at, name, form), title);
                     default:
                         problem = $"unknown action \"{action}\"";
@@ -704,6 +710,31 @@ public sealed partial class Ingester(Folder folder, IChatClient chat, ISummaryCa
         }
         return slug.Length == 0 ? "note" : slug;
     }
+
+    /// <summary>
+    /// Whether <paramref name="name"/> (a new document or folder name) is a segment of a path the
+    /// note writes out — <c>secret/plans.md</c> names both <c>secret</c> and <c>plans.md</c>.
+    /// </summary>
+    internal static bool NamedAsPathIn(IEnumerable<string> piece, string name)
+    {
+        var bare = name.EndsWith(".md", StringComparison.OrdinalIgnoreCase) ? name[..^3] : name;
+        foreach (Match m in WrittenPath().Matches(string.Join("\n", piece)))
+        {
+            foreach (var segment in m.Value.Split('/', StringSplitOptions.RemoveEmptyEntries))
+            {
+                var s = segment.EndsWith(".md", StringComparison.OrdinalIgnoreCase) ? segment[..^3] : segment;
+                if (string.Equals(s.Normalize(NormalizationForm.FormC), bare.Normalize(NormalizationForm.FormC), StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /// <summary>A path written in text: segments joined by slashes ending in a slash or <c>.md</c>, or a bare <c>name.md</c>.</summary>
+    [GeneratedRegex(@"(?<![\w/.:-])(?:[\p{L}\p{N}_-]+/)+(?:[\p{L}\p{N}_.-]+\.md)?|(?<![\w/.:-])[\p{L}\p{N}_-]+\.md\b")]
+    private static partial Regex WrittenPath();
 
     private static string GuessTitle(List<string> piece)
     {
