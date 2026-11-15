@@ -444,13 +444,16 @@ public static partial class LeaveOneOut
         return o;
     }
 
-    /// <summary>Macro F1 over the forms the cases expect (a new document, in leave-one-out), with the counts.</summary>
+    /// <summary>Macro F1 over the forms the cases expect (in leave-one-out only a new document, so it is
+    /// that form's F1), with the counts; the interval is on the share placed as expected.</summary>
     private static JsonObject FormAccuracy(List<JsonObject> rows)
     {
         const string expected = "add_document";
         var found = rows.Select(r => r["form"]?.GetValue<string>()).ToList();
         var tp = found.Count(f => f == expected);
-        var precision = found.Count(f => f is not null) == 0 ? 0 : (double)tp / found.Count(f => f is not null);
+        // Precision of the expected form: of the placements made in that form, how many were expected.
+        var predicted = found.Count(f => f == expected);
+        var precision = predicted == 0 ? 0 : (double)tp / predicted;
         var recall = rows.Count == 0 ? 0 : (double)tp / rows.Count;
         var f1 = precision + recall == 0 ? 0 : 2 * precision * recall / (precision + recall);
         return new JsonObject
