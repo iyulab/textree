@@ -12,7 +12,8 @@
     ],
     "untouched": [
       "projects/",
-      "archive/"
+      "archive/",
+      "secret/"
     ]
   },
   "keeps": [
