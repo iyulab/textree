@@ -45,11 +45,21 @@ public static class Rebuild
             var landing = new Dictionary<string, string>(StringComparer.Ordinal);
             var outcomes = new SortedDictionary<string, int>(StringComparer.Ordinal);
             var calls = 0;
+            // A document that could not be placed, with why — an outcome count alone does not say.
+            var failures = new JsonArray();
             foreach (var d in order)
             {
                 var before = Workspace.Files(ws.Root);
                 var r = await new Ingester(folder, chat).IngestAsync(new IngestRequest(d.Text), null, ct);
                 outcomes[r.Outcome] = outcomes.GetValueOrDefault(r.Outcome) + 1;
+                if (r.Outcome == "failed")
+                {
+                    failures.Add(new JsonObject
+                    {
+                        ["doc"] = d.Path,
+                        ["violations"] = new JsonArray((r.Violations ?? []).Select(v => (JsonNode)v).ToArray()),
+                    });
+                }
                 calls += r.Trace.ModelCalls;
                 var applied = r.Plan is not null && folder.Apply(r.Plan).Ok;
                 var gates = Gates.Judge(before, Workspace.Files(ws.Root), d.Text, r, [], applied, null);
@@ -69,6 +79,7 @@ public static class Rebuild
             results[name] = new JsonObject
             {
                 ["outcomes"] = Json.Object(outcomes),
+                ["failures"] = failures,
                 ["bcubed"] = BCubed(truth, final),
                 ["nted"] = Math.Round(Nted.Normalized(Nted.TreeOf(truth), Nted.TreeOf(final)), 4),
                 ["documents_not_found"] = docs.Count - final.Count,
