@@ -73,7 +73,9 @@ public static class Cli
             case "cases":
             {
                 var (chat, recorder) = Chat(opts);
-                var report = await Cases.RunAsync(opts.Require("corpus"), chat, opts.Int("runs", 1));
+                var report = opts.Get("sequence") is { } sequence
+                    ? await Cases.SequenceAsync(opts.Require("corpus"), sequence.Split(',', StringSplitOptions.RemoveEmptyEntries), chat, opts.Int("runs", 1))
+                    : await Cases.RunAsync(opts.Require("corpus"), chat, opts.Int("runs", 1));
                 recorder?.Save();
                 Write(opts, report);
                 var failures = report["summary"]!["gate_failures"]!.AsObject().Count;

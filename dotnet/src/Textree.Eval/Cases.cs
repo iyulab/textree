@@ -69,6 +69,66 @@ public static class Cases
         };
     }
 
+    /// <summary>
+    /// Runs cases one after another on one copy of the first case's tree — each sees what the ones
+    /// before it placed — <paramref name="runs"/> times; every step is judged as its case says.
+    /// </summary>
+    public static async Task<JsonObject> SequenceAsync(string corpus, IReadOnlyList<string> ids, IChatClient chat, int runs, CancellationToken ct = default)
+    {
+        var fingerprint = Workspace.Fingerprint(corpus);
+        var files = Directory.EnumerateFiles(Path.Combine(corpus, "expected"), "*.json").ToList();
+        string FileOf(string id) => files.Single(f => Path.GetFileNameWithoutExtension(f) == id || Path.GetFileName(f).StartsWith(id + "-", StringComparison.Ordinal));
+        var steps = ids.Select(id => (Id: Path.GetFileNameWithoutExtension(FileOf(id)), Expected: JsonNode.Parse(File.ReadAllText(FileOf(id)))!.AsObject())).ToList();
+        var first = steps[0].Expected;
+        var tree = first["tree"] is { } t ? Path.Combine(corpus, t.GetValue<string>()) : Path.Combine(corpus, "tree");
+        var rows = new JsonArray();
+        var runsOk = 0;
+        var gateFailures = new SortedDictionary<string, int>(StringComparer.Ordinal);
+        for (var run = 1; run <= runs; run++)
+        {
+            using var ws = new Workspace(tree);
+            if (first["store_nfd"]?.GetValue<bool>() == true)
+            {
+                Workspace.StoreNfd(ws.Root);
+            }
+            var stepRows = new JsonArray();
+            var ok = true;
+            foreach (var (id, expected) in steps)
+            {
+                var input = File.ReadAllText(Path.Combine(corpus, expected["ingest"]!.GetValue<string>()));
+                // A case met again in the sequence is already in the folder: its text gives nothing to do.
+                var again = stepRows.Any(r => r!["id"]!.GetValue<string>() == id);
+                var spec = again ? new JsonObject { ["expect"] = "empty", ["placement"] = expected["placement"]?.DeepClone() } : expected;
+                var row = await JudgeAsync(id, run, ws.Root, input, spec, chat, ct);
+                stepRows.Add(row);
+                foreach (var (gate, verdict) in row["gates"]!.AsObject())
+                {
+                    if (verdict!.GetValue<string>().StartsWith("fail", StringComparison.Ordinal))
+                    {
+                        gateFailures[gate] = gateFailures.GetValueOrDefault(gate) + 1;
+                        ok = false;
+                    }
+                }
+                ok &= row["placement_ok"]?.GetValue<bool>() != false;
+            }
+            runsOk += ok ? 1 : 0;
+            rows.Add(new JsonObject { ["run"] = run, ["ok"] = ok, ["steps"] = stepRows });
+        }
+        return new JsonObject
+        {
+            ["kind"] = "sequence",
+            ["sequence"] = new JsonArray(steps.Select(x => (JsonNode)x.Id).ToArray()),
+            ["runs"] = runs,
+            ["summary"] = new JsonObject
+            {
+                ["runs_as_expected"] = Json.Of(Proportion.Of(runsOk, runs)),
+                ["gate_failures"] = Json.Object(gateFailures),
+                ["corpus_unchanged"] = Workspace.Fingerprint(corpus) == fingerprint,
+            },
+            ["runs_detail"] = rows,
+        };
+    }
+
     private static async Task<JsonObject> RunOneAsync(string id, int run, string tree, string input, JsonObject expected, IChatClient chat, bool storeNfd, CancellationToken ct)
     {
         using var ws = new Workspace(tree);
@@ -76,8 +136,14 @@ public static class Cases
         {
             Workspace.StoreNfd(ws.Root);
         }
-        var folder = new Folder(ws.Root);
-        var before = Workspace.Files(ws.Root);
+        return await JudgeAsync(id, run, ws.Root, input, expected, chat, ct);
+    }
+
+    /// <summary>Ingests <paramref name="input"/> into the folder at <paramref name="root"/>, applies the plan, ingests it again, and judges.</summary>
+    private static async Task<JsonObject> JudgeAsync(string id, int run, string root, string input, JsonObject expected, IChatClient chat, CancellationToken ct)
+    {
+        var folder = new Folder(root);
+        var before = Workspace.Files(root);
         var ingester = new Ingester(folder, chat);
         var start = Clock.Start(chat);
         var result = await ingester.IngestAsync(new IngestRequest(input), null, ct);
@@ -89,7 +155,7 @@ public static class Cases
             applied = a.Ok;
             applyError = a.Error?.Message;
         }
-        var after = Workspace.Files(ws.Root);
+        var after = Workspace.Files(root);
         bool? again = null;
         if (applied)
         {
@@ -138,6 +204,7 @@ public static class Cases
             ["output_tokens"] = result.Trace.OutputTokens,
             ["repairs"] = result.Trace.Repairs,
             ["unseen_refused"] = result.Trace.UnseenCitations,
+            ["disagreements"] = result.Trace.Disagreements,
             ["violations"] = result.Violations is null ? null : new JsonArray(result.Violations.Select(v => (JsonNode)v).ToArray()),
             ["apply_error"] = applyError,
             ["machine"] = machine,

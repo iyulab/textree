@@ -309,6 +309,7 @@ public static partial class LeaveOneOut
         row["repairs"] = result.Trace.Repairs;
         row["violations"] = result.Violations is null ? null : new JsonArray(result.Violations.Select(v => (JsonNode)v).ToArray());
         row["unseen_refused"] = result.Trace.UnseenCitations;
+        row["disagreements"] = result.Trace.Disagreements;
         var (edits, kept) = SectionEdits.Measure(result.Plan, before, after, applied);
         if (edits > 0)
         {
