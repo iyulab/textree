@@ -1,0 +1,19 @@
+{
+  "ingest": "texts/11-schedule-continues.md",
+  "tree": "../corpus/tree",
+  "placement": {
+    "any_of": [
+      {
+        "edit": "projects/garden/watering.md"
+      }
+    ],
+    "untouched": [
+      "reading/",
+      "archive/",
+      "inbox.md"
+    ]
+  },
+  "keeps": [
+    "stop after the first frost"
+  ]
+}

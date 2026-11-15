@@ -1,0 +1,1 @@
+- September to October: every three days, 10 minutes; stop after the first frost.

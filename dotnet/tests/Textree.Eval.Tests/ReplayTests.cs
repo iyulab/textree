@@ -57,6 +57,11 @@ public sealed class ReplayTests
         var second = await Cases.RunAsync(corpus, RecordingChatClient.Replay(recording), 1, ct);
         Assert.Equal(WithoutMachine(first), WithoutMachine(second));
         Assert.Empty(first["summary"]!["gate_failures"]!.AsObject());
-        Assert.Equal(10, first["summary"]!["cases"]!.GetValue<int>());
+        var cases = Directory.EnumerateFiles(Path.Combine(corpus, "expected"), "*.json").Count();
+        Assert.Equal(cases, first["summary"]!["cases"]!.GetValue<int>());
+        // A recording that no longer answers the questions (a prompt changed) fails the cases, not the gates.
+        Assert.False(first["summary"]!["outcomes"]!.AsObject().ContainsKey("failed"), "the recording does not answer every question — re-record it");
+        Assert.Equal(cases, first["summary"]!["placement"]!["successes"]!.GetValue<int>());
+        Assert.Equal(1, first["summary"]!["section_edit_preservation"]!["paragraphs_kept_verbatim"]!["value"]!.GetValue<double>());
     }
 }
