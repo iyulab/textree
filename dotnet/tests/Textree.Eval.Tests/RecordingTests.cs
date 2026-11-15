@@ -95,4 +95,57 @@ public sealed class RecordingTests
         await Assert.ThrowsAsync<ClientResultException>(() => new Patient(model).GetResponseAsync(Question("one"), cancellationToken: TestContext.Current.CancellationToken));
         Assert.Equal(1, model.Asked);
     }
+
+    /// <summary>A model that takes a fixed time to answer.</summary>
+    private sealed class Slow(TimeSpan delay) : IChatClient
+    {
+        public async Task<ChatResponse> GetResponseAsync(IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default)
+        {
+            await Task.Delay(delay, cancellationToken);
+            return new ChatResponse(new ChatMessage(ChatRole.Assistant, "{}"));
+        }
+
+        public IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
+
+        public object? GetService(Type serviceType, object? serviceKey = null) => null;
+
+        public void Dispose()
+        {
+        }
+    }
+
+    [Fact]
+    public async Task A_replay_reports_the_time_the_model_took_when_it_was_recorded()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"recording-{Guid.NewGuid():N}.json");
+        var ct = TestContext.Current.CancellationToken;
+        try
+        {
+            var recorder = RecordingChatClient.Record(new Slow(TimeSpan.FromMilliseconds(300)), path);
+            var live = Clock.Start(recorder);
+            await recorder.GetResponseAsync(Question("one"), cancellationToken: ct);
+            var liveMachine = Clock.Machine(recorder, live);
+            recorder.Save();
+            Assert.Equal("live", liveMachine["clock"]!.GetValue<string>());
+
+            var replay = RecordingChatClient.Replay(path);
+            var start = Clock.Start(replay);
+            await replay.GetResponseAsync(Question("one"), cancellationToken: ct);
+            var machine = Clock.Machine(replay, start);
+            Assert.Equal("recorded", machine["clock"]!.GetValue<string>());
+            Assert.True(machine["seconds"]!.GetValue<double>() >= 0.29);
+
+            // A recording made before times were kept says so.
+            File.WriteAllText(path, File.ReadAllText(path).Replace("\"seconds\"", "\"was\""));
+            var old = RecordingChatClient.Replay(path);
+            var oldStart = Clock.Start(old);
+            await old.GetResponseAsync(Question("one"), cancellationToken: ct);
+            Assert.Equal("replay_without_times", Clock.Machine(old, oldStart)["clock"]!.GetValue<string>());
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
 }

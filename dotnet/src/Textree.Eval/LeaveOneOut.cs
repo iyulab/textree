@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Text;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
@@ -81,29 +80,36 @@ public static partial class LeaveOneOut
                     return row;
                 }
 
+                JsonObject Timed(Func<JsonObject> arm)
+                {
+                    var start = Clock.Start(chat);
+                    var row = arm();
+                    row["machine"] = Clock.Machine(chat, start);
+                    return row;
+                }
                 if (settings.Arms.Contains("b0"))
                 {
-                    Add("b0" + suffix, Mark(Row(c, "", null)));
+                    Add("b0" + suffix, Mark(Timed(() => Row(c, "", null))));
                 }
                 if (settings.Arms.Contains("b1"))
                 {
-                    Add("b1" + suffix, Mark(Row(c, Baselines.Nearest(remaining, text), null)));
+                    Add("b1" + suffix, Mark(Timed(() => Row(c, Baselines.Nearest(remaining, text), null))));
                 }
                 if (settings.Arms.Contains("gil"))
                 {
-                    Add("gil" + suffix, Mark(Baselines.Gil(remaining, c.Path, text)));
+                    Add("gil" + suffix, Mark(Timed(() => Baselines.Gil(remaining, c.Path, text))));
                 }
                 for (var run = 1; run <= settings.Runs; run++)
                 {
                     if (settings.Arms.Contains("b2"))
                     {
-                        var clock = Stopwatch.StartNew();
+                        var start = Clock.Start(chat);
                         var (landing, calls, tokens) = await Baselines.SingleShotAsync(remaining, text, chat, ct);
                         var row = Row(c, landing, null);
                         row["run"] = run;
                         row["model_calls"] = calls;
                         row["tokens"] = tokens;
-                        row["machine"] = new JsonObject { ["seconds"] = Math.Round(clock.Elapsed.TotalSeconds, 2) };
+                        row["machine"] = Clock.Machine(chat, start);
                         Add("b2" + suffix, Mark(row));
                     }
                     if (settings.Arms.Contains("harness"))
@@ -266,7 +272,7 @@ public static partial class LeaveOneOut
         using var ws = new Workspace(root);
         var folder = new Folder(ws.Root);
         var before = Workspace.Files(ws.Root);
-        var clock = Stopwatch.StartNew();
+        var start = Clock.Start(chat);
         IngestResult result;
         try
         {
@@ -282,7 +288,7 @@ public static partial class LeaveOneOut
             error["tokens"] = 0L;
             return error;
         }
-        var seconds = clock.Elapsed.TotalSeconds;
+        var machine = Clock.Machine(chat, start);
         var applied = result.Plan is not null && folder.Apply(result.Plan).Ok;
         var after = Workspace.Files(ws.Root);
         var gates = Gates.Judge(before, after, c.Text, result, [], applied, null);
@@ -314,7 +320,7 @@ public static partial class LeaveOneOut
                 && Paragraphs.Keys(Encoding.UTF8.GetString(was)).IsSubsetOf(Paragraphs.Keys(Encoding.UTF8.GetString(now))));
         }
         row["path_taken"] = string.Join(" > ", result.Trace.Steps.Where(s => s.Refusal is null).Select(s => s.At.Length == 0 ? "(top)" : s.At));
-        row["machine"] = new JsonObject { ["seconds"] = Math.Round(seconds, 2) };
+        row["machine"] = machine;
         return row;
     }
 
@@ -431,6 +437,8 @@ public static partial class LeaveOneOut
         if (rows.Any(r => r["machine"]?["seconds"] is not null))
         {
             o["seconds_median"] = Math.Round(Median.Of(rows.Select(r => r["machine"]!["seconds"]!.GetValue<double>())), 2);
+            o["seconds_clock"] = new JsonArray(rows.Select(r => r["machine"]?["clock"]?.GetValue<string>()).OfType<string>()
+                .Distinct().Order(StringComparer.Ordinal).Select(x => (JsonNode)x).ToArray());
             cost["seconds"] = Json.Of(MedianInterval.Of(rows.Where(r => r["machine"]?["seconds"] is not null).Select(r => r["machine"]!["seconds"]!.GetValue<double>())));
         }
         o["cost"] = cost;

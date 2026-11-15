@@ -13,6 +13,8 @@ namespace Textree.Eval;
 /// Recording into a file that already holds answers continues it: questions it holds are answered
 /// from it, new ones are asked and added, and the file is saved as it grows — an evaluation that
 /// stops part way loses at most the last few answers and resumes where it was.
+/// Each answer keeps the seconds the model took, so a replay reports the time of the run that was
+/// recorded (<see cref="ReplayedSeconds"/>) rather than the time of reading the file.
 /// </summary>
 public sealed class RecordingChatClient : IChatClient
 {
@@ -23,6 +25,18 @@ public sealed class RecordingChatClient : IChatClient
     private readonly object _writing = new();
     private DateTime _savedAt = DateTime.UtcNow;
     private static readonly TimeSpan SaveEvery = TimeSpan.FromSeconds(20);
+    private long _replayedTicks;
+    private int _replayed;
+    private int _unrecordedTimes;
+
+    /// <summary>Seconds the model took, as recorded, for every answer replayed so far.</summary>
+    public double ReplayedSeconds => TimeSpan.FromTicks(Interlocked.Read(ref _replayedTicks)).TotalSeconds;
+
+    /// <summary>Answers replayed from the recording so far.</summary>
+    public int Replayed => Volatile.Read(ref _replayed);
+
+    /// <summary>Replayed answers whose recording holds no time (made before times were kept).</summary>
+    public int UnrecordedTimes => Volatile.Read(ref _unrecordedTimes);
 
     private RecordingChatClient(IChatClient? inner, Dictionary<string, List<JsonObject>> answers, string? saveTo)
     {
@@ -96,6 +110,15 @@ public sealed class RecordingChatClient : IChatClient
         }
         if (held is not null)
         {
+            Interlocked.Increment(ref _replayed);
+            if (held["seconds"] is { } recordedSeconds)
+            {
+                Interlocked.Add(ref _replayedTicks, TimeSpan.FromSeconds(recordedSeconds.GetValue<double>()).Ticks);
+            }
+            else
+            {
+                Interlocked.Increment(ref _unrecordedTimes);
+            }
             return new ChatResponse(new ChatMessage(ChatRole.Assistant, held["text"]!.GetValue<string>()))
             {
                 Usage = new UsageDetails { InputTokenCount = held["input"]?.GetValue<long>(), OutputTokenCount = held["output"]?.GetValue<long>() },
@@ -105,7 +128,9 @@ public sealed class RecordingChatClient : IChatClient
         {
             throw new InvalidOperationException("this question is not in the recording");
         }
+        var clock = System.Diagnostics.Stopwatch.StartNew();
         var response = await _inner.GetResponseAsync(list, options, cancellationToken);
+        var took = clock.Elapsed;
         bool due;
         lock (_answers)
         {
@@ -118,6 +143,7 @@ public sealed class RecordingChatClient : IChatClient
                 ["text"] = response.Text,
                 ["input"] = response.Usage?.InputTokenCount,
                 ["output"] = response.Usage?.OutputTokenCount,
+                ["seconds"] = Math.Round(took.TotalSeconds, 3),
             });
             due = _saveTo is not null && DateTime.UtcNow - _savedAt >= SaveEvery;
             if (due)
