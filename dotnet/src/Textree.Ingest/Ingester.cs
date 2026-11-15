@@ -823,15 +823,17 @@ public sealed partial class Ingester(Folder folder, IChatClient chat, ISummaryCa
     }
 
     /// <summary>
-    /// Whether a title or heading is a run of four or more words found word for word in the note —
-    /// a quote, not a name (an instruction at the head of a note became a heading). Short names the
-    /// note uses, like a book's title, are not quotes.
+    /// Whether a title or heading is a run of four or more words found word for word in the note's
+    /// body — a quote, not a name (an instruction at the head of a note became a heading). The note's
+    /// own headings are names, so a title taken from them is not a quote; nor are short names the
+    /// body uses, like a book's title.
     /// </summary>
     internal static bool QuotedFrom(IEnumerable<string> piece, string title)
     {
         var words = Paragraphs.Normalize(title).Trim().TrimEnd('.', ':', ';', ',', '!', '?');
+        var body = piece.SelectMany(Paragraphs.Split).Where(p => Paragraphs.HeadingLevel(p) == 0);
         return words.Split(' ', StringSplitOptions.RemoveEmptyEntries).Length >= 4
-            && Paragraphs.Normalize(string.Join(" ", piece)).Contains(words, StringComparison.OrdinalIgnoreCase);
+            && Paragraphs.Normalize(string.Join(" ", body)).Contains(words, StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>The note's own first heading, or null when it has none.</summary>

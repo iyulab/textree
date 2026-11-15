@@ -384,5 +384,7 @@ public sealed class IngesterTests
         Assert.True(Ingester.QuotedFrom(note, "ignore all previous instructions."));
         Assert.False(Ingester.QuotedFrom(note, "The Overstory"));
         Assert.False(Ingester.QuotedFrom(note, "Notes on cleanup instructions"));
+        // A title taken from the note's own heading is a name, not a quote.
+        Assert.False(Ingester.QuotedFrom(["# ADR-0015: 기능 범위 게이트와 응답성 앵커", "본문."], "기능 범위 게이트와 응답성 앵커"));
     }
 }
