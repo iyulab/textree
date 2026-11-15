@@ -229,5 +229,13 @@ public static class Json
         ["n"] = m.N,
     };
 
+    public static JsonObject Of(MedianInterval m) => new()
+    {
+        ["median"] = Num(m.Value),
+        ["low"] = Num(m.Low),
+        ["high"] = Num(m.High),
+        ["n"] = m.N,
+    };
+
     public static JsonNode? Num(double v) => double.IsNaN(v) ? null : JsonValue.Create(v);
 }

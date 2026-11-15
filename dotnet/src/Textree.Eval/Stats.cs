@@ -48,3 +48,22 @@ public static class Median
         return v.Count % 2 == 1 ? v[v.Count / 2] : (v[v.Count / 2 - 1] + v[v.Count / 2]) / 2;
     }
 }
+
+/// <summary>A median with its distribution-free 95% interval (binomial order statistics).</summary>
+public sealed record MedianInterval(double Value, double Low, double High, int N)
+{
+    public static MedianInterval Of(IEnumerable<double> values)
+    {
+        var v = values.OrderBy(x => x).ToList();
+        var n = v.Count;
+        if (n == 0)
+        {
+            return new MedianInterval(double.NaN, double.NaN, double.NaN, 0);
+        }
+        // Ranks (1-based) n/2 ∓ 0.98·√n, kept inside the sample.
+        var half = 0.98 * Math.Sqrt(n);
+        var lo = Math.Clamp((int)Math.Floor(n / 2.0 - half), 1, n);
+        var hi = Math.Clamp((int)Math.Ceiling(n / 2.0 + half) + 1, 1, n);
+        return new MedianInterval(Median.Of(v), v[lo - 1], v[hi - 1], n);
+    }
+}

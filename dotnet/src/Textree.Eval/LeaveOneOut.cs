@@ -15,7 +15,8 @@ namespace Textree.Eval;
 /// </summary>
 public static partial class LeaveOneOut
 {
-    public sealed record Settings(int PerStratum, ulong Seed, int Runs, int MinChars, bool Unmasked, IReadOnlySet<string> Arms, string? Only = null);
+    /// <param name="Present">Also ingest each drawn document's text with the document left in place: nothing is the right answer (no-action accuracy).</param>
+    public sealed record Settings(int PerStratum, ulong Seed, int Runs, int MinChars, bool Unmasked, IReadOnlySet<string> Arms, string? Only = null, bool Present = false);
 
     /// <summary>One document taken out: where it was, its text with location hints removed, and the masked tree.</summary>
     private sealed record Case(string Path, string Folder, string Stratum, string Text);
@@ -53,36 +54,57 @@ public static partial class LeaveOneOut
         foreach (var (stratum, path) in picked)
         {
             var doc = hierarchy.Document(path)!;
-            foreach (var masked in settings.Unmasked ? new[] { true, false } : [true])
+            var conditions = new List<string> { "masked" };
+            if (settings.Unmasked)
+            {
+                conditions.Add("unmasked");
+            }
+            if (settings.Present)
+            {
+                conditions.Add("present");
+            }
+            foreach (var condition in conditions)
             {
                 using var ws = new Workspace(baseline.Root);
-                var text = TakeOut(ws.Root, doc, masked);
+                // Present: the document stays where it is and its own text comes in again.
+                var text = condition == "present" ? doc.Text : TakeOut(ws.Root, doc, condition == "masked");
                 var c = new Case(path, doc.Folder, stratum, text);
                 var remaining = Hierarchy.Read(new Folder(ws.Root));
-                var suffix = masked ? "" : ".unmasked";
+                var suffix = condition == "masked" ? "" : "." + condition;
+                JsonObject Mark(JsonObject row)
+                {
+                    if (condition == "present")
+                    {
+                        // A baseline that names a folder always acts; only an abstention or an empty plan is no action.
+                        row["no_action"] = row["outcome"]?.GetValue<string>() == "empty" || row["answered"]?.GetValue<bool>() == false;
+                    }
+                    return row;
+                }
 
-                if (masked && settings.Arms.Contains("b0"))
+                if (settings.Arms.Contains("b0"))
                 {
-                    Add("b0", Row(c, "", null));
+                    Add("b0" + suffix, Mark(Row(c, "", null)));
                 }
-                if (masked && settings.Arms.Contains("b1"))
+                if (settings.Arms.Contains("b1"))
                 {
-                    Add("b1", Row(c, Baselines.Nearest(remaining, text), null));
+                    Add("b1" + suffix, Mark(Row(c, Baselines.Nearest(remaining, text), null)));
                 }
-                if (masked && settings.Arms.Contains("gil"))
+                if (settings.Arms.Contains("gil"))
                 {
-                    Add("gil", Baselines.Gil(remaining, c.Path, text));
+                    Add("gil" + suffix, Mark(Baselines.Gil(remaining, c.Path, text)));
                 }
                 for (var run = 1; run <= settings.Runs; run++)
                 {
-                    if (masked && settings.Arms.Contains("b2"))
+                    if (settings.Arms.Contains("b2"))
                     {
+                        var clock = Stopwatch.StartNew();
                         var (landing, calls, tokens) = await Baselines.SingleShotAsync(remaining, text, chat, ct);
                         var row = Row(c, landing, null);
                         row["run"] = run;
                         row["model_calls"] = calls;
                         row["tokens"] = tokens;
-                        Add("b2", row);
+                        row["machine"] = new JsonObject { ["seconds"] = Math.Round(clock.Elapsed.TotalSeconds, 2) };
+                        Add("b2" + suffix, Mark(row));
                     }
                     if (settings.Arms.Contains("harness"))
                     {
@@ -95,7 +117,7 @@ public static partial class LeaveOneOut
                                 gateFailures[gate] = gateFailures.GetValueOrDefault(gate) + 1;
                             }
                         }
-                        Add("harness" + suffix, row);
+                        Add("harness" + suffix, Mark(row));
                     }
                 }
             }
@@ -354,15 +376,50 @@ public static partial class LeaveOneOut
             o["outcomes"] = new JsonObject(rows.GroupBy(r => r["outcome"]!.GetValue<string>()).OrderBy(g => g.Key, StringComparer.Ordinal)
                 .Select(g => KeyValuePair.Create(g.Key, (JsonNode?)g.Count())));
         }
+        // Form: in leave-one-out the text was a whole document, so the expected form is a new
+        // document. Arms that only name a folder have no form of their own.
+        if (rows.Any(r => r["form"] is not null))
+        {
+            o["form_accuracy"] = FormAccuracy(rows);
+        }
+        else
+        {
+            o["form_accuracy"] = "n/a: the arm names a folder only";
+        }
+        if (rows.Any(r => r["no_action"] is not null))
+        {
+            o["no_action"] = Json.Of(Proportion.Of(rows.Count(r => r["no_action"]!.GetValue<bool>()), rows.Count));
+        }
+        // Section-edit preservation is the judge's (quality.md §7); count what there is to judge.
+        var sectionEdits = rows.Count(r => r["form"]?.GetValue<string>() == "edit_section");
+        o["section_edit_preservation"] = new JsonObject
+        {
+            ["section_edits"] = sectionEdits,
+            ["value"] = null,
+            ["note"] = sectionEdits == 0
+                ? "no section edits: nothing to preserve"
+                : "scored by the calibrated judge only (quality.md §7); not scored here",
+        };
+        // Cost, per placement: median with its interval and N.
+        var cost = new JsonObject();
         if (rows.Any(r => r["model_calls"] is not null))
         {
             o["model_calls_median"] = Median.Of(rows.Select(r => (double)r["model_calls"]!.GetValue<int>()));
             o["tokens_median"] = Median.Of(rows.Select(r => (double)r["tokens"]!.GetValue<long>()));
+            cost["model_calls"] = Json.Of(MedianInterval.Of(rows.Select(r => (double)r["model_calls"]!.GetValue<int>())));
+            cost["tokens"] = Json.Of(MedianInterval.Of(rows.Select(r => (double)r["tokens"]!.GetValue<long>())));
+        }
+        else
+        {
+            cost["model_calls"] = Json.Of(MedianInterval.Of(rows.Select(_ => 0.0)));
+            cost["tokens"] = Json.Of(MedianInterval.Of(rows.Select(_ => 0.0)));
         }
         if (rows.Any(r => r["machine"]?["seconds"] is not null))
         {
             o["seconds_median"] = Math.Round(Median.Of(rows.Select(r => r["machine"]!["seconds"]!.GetValue<double>())), 2);
+            cost["seconds"] = Json.Of(MedianInterval.Of(rows.Where(r => r["machine"]?["seconds"] is not null).Select(r => r["machine"]!["seconds"]!.GetValue<double>())));
         }
+        o["cost"] = cost;
         if (rows.Any(r => r["answered"] is not null))
         {
             var answered = rows.Where(r => r["answered"]!.GetValue<bool>()).ToList();
@@ -371,6 +428,25 @@ public static partial class LeaveOneOut
             o["first_candidate_hit"] = Json.Of(Proportion.Of(rows.Count(r => r["first_candidate_hit"]?.GetValue<bool>() == true), rows.Count));
         }
         return o;
+    }
+
+    /// <summary>Macro F1 over the forms the cases expect (a new document, in leave-one-out), with the counts.</summary>
+    private static JsonObject FormAccuracy(List<JsonObject> rows)
+    {
+        const string expected = "add_document";
+        var found = rows.Select(r => r["form"]?.GetValue<string>()).ToList();
+        var tp = found.Count(f => f == expected);
+        var precision = found.Count(f => f is not null) == 0 ? 0 : (double)tp / found.Count(f => f is not null);
+        var recall = rows.Count == 0 ? 0 : (double)tp / rows.Count;
+        var f1 = precision + recall == 0 ? 0 : 2 * precision * recall / (precision + recall);
+        return new JsonObject
+        {
+            ["macro_f1"] = Math.Round(f1, 4),
+            ["expected"] = new JsonObject { [expected] = rows.Count },
+            ["found"] = new JsonObject(found.GroupBy(f => f ?? "(none)").OrderBy(g => g.Key, StringComparer.Ordinal)
+                .Select(g => KeyValuePair.Create(g.Key, (JsonNode?)g.Count()))),
+            ["share_as_expected"] = Json.Of(Proportion.Of(tp, rows.Count)),
+        };
     }
 
     private static (double HitLow, double HitHigh, double PartialLow, double PartialHigh) Interval(JsonObject summary, string arm)
