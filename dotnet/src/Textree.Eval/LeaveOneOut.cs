@@ -303,6 +303,16 @@ public static partial class LeaveOneOut
         row["repairs"] = result.Trace.Repairs;
         row["violations"] = result.Violations is null ? null : new JsonArray(result.Violations.Select(v => (JsonNode)v).ToArray());
         row["unseen_refused"] = result.Trace.UnseenCitations;
+        // Section edits: does every paragraph the document had before survive the edit, word for word?
+        var edited = result.Plan?["ops"]?.AsArray().Where(o => o!["op"]!.GetValue<string>() == "edit_section")
+            .Select(o => o!["path"]!.GetValue<string>()).Distinct(StringComparer.Ordinal).ToList() ?? [];
+        if (edited.Count > 0)
+        {
+            row["section_edits"] = edited.Count;
+            row["section_edits_kept"] = edited.Count(path =>
+                applied && before.TryGetValue(path, out var was) && after.TryGetValue(path, out var now)
+                && Paragraphs.Keys(Encoding.UTF8.GetString(was)).IsSubsetOf(Paragraphs.Keys(Encoding.UTF8.GetString(now))));
+        }
         row["path_taken"] = string.Join(" > ", result.Trace.Steps.Where(s => s.Refusal is null).Select(s => s.At.Length == 0 ? "(top)" : s.At));
         row["machine"] = new JsonObject { ["seconds"] = Math.Round(seconds, 2) };
         return row;
@@ -384,22 +394,26 @@ public static partial class LeaveOneOut
         }
         else
         {
-            o["form_accuracy"] = "n/a: the arm names a folder only";
+            o["form_accuracy"] = rows.Any(r => r["outcome"] is not null)
+                ? "n/a: no placement made (every outcome is empty or failed)"
+                : "n/a: the arm names a folder only";
         }
         if (rows.Any(r => r["no_action"] is not null))
         {
             o["no_action"] = Json.Of(Proportion.Of(rows.Count(r => r["no_action"]!.GetValue<bool>()), rows.Count));
         }
-        // Section-edit preservation is the judge's (quality.md §7); count what there is to judge.
-        var sectionEdits = rows.Count(r => r["form"]?.GetValue<string>() == "edit_section");
-        o["section_edit_preservation"] = new JsonObject
-        {
-            ["section_edits"] = sectionEdits,
-            ["value"] = null,
-            ["note"] = sectionEdits == 0
-                ? "no section edits: nothing to preserve"
-                : "scored by the calibrated judge only (quality.md §7); not scored here",
-        };
+        // Section-edit preservation: claim-level recall is the judge's (quality.md §7). What is
+        // measured here is the deterministic floor — every paragraph of the edited document kept verbatim.
+        var sectionEdits = rows.Sum(r => r["section_edits"]?.GetValue<int>() ?? 0);
+        var kept = rows.Sum(r => r["section_edits_kept"]?.GetValue<int>() ?? 0);
+        o["section_edit_preservation"] = sectionEdits == 0
+            ? new JsonObject { ["section_edits"] = 0, ["value"] = null, ["note"] = "no section edits: nothing to preserve" }
+            : new JsonObject
+            {
+                ["section_edits"] = sectionEdits,
+                ["paragraphs_kept_verbatim"] = Json.Of(Proportion.Of(kept, sectionEdits)),
+                ["note"] = "each edited document's earlier paragraphs all kept word for word; claim-level recall is the calibrated judge's (quality.md §7)",
+            };
         // Cost, per placement: median with its interval and N.
         var cost = new JsonObject();
         if (rows.Any(r => r["model_calls"] is not null))
