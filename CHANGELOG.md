@@ -32,7 +32,9 @@ Entries describe changes in Textree's own terms — never in terms of a particul
   walk goes into takes two answers that agree (a third decides when they differ, and with no
   majority the text stays at the top), so a model that samples does not send text into another
   area on one draw; deeper choices are asked once and can still go back. Titles and headings name
-  the text's subject — words cut from the text are never used as a title. Folder summaries and proposals go through ports (`ISummaryCache`, `IProposalLog`);
+  the text's subject — words cut from the text are never used as a title. Each section of a document is
+  shown with its first line, and a new section named like one the document already has continues
+  that section instead of repeating its heading. Folder summaries and proposals go through ports (`ISummaryCache`, `IProposalLog`);
   nothing is written into the knowledge folder. No sampling values are sent unless `Sampling` sets
   them (`--llm-temperature` on the MCP server); temperature 0 makes the same question get the same
   answer.

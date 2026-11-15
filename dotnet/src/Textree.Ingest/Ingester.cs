@@ -259,7 +259,7 @@ public sealed partial class Ingester(Folder folder, IChatClient chat, ISummaryCa
                     shown.Add(d.Path);
                     // In a crowded folder, documents are listed by title alone.
                     var brief = docs.Count > 20 && h.FolderDocument(at)?.Path != d.Path;
-                    var sections = brief ? [] : d.Headings.Where(x => x.Level >= 2 && x.Level <= 3).Select(x => x.Text).Take(8).ToList();
+                    var sections = brief ? [] : d.Headings.Where(x => x.Level >= 2 && x.Level <= 3).Take(8).ToList();
                     prompt.Append($"{id}. {Show(d.Name)} — \"{Show(d.Title)}\"");
                     if (h.FolderDocument(at)?.Path == d.Path)
                     {
@@ -267,7 +267,8 @@ public sealed partial class Ingester(Folder folder, IChatClient chat, ISummaryCa
                     }
                     if (sections.Count > 0)
                     {
-                        prompt.Append($"; sections: {string.Join(" | ", sections.Select(x => $"\"{Show(x)}\""))}");
+                        // Each section with its first line, so a note that continues one can be told from a new subject.
+                        prompt.Append($"; sections: {string.Join(" | ", sections.Select(x => $"\"{Show(x.Text)}\"{FirstLine(d, x)}"))}");
                     }
                     if (!brief)
                     {
@@ -358,6 +359,11 @@ public sealed partial class Ingester(Folder folder, IChatClient chat, ISummaryCa
                             break;
                         }
                         trace.Steps.Add(new TraceStep(number, at, shown, answer.ToJsonString(), null));
+                        // A new section named like one the document already has is that section: the note continues it.
+                        if (ownHeading is null && doc.Headings.Where(x => x.Level >= 2 && Same(x.Text, heading)).ToList() is [var existing])
+                        {
+                            return new Choice("add_to_section", at, docPath, existing.Text, null, null);
+                        }
                         return new Choice("append_section", at, docPath, heading, null, null);
                     case "new_document":
                     case "new_folder":
@@ -796,6 +802,13 @@ public sealed partial class Ingester(Folder folder, IChatClient chat, ISummaryCa
     /// <summary>A path written in text: segments joined by slashes ending in a slash or <c>.md</c>, or a bare <c>name.md</c>.</summary>
     [GeneratedRegex(@"(?<![\w/.:-])(?:[\p{L}\p{N}_-]+/)+(?:[\p{L}\p{N}_.-]+\.md)?|(?<![\w/.:-])[\p{L}\p{N}_-]+\.md\b")]
     private static partial Regex WrittenPath();
+
+    /// <summary>« (starts: …)» with the first line under a section's heading, or nothing when the section is empty.</summary>
+    private static string FirstLine(Doc d, DocHeading heading)
+    {
+        var line = (d.SectionBody(heading) ?? "").Split('\n').Select(l => l.Trim()).FirstOrDefault(l => l.Length > 0 && !l.StartsWith('#'));
+        return line is null ? "" : $" (starts: {Clip(Show(line), 60)})";
+    }
 
     /// <summary>The note's own first heading, or null when it has none.</summary>
     private static string? OwnHeading(List<string> piece) =>

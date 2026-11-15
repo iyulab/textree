@@ -361,4 +361,18 @@ public sealed class IngesterTests
         Assert.Equal(2, top);
         Assert.Equal(1, inGarden);
     }
+
+    [Fact]
+    public async Task A_new_section_named_like_an_existing_one_continues_it()
+    {
+        using var s = Garden();
+        var chat = new ScriptedChat((prompt, _) =>
+            ScriptedChat.AsksWhere(prompt) ? (prompt.Contains("You are in: the top folder") ? """{"choice":"F1"}""" : """{"choice":"H"}""")
+            : """{"action":"append","item":"D2","heading":"schedule"}""");
+        var result = await new Ingester(new Folder(s.Root), chat).IngestAsync(new IngestRequest("- June: every day."), null, Ct);
+        var p = Assert.Single(result.Placement);
+        Assert.Equal(("add_to_section", "garden/watering.md", "Schedule"), (p.Form, p.Target, p.Heading));
+        // The section list shows each section's first line.
+        Assert.Contains("\"Schedule\" (starts: - May: every two days.)", chat.Prompts[^1]);
+    }
 }
