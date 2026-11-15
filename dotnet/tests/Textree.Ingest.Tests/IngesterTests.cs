@@ -244,4 +244,17 @@ public sealed class IngesterTests
         Assert.Null(Ingester.ParseObject("no object here"));
         Assert.Null(Ingester.ParseObject("{\"groups\": [1], \"groups\": [2]}"));
     }
+
+    [Fact]
+    public void A_refusal_is_named_by_the_operation_whose_target_is_exactly_its_path()
+    {
+        var named = Ingester.NameRefusals(
+            ["refused [I5] a.md: already exists", "refused [I2] data.md:3: [b](b.md) would break", "refused [plan]: the plan does not match"],
+            [("add_document", "a.md"), ("append_section", "data.md")]);
+        Assert.Equal("add_document: refused [I5] a.md: already exists", named[0]);
+        Assert.Equal("append_section: refused [I2] data.md:3: [b](b.md) would break", named[1]);
+        Assert.Equal("refused [plan]: the plan does not match", named[2]);
+        Assert.Equal("텃밭/물주기.md", Ingester.RefusedPath("refused [I5] 텃밭/물주기.md: already exists"));
+        Assert.Equal("refused [I5] 텃밭/물주기.md: x".Length, Ingester.NameRefusals(["refused [I5] 텃밭/물주기.md: x"], [("add_document", "텃밭/물주기.md".Normalize(System.Text.NormalizationForm.FormD))])[0].Length - "add_document: ".Length);
+    }
 }

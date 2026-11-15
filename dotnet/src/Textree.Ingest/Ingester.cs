@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text.RegularExpressions;
 using Microsoft.Extensions.AI;
 
 namespace Textree.Ingest;
@@ -13,7 +14,7 @@ namespace Textree.Ingest;
 /// itself), has the engine plan and check them as one change, and repairs a refused plan. The
 /// result is a plan for <c>apply_plan</c>; nothing is written here.
 /// </summary>
-public sealed class Ingester(Folder folder, IChatClient chat, ISummaryCache? summaries = null, IProposalLog? log = null)
+public sealed partial class Ingester(Folder folder, IChatClient chat, ISummaryCache? summaries = null, IProposalLog? log = null)
 {
     /// <summary>How many folder lines one step of the walk shows at most.</summary>
     private const int FolderLines = 60;
@@ -130,18 +131,32 @@ public sealed class Ingester(Folder folder, IChatClient chat, ISummaryCache? sum
         return new IngestResult { Outcome = "failed", Violations = Named(lastViolations, choices.Values), Trace = trace };
     }
 
-    /// <summary>Each refusal led by the operation that ran into it (when one piece's target is named in it).</summary>
-    private static IReadOnlyList<string>? Named(IReadOnlyList<string>? violations, IEnumerable<Choice> choices)
+    /// <summary>Each refusal led by the operation that ran into it: the one whose target is the path the refusal names.</summary>
+    private static IReadOnlyList<string>? Named(IReadOnlyList<string>? violations, IEnumerable<Choice> choices) =>
+        violations is null ? null : NameRefusals(violations, choices.Select(c => (c.Form, TargetPath(c))));
+
+    /// <summary>
+    /// Leads each refusal with the forms whose target is exactly the path the refusal names
+    /// (<c>refused [I5] con.md: …</c> or <c>refused [I2] a.md:3: …</c>); a refusal naming no path,
+    /// or a path no target has, is left as it is.
+    /// </summary>
+    internal static IReadOnlyList<string> NameRefusals(IEnumerable<string> violations, IEnumerable<(string Form, string Path)> targets)
     {
-        if (violations is null)
-        {
-            return null;
-        }
-        var targets = choices.Select(c => (c.Form, Path: TargetPath(c))).ToList();
-        return violations.Select(v => targets.Where(t => v.Contains(t.Path, StringComparison.Ordinal)).Select(t => t.Form).Distinct().ToList() is { Count: > 0 } forms
+        var byPath = targets.ToLookup(t => t.Path.Normalize(NormalizationForm.FormC), t => t.Form, StringComparer.Ordinal);
+        return violations.Select(v => RefusedPath(v) is { } path && byPath[path.Normalize(NormalizationForm.FormC)].Distinct().ToList() is { Count: > 0 } forms
             ? string.Join(", ", forms) + ": " + v
             : v).ToList();
     }
+
+    /// <summary>The path a refusal line names, or null.</summary>
+    internal static string? RefusedPath(string violation)
+    {
+        var m = RefusalLine().Match(violation);
+        return m.Success ? m.Groups["path"].Value : null;
+    }
+
+    [GeneratedRegex(@"^refused \[[^\]]+\] (?<path>.+?)(?::\d+)?: ")]
+    private static partial Regex RefusalLine();
 
     // ---- cutting the text into pieces ----------------------------------------------------------
 
