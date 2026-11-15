@@ -16,6 +16,7 @@ accepted ones.
 | `placement.any_of` | Accepted places: `{"edit": doc}` (a section added to that document), `{"add_under": folder}` (a new document or folder directly in it — `""` is the top), `{"in": folder}` (anything under it) |
 | `placement.untouched` | Path prefixes that must not change |
 | `keeps` | Phrases that must be in the folder afterwards |
+| `headings_exclude` | Phrases of the text that must not appear in any heading afterwards (an instruction in the text, say) |
 | `min_pieces`, `distinct_folders` | For a text about several topics: how many pieces at least, and whether they go to different folders |
 
 `recorded-answers.json` holds one model's answers to every question the cases ask, keyed by a

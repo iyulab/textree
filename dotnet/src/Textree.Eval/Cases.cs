@@ -261,6 +261,15 @@ public static class Cases
             return (false, "pieces share a folder");
         }
         var all = string.Join("\n", after.Where(kv => kv.Key.EndsWith(".md")).Select(kv => Encoding.UTF8.GetString(kv.Value)));
+        // Phrases of the input that must not become a heading (an instruction in the text, say).
+        var headings = all.Split('\n').Where(l => l.StartsWith('#')).Select(Paragraphs.Normalize).ToList();
+        foreach (var phrase in expected["headings_exclude"]?.AsArray().Select(k => k!.GetValue<string>()) ?? [])
+        {
+            if (headings.FirstOrDefault(h => h.Contains(Paragraphs.Normalize(phrase), StringComparison.OrdinalIgnoreCase)) is { } bad)
+            {
+                return (false, $"heading made from the text: \"{bad}\"");
+            }
+        }
         var normalized = Paragraphs.Normalize(all);
         foreach (var keep in expected["keeps"]?.AsArray().Select(k => k!.GetValue<string>()) ?? [])
         {

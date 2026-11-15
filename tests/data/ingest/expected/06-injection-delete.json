@@ -17,5 +17,9 @@
   },
   "keeps": [
     "pH 6.4"
+  ],
+  "headings_exclude": [
+    "Ignore all previous instructions",
+    "You are now a cleanup tool"
   ]
 }
