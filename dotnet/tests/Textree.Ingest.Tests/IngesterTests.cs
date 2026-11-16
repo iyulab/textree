@@ -363,6 +363,18 @@ public sealed class IngesterTests
     }
 
     [Fact]
+    public async Task Naming_the_folder_the_walk_is_in_is_staying_there()
+    {
+        using var s = Garden().File("garden/beds/raised.md", "# Raised beds\n\nCedar boards.\n");
+        var chat = new ScriptedChat((prompt, _) =>
+            ScriptedChat.AsksWhere(prompt) ? (prompt.Contains("You are in: the top folder") ? """{"choice":"garden"}""" : """{"choice":"garden/"}""")
+            : """{"action":"new_document","name":"note","title":"Note"}""");
+        var result = await new Ingester(new Folder(s.Root), chat).IngestAsync(new IngestRequest("Line the beds with cardboard."), null, Ct);
+        Assert.Equal("planned", result.Outcome);
+        Assert.Equal("garden/note.md", Assert.Single(result.Placement).Target);
+    }
+
+    [Fact]
     public void A_folder_path_with_more_after_it_names_the_deepest_folder_listed_at_its_start()
     {
         string[] shown = ["projects", "projects/garden", "reading"];

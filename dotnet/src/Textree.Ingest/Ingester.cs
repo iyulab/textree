@@ -486,7 +486,9 @@ public sealed partial class Ingester(Folder folder, IChatClient chat, ISummaryCa
                 var choice = (answer["choice"]?.ToString() ?? answer["item"]?.ToString() ?? "").Trim().TrimEnd('/');
                 // A path with more after it (a document's title, say) names the deepest folder listed at its start.
                 var target = Resolve(choice, shown, at) ?? DeepestListedAt(choice, shown, at);
-                if (target is null && string.Equals(choice, Stay, StringComparison.OrdinalIgnoreCase))
+                // Naming the folder it is in is staying too.
+                if (target is null && (string.Equals(choice, Stay, StringComparison.OrdinalIgnoreCase)
+                    || (at.Length > 0 && (Same(choice, at) || Same(choice, Hierarchy.NameOf(at))))))
                 {
                     trace.Steps.Add(new TraceStep(number, at, shown, answer.ToJsonString(), null));
                     return null;
