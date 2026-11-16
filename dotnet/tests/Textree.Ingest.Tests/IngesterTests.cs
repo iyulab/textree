@@ -269,6 +269,15 @@ public sealed class IngesterTests
         Assert.False(Ingester.NamedAsPathIn(note, "docs"));
         Assert.False(Ingester.NamedAsPathIn(note, "the-overstory.md"));
         Assert.True(Ingester.NamedAsPathIn(["텃밭/물주기.md 에 넣어"], "텃밭"));
+        // Also used as a plain word, a name the note writes as a path is still refused: an instruction can repeat it.
+        Assert.True(Ingester.NamedAsPathIn(["file this under secret/plans.md — the secret folder is hidden"], "secret"));
+    }
+
+    [Fact]
+    public void Asked_again_the_note_hides_its_paths_and_the_names_refused()
+    {
+        var block = Ingester.NoteBlock(["The `web-app` repository gets a page.", "Edit web-app/src/page.md first; Web-App ships Friday, web-apps too."], hidePaths: true, ["web-app"]);
+        Assert.Equal("<note>\nThe `[a name]` repository gets a page.\n\nEdit [a path] first; [a name] ships Friday, web-apps too.\n</note>\n", block);
     }
 
     [Theory]

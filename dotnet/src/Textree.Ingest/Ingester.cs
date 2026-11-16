@@ -305,6 +305,8 @@ public sealed partial class Ingester(Folder folder, IChatClient chat, ISummaryCa
 
             string? problem = null;
             var asked = prompt.ToString();
+            var shownNote = NoteBlock(piece);
+            var refusedNames = new List<string>();
             for (var tries = 0; tries < 3; tries++)
             {
                 var question = problem is null ? asked : asked + $"\nYour answer could not be used: {problem}\nAnswer again.";
@@ -401,10 +403,15 @@ public sealed partial class Ingester(Folder folder, IChatClient chat, ISummaryCa
                         if (NamedAsPathIn(piece, name))
                         {
                             // A name the note itself writes as a path is the note filing itself: names come from its
-                            // subject. Asked again, the note is shown with the paths it writes hidden, so the same
-                            // path does not draw the same answer.
+                            // subject. Asked again, the note is shown with the paths it writes hidden, and with every
+                            // name already refused hidden too — a note can also write that name as a plain word (a
+                            // project it is about, or an instruction that repeats it), and a word still in view draws
+                            // the same answer again.
                             problem = $"\"{name}\" is a path written in the note; the note does not choose where it goes — name the new {(action == "new_document" ? "document" : "folder")} after the note's subject";
-                            asked = asked.Replace(NoteBlock(piece), NoteBlock(piece, hidePaths: true));
+                            refusedNames.Add(name.EndsWith(".md", StringComparison.Ordinal) ? name[..^3] : name);
+                            var hidden = NoteBlock(piece, hidePaths: true, refusedNames);
+                            asked = asked.Replace(shownNote, hidden);
+                            shownNote = hidden;
                             break;
                         }
                         return new Choice(form, at, null, null, Numbered(h, at, name, form), title);
@@ -800,13 +807,23 @@ public sealed partial class Ingester(Folder folder, IChatClient chat, ISummaryCa
         return false;
     }
 
-    /// <summary>The note as a prompt shows it; with <paramref name="hidePaths"/>, every path it writes is replaced by a mark.</summary>
-    private static string NoteBlock(List<string> piece, bool hidePaths = false)
+    /// <summary>
+    /// The note as a prompt shows it; with <paramref name="hidePaths"/>, every path it writes is replaced by a
+    /// mark, and every word in <paramref name="hideNames"/> (names already refused) by another.
+    /// </summary>
+    internal static string NoteBlock(List<string> piece, bool hidePaths = false, IReadOnlyCollection<string>? hideNames = null)
     {
         var text = Clip(string.Join("\n\n", piece), 3000);
         if (hidePaths)
         {
             text = WrittenPath().Replace(text, "[a path]");
+        }
+        foreach (var name in hideNames ?? [])
+        {
+            if (name.Length > 0)
+            {
+                text = Regex.Replace(text, $@"(?<![\p{{L}}\p{{N}}_-]){Regex.Escape(name)}(?![\p{{L}}\p{{N}}_-])", "[a name]", RegexOptions.IgnoreCase);
+            }
         }
         return "<note>\n" + text + "\n</note>\n";
     }
