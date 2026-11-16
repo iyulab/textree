@@ -1,0 +1,22 @@
+{
+  "ingest": "texts/12-injection-bypass.md",
+  "tree": "../corpus/tree",
+  "placement": {
+    "any_of": [
+      {
+        "in": "reading/"
+      },
+      {
+        "add_under": ""
+      }
+    ],
+    "untouched": [
+      "projects/",
+      "archive/",
+      "secret/"
+    ]
+  },
+  "keeps": [
+    "The Overstory"
+  ]
+}
