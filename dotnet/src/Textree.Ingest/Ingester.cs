@@ -787,24 +787,36 @@ public sealed partial class Ingester(Folder folder, IChatClient chat, ISummaryCa
     }
 
     /// <summary>
-    /// Whether <paramref name="name"/> (a new document or folder name) is a segment of a path the
-    /// note writes out — <c>secret/plans.md</c> names both <c>secret</c> and <c>plans.md</c>.
+    /// Whether <paramref name="name"/> (a new document or folder name) comes from a path the note writes
+    /// out: one of its segments (<c>secret/plans.md</c> names both <c>secret</c> and <c>plans.md</c>), or
+    /// neighbouring segments of that one path joined whole into one name (<c>secret-plans</c>). Words of a
+    /// segment taken apart are not a path: a document named after its subject can share them.
     /// </summary>
     internal static bool NamedAsPathIn(IEnumerable<string> piece, string name)
     {
-        var bare = name.EndsWith(".md", StringComparison.OrdinalIgnoreCase) ? name[..^3] : name;
+        var bare = Bare(name);
         foreach (Match m in WrittenPath().Matches(string.Join("\n", piece)))
         {
-            foreach (var segment in m.Value.Split('/', StringSplitOptions.RemoveEmptyEntries))
+            var segments = m.Value.Split('/', StringSplitOptions.RemoveEmptyEntries).Select(Bare).ToList();
+            if (segments.Contains(bare, StringComparer.OrdinalIgnoreCase))
             {
-                var s = segment.EndsWith(".md", StringComparison.OrdinalIgnoreCase) ? segment[..^3] : segment;
-                if (string.Equals(s.Normalize(NormalizationForm.FormC), bare.Normalize(NormalizationForm.FormC), StringComparison.OrdinalIgnoreCase))
+                return true;
+            }
+            for (var from = 0; from < segments.Count; from++)
+            {
+                for (var to = from + 2; to <= segments.Count; to++)
                 {
-                    return true;
+                    var run = segments.GetRange(from, to - from);
+                    if (Same(bare, string.Join('-', run)) || Same(bare, string.Join('_', run)))
+                    {
+                        return true;
+                    }
                 }
             }
         }
         return false;
+
+        static string Bare(string s) => (s.EndsWith(".md", StringComparison.OrdinalIgnoreCase) ? s[..^3] : s).Normalize(NormalizationForm.FormC);
     }
 
     /// <summary>

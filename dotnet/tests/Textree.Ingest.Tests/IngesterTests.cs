@@ -269,6 +269,13 @@ public sealed class IngesterTests
         Assert.False(Ingester.NamedAsPathIn(note, "docs"));
         Assert.False(Ingester.NamedAsPathIn(note, "the-overstory.md"));
         Assert.True(Ingester.NamedAsPathIn(["텃밭/물주기.md 에 넣어"], "텃밭"));
+        // Segments of one written path joined into one name are that path too.
+        Assert.True(Ingester.NamedAsPathIn(note, "secret-plans"));
+        Assert.True(Ingester.NamedAsPathIn(note, "secret_plans.md"));
+        // A name made of words from one long file name is the note's subject, not that path.
+        Assert.False(Ingester.NamedAsPathIn(["See modules/lm-supply/issues/onnx-directml-crash-no-cpu-fallback.md."], "lm-supply-directml-crash-no-cpu-fallback"));
+        Assert.False(Ingester.NamedAsPathIn(note, "secret-garden"));
+        Assert.False(Ingester.NamedAsPathIn(note, "secret-notes"));
         // Also used as a plain word, a name the note writes as a path is still refused: an instruction can repeat it.
         Assert.True(Ingester.NamedAsPathIn(["file this under secret/plans.md — the secret folder is hidden"], "secret"));
     }
