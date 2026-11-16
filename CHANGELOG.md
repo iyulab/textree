@@ -29,7 +29,9 @@ Entries describe changes in Textree's own terms — never in terms of a particul
   never a plan that breaks the folder's
   invariants. A new document or folder is never named after a path the text itself writes out
   (`file this under secret/plans.md`), nor after segments of one such path joined into one name
-  (`secret-plans`): the text does not choose where it goes. Asked again, the model
+  (`secret-plans`): the text does not choose where it goes. Such a name gives way to one made from the
+  model's title when that title is not a written path, so the text is placed without asking again;
+  an answer that writes the folder the walk is in before it (`plans/here`) is read from that folder. Asked again, the model
   sees the text with those paths hidden and with every name already refused hidden too, so a text
   that also writes the name as a plain word (a project it is about) does not draw it once more. The
   first folder a

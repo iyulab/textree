@@ -366,6 +366,31 @@ public sealed class IngesterTests
     }
 
     [Fact]
+    public async Task A_name_taken_from_a_written_path_gives_way_to_the_title_without_asking_again()
+    {
+        using var s = Garden();
+        var hows = 0;
+        var chat = new ScriptedChat((prompt, _) =>
+            ScriptedChat.AsksWhere(prompt) ? """{"choice":"here"}"""
+            : ++hows > 0 ? """{"action":"new_document","name":"slice-map.md","title":"Phase one slices"}""" : "");
+        var result = await new Ingester(new Folder(s.Root), chat).IngestAsync(new IngestRequest("The plan is in slice-map.md; three slices, the second one first."), null, Ct);
+        Assert.Equal(("add_document", "phase-one-slices.md"), (Assert.Single(result.Placement).Form, result.Placement[0].Target));
+        Assert.Equal(1, hows);
+    }
+
+    [Fact]
+    public async Task An_answer_that_writes_the_folder_it_is_in_first_is_read_from_there()
+    {
+        using var s = Garden().File("garden/beds/raised.md", "# Raised beds\n\nCedar boards.\n");
+        var chat = new ScriptedChat((prompt, _) =>
+            ScriptedChat.AsksWhere(prompt) ? (prompt.Contains("You are in: the top folder") ? """{"choice":"garden"}""" : """{"choice":"garden/here"}""")
+            : """{"action":"new_document","name":"note","title":"Note"}""");
+        var result = await new Ingester(new Folder(s.Root), chat).IngestAsync(new IngestRequest("Line the beds with cardboard."), null, Ct);
+        Assert.Equal("garden/note.md", Assert.Single(result.Placement).Target);
+        Assert.Equal(0, result.Trace.UnseenCitations);
+    }
+
+    [Fact]
     public async Task Naming_the_folder_the_walk_is_in_is_staying_there()
     {
         using var s = Garden().File("garden/beds/raised.md", "# Raised beds\n\nCedar boards.\n");

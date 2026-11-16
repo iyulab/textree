@@ -400,6 +400,13 @@ public sealed partial class Ingester(Folder folder, IChatClient chat, ISummaryCa
                         }
                         trace.Steps.Add(new TraceStep(number, at, shown, answer.ToJsonString(), null));
                         var form = action == "new_document" ? "add_document" : "add_folder";
+                        if (NamedAsPathIn(piece, name) && Slug("", title) is { Length: > 0 } fromTitle
+                            && (action == "new_document" ? fromTitle + ".md" : fromTitle) is var titled && !NamedAsPathIn(piece, titled))
+                        {
+                            // The title names the subject in the model's own words: a name taken from a path
+                            // the note writes gives way to it, without asking again.
+                            name = titled;
+                        }
                         if (NamedAsPathIn(piece, name))
                         {
                             // A name the note itself writes as a path is the note filing itself: names come from its
@@ -484,6 +491,12 @@ public sealed partial class Ingester(Folder folder, IChatClient chat, ISummaryCa
                 var question = problem is null ? prompt.ToString() : prompt + $"\nYour answer could not be used: {problem}\nAnswer again.";
                 var answer = await AskAsync(question, trace, ct);
                 var choice = (answer["choice"]?.ToString() ?? answer["item"]?.ToString() ?? "").Trim().TrimEnd('/');
+                // The folder it is in, written before the answer (`plans/here`, `plans/archive`), is where it already is.
+                if (at.Length > 0 && choice.StartsWith(at + "/", StringComparison.OrdinalIgnoreCase)
+                    && !shown.Any(f => Same(f, choice)))
+                {
+                    choice = choice[(at.Length + 1)..];
+                }
                 // A path with more after it (a document's title, say) names the deepest folder listed at its start.
                 var target = Resolve(choice, shown, at) ?? DeepestListedAt(choice, shown, at);
                 // Naming the folder it is in is staying too.
