@@ -293,6 +293,9 @@ public sealed class IngesterTests
     [InlineData("garden", "here", "here", null)]
     [InlineData("garden", "kitchen", "kitchen", "kitchen")]
     [InlineData("garden", "kitchen", "here", null)]
+    [InlineData("here", "here", null, null)]
+    [InlineData("here", "garden", "garden", "garden")]
+    [InlineData("here", "garden", "here", null)]
     public async Task Going_into_a_folder_takes_two_agreeing_answers(string a, string b, string? c, string? into)
     {
         using var s = Garden().File("kitchen/bread.md", "# Bread\n\nFlour, water, salt.\n");

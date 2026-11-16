@@ -34,7 +34,7 @@ Entries describe changes in Textree's own terms — never in terms of a particul
   that also writes the name as a plain word (a project it is about) does not draw it once more. The
   first folder a
   walk goes into takes two answers that agree (a third decides when they differ, and with no
-  majority the text stays at the top), so a model that samples does not send text into another
+  majority the text stays at the top) — staying at the top takes the same agreement, so a model that samples does not send text into another
   area on one draw; deeper choices are asked once and can still go back. Titles and headings name
   the text's subject — words cut from the text are never used as a title. Each section of a document is
   shown with its first line, and a new section named like one the document already has continues

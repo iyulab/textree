@@ -505,13 +505,14 @@ public sealed partial class Ingester(Folder folder, IChatClient chat, ISummaryCa
             throw new ModelAnswerException($"the model gave no usable answer at {(at.Length == 0 ? "the top" : at + "/")}: {problem}");
         }
 
-        // Going into a folder is decided by agreement: a model that samples can pick a wrong folder
-        // now and then, and a wrong folder takes every later choice with it. A second answer that
-        // agrees settles it; otherwise a third decides by majority, and with none the note stays here.
-        // Staying is not asked twice — it keeps every folder below untouched. Only the decisions the
-        // caller marks are settled this way: each costs one more call, and calls per text must stay nearly flat as a folder grows.
+        // The walk's first decision is settled by agreement: a model that samples can pick a wrong
+        // folder now and then, and a wrong folder takes every later choice with it — so can staying at
+        // the top, which leaves the note outside every folder. A second answer that agrees settles it;
+        // otherwise a third decides by majority, and with none the note stays here. Only the decisions
+        // the caller marks are settled this way: each costs one more call, and calls per text must stay
+        // nearly flat as a folder grows.
         var first = await OneAsync();
-        if (first is null || !agree)
+        if (!agree)
         {
             return first;
         }
