@@ -39,7 +39,8 @@ Entries describe changes in Textree's own terms — never in terms of a particul
   the text's subject — words cut from the text are never used as a title. Each section of a document is
   shown with its first line, and a new section named like one the document already has continues
   that section instead of repeating its heading. A folder is chosen after the model names the text's
-  subject, and a title of four or more words found word for word in the text is asked again. Folder summaries and proposals go through ports (`ISummaryCache`, `IProposalLog`);
+  subject, and by its path as listed rather than by a number (a path with a document title after it
+  names that folder), and a title of four or more words found word for word in the text is asked again. Folder summaries and proposals go through ports (`ISummaryCache`, `IProposalLog`);
   nothing is written into the knowledge folder. No sampling values are sent unless `Sampling` sets
   them (`--llm-temperature` on the MCP server); temperature 0 makes the same question get the same
   answer.

@@ -432,9 +432,11 @@ public sealed partial class Ingester(Folder folder, IChatClient chat, ISummaryCa
         h.SubfoldersOf(at).Where(f => !leftBehind.Contains(f));
 
     /// <summary>One step of the walk: the folders below <paramref name="at"/> (two levels) or this folder itself. Null means here.</summary>
+    /// <summary>The answer that keeps a note in the folder it is in.</summary>
+    private const string Stay = "here";
+
     private async Task<string?> ChooseFolderAsync(Hierarchy h, List<string> piece, int number, string at, IReadOnlySet<string> leftBehind, bool agree, IngestTrace trace, CancellationToken ct)
     {
-        var ids = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         var shown = new List<string>();
         var prompt = new StringBuilder();
         prompt.AppendLine("You file a new note into a folder of Markdown notes, going down from the top one folder at a time. Now decide which folder the note goes into.");
@@ -455,24 +457,23 @@ public sealed partial class Ingester(Folder folder, IChatClient chat, ISummaryCa
         {
             visible.AddRange(Below(h, at, leftBehind).Take(FolderLines));
         }
-        var n = 0;
         var depthOf = (string f) => f.Count(c => c == '/') - (at.Length == 0 ? 0 : at.Count(c => c == '/') + 1);
         foreach (var f in visible.OrderBy(f => f, StringComparer.Ordinal))
         {
-            var id = $"F{++n}";
-            ids[id] = f;
+            // Folders are named by their paths, not by numbers: a model that samples can slip from one
+            // number to the next while meaning the other folder, and a path carries what it means.
             shown.Add(f);
             var relative = at.Length == 0 ? f : f[(at.Length + 1)..];
-            prompt.AppendLine($"{new string(' ', 3 * depthOf(f))}{id}. {Show(relative)}/ — {Summary(h, f)}");
+            prompt.AppendLine($"{new string(' ', 3 * depthOf(f))}- {Show(relative)}/ — {Summary(h, f)}");
         }
         var here = h.DocumentsIn(at);
         var hereTitles = here.Select(d => Clip(Show(d.Title), 50)).Take(8).ToList();
         var hereList = hereTitles.Count > 0 ? ": " + string.Join("; ", hereTitles) + (here.Count > hereTitles.Count ? "; …" : "") : "";
-        prompt.AppendLine($"H. this folder itself — {here.Count} document{(here.Count == 1 ? "" : "s")} directly in it{hereList}");
+        prompt.AppendLine($"- {Stay} — this folder itself: {here.Count} document{(here.Count == 1 ? "" : "s")} directly in it{hereList}");
         prompt.AppendLine();
         // Naming the subject before choosing steadies a model that samples: on a small test folder it cut wrong top-folder
         // answers from 16 in 150 to 5 in 150.
-        prompt.AppendLine("Answer with JSON only: {\"subject\": \"<what the note is about, in a few words>\", \"choice\": \"F<n>\"} to go into that folder (any listed, at any depth), or with \"choice\": \"H\" to stay here. Name the subject first, then choose.");
+        prompt.AppendLine($"Answer with JSON only: {{\"subject\": \"<what the note is about, in a few words>\", \"choice\": \"<a folder's path exactly as listed>\"}} to go into that folder (any listed, at any depth), or with \"choice\": \"{Stay}\" to stay here. Name the subject first, then choose.");
         prompt.AppendLine("Go into a folder when the note is the kind of thing that folder holds — judge by its documents, not only its name. A folder that is only near the note's subject is not a fit: if no folder below is about the note's subject, stay here.");
         // One usable answer: a folder shown, or null for here.
         async Task<string?> OneAsync()
@@ -482,19 +483,20 @@ public sealed partial class Ingester(Folder folder, IChatClient chat, ISummaryCa
             {
                 var question = problem is null ? prompt.ToString() : prompt + $"\nYour answer could not be used: {problem}\nAnswer again.";
                 var answer = await AskAsync(question, trace, ct);
-                var choice = (answer["choice"]?.ToString() ?? answer["item"]?.ToString() ?? "").Trim().TrimEnd('.', '/');
-                if (string.Equals(choice, "H", StringComparison.OrdinalIgnoreCase))
+                var choice = (answer["choice"]?.ToString() ?? answer["item"]?.ToString() ?? "").Trim().TrimEnd('/');
+                // A path with more after it (a document's title, say) names the deepest folder listed at its start.
+                var target = Resolve(choice, shown, at) ?? DeepestListedAt(choice, shown, at);
+                if (target is null && string.Equals(choice, Stay, StringComparison.OrdinalIgnoreCase))
                 {
                     trace.Steps.Add(new TraceStep(number, at, shown, answer.ToJsonString(), null));
                     return null;
                 }
-                var target = ids.TryGetValue(choice, out var byId) ? byId : Resolve(choice, shown, at);
                 if (target is not null)
                 {
                     trace.Steps.Add(new TraceStep(number, at, shown, answer.ToJsonString(), null));
                     return target;
                 }
-                problem = "\"choice\" must be H or the number of one of the folders shown (F1, F2, …)";
+                problem = $"\"choice\" must be {Stay} or the path of one of the folders shown, exactly as listed";
                 trace.UnseenCitations++;
                 trace.Steps.Add(new TraceStep(number, at, shown, answer.ToJsonString(), problem));
             }
@@ -555,6 +557,14 @@ public sealed partial class Ingester(Folder folder, IChatClient chat, ISummaryCa
         var byName = shown.Where(s => Same(Hierarchy.NameOf(s), answer)).ToList();
         return byName.Count == 1 ? byName[0] : null;
     }
+
+    /// <summary>The deepest shown folder whose path, from <paramref name="at"/>, starts the answer followed by a slash.</summary>
+    internal static string? DeepestListedAt(string answer, IReadOnlyList<string> shown, string at) =>
+        shown
+            .Where(f => (at.Length == 0 ? f : f[(at.Length + 1)..]) is var relative
+                && answer.Normalize(NormalizationForm.FormC).StartsWith(relative.Normalize(NormalizationForm.FormC) + "/", StringComparison.OrdinalIgnoreCase))
+            .OrderByDescending(f => f.Length)
+            .FirstOrDefault();
 
     private static bool Same(string a, string b) =>
         string.Equals(a.Normalize(NormalizationForm.FormC).Trim(), b.Normalize(NormalizationForm.FormC).Trim(), StringComparison.OrdinalIgnoreCase);
