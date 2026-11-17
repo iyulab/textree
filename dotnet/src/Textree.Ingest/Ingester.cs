@@ -491,17 +491,8 @@ public sealed partial class Ingester(Folder folder, IChatClient chat, ISummaryCa
                 var question = problem is null ? prompt.ToString() : prompt + $"\nYour answer could not be used: {problem}\nAnswer again.";
                 var answer = await AskAsync(question, trace, ct);
                 var choice = (answer["choice"]?.ToString() ?? answer["item"]?.ToString() ?? "").Trim().TrimEnd('/');
-                // The folder it is in, written before the answer (`plans/here`, `plans/archive`), is where it already is.
-                if (at.Length > 0 && choice.StartsWith(at + "/", StringComparison.OrdinalIgnoreCase)
-                    && !shown.Any(f => Same(f, choice)))
-                {
-                    choice = choice[(at.Length + 1)..];
-                }
-                // A path with more after it (a document's title, say) names the deepest folder listed at its start.
-                var target = Resolve(choice, shown, at) ?? DeepestListedAt(choice, shown, at);
-                // Naming the folder it is in is staying too.
-                if (target is null && (string.Equals(choice, Stay, StringComparison.OrdinalIgnoreCase)
-                    || (at.Length > 0 && (Same(choice, at) || Same(choice, Hierarchy.NameOf(at))))))
+                var (stay, target) = ReadChoice(choice, shown, at);
+                if (stay)
                 {
                     trace.Steps.Add(new TraceStep(number, at, shown, answer.ToJsonString(), null));
                     return null;
@@ -572,6 +563,50 @@ public sealed partial class Ingester(Folder folder, IChatClient chat, ISummaryCa
         }
         var byName = shown.Where(s => Same(Hierarchy.NameOf(s), answer)).ToList();
         return byName.Count == 1 ? byName[0] : null;
+    }
+
+    /// <summary>
+    /// What a folder answer names: a shown folder to go into, staying here, or neither. The answer is read as
+    /// listed first — a shown path, or one with more after it (a document's title) — and only when that names
+    /// nothing, again with the folder it is in written before it (`plans/here`, or the last part of that path
+    /// as seen from its parent, `workshop/costs` in `tools/workshop`) taken off. A folder holding one of the
+    /// same name (`family/family`) is why the reading as listed comes first: `family/…` there is the folder below.
+    /// </summary>
+    internal static (bool Stay, string? Target) ReadChoice(string choice, IReadOnlyList<string> shown, string at)
+    {
+        var readings = Readings(choice, at).ToList();
+        foreach (var reading in readings)
+        {
+            if ((Resolve(reading, shown, at) ?? DeepestListedAt(reading, shown, at)) is { } target)
+            {
+                return (false, target);
+            }
+        }
+        // Naming the folder it is in is staying too, and so is staying with one of its documents after it
+        // (`here/Glossary`) — the documents directly here are listed on that line.
+        var stays = readings.Any(r => Same(r, Stay) || r.StartsWith(Stay + "/", StringComparison.OrdinalIgnoreCase)
+            || (at.Length > 0 && (Same(r, at) || Same(r, Hierarchy.NameOf(at)))));
+        return (stays, null);
+    }
+
+    /// <summary>The answer as written, then with each written tail of <paramref name="at"/> taken off its start, longest first.</summary>
+    private static IEnumerable<string> Readings(string choice, string at)
+    {
+        var written = choice.Normalize(NormalizationForm.FormC);
+        yield return written;
+        if (at.Length == 0)
+        {
+            yield break;
+        }
+        var parts = at.Normalize(NormalizationForm.FormC).Split('/');
+        for (var k = parts.Length; k >= 1; k--)
+        {
+            var prefix = string.Join('/', parts[^k..]) + "/";
+            if (written.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            {
+                yield return written[prefix.Length..];
+            }
+        }
     }
 
     /// <summary>The deepest shown folder whose path, from <paramref name="at"/>, starts the answer followed by a slash.</summary>

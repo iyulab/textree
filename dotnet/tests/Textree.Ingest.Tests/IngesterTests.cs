@@ -403,6 +403,44 @@ public sealed class IngesterTests
     }
 
     [Fact]
+    public void In_a_folder_holding_one_of_the_same_name_an_answer_is_read_as_listed_first()
+    {
+        // In family/, the listed family/ is the folder below: a title after it names that folder.
+        string[] below = ["family/family", "family/trips"];
+        Assert.Equal((false, "family/family"), Ingester.ReadChoice("family/Family family costs 1", below, "family"));
+        Assert.Equal((false, "family/family"), Ingester.ReadChoice("family", below, "family"));
+        Assert.Equal((false, "family/trips"), Ingester.ReadChoice("family/trips", below, "family"));
+        // Written from the top, the full path still names it.
+        Assert.Equal((false, "family/family"), Ingester.ReadChoice("family/family", below, "family"));
+        Assert.Equal((true, null), Ingester.ReadChoice("here", below, "family"));
+        // The listed family/ and "here" after it: that folder, as with any listed path and more after it.
+        Assert.Equal((false, "family/family"), Ingester.ReadChoice("family/here", below, "family"));
+        // Without one of the same name below, the same answer is staying.
+        Assert.Equal((true, null), Ingester.ReadChoice("family/here", ["family/trips"], "family"));
+    }
+
+    [Fact]
+    public void Staying_with_a_document_title_after_it_is_staying()
+    {
+        string[] below = ["textree", "textree/eval"];
+        Assert.Equal((true, null), Ingester.ReadChoice("here/Glossary — terms in this project", below, ""));
+        Assert.Equal((true, null), Ingester.ReadChoice("HERE/Glossary", below, ""));
+        Assert.Equal((true, null), Ingester.ReadChoice("textree/here/Eval notes", ["textree/eval"], "textree"));
+        Assert.Equal((false, "textree"), Ingester.ReadChoice("textree/", below, ""));
+    }
+
+    [Fact]
+    public void An_answer_written_from_the_parent_folder_is_read_from_the_folder_it_is_in()
+    {
+        string[] below = ["workshop/workshop/costs", "workshop/workshop/tools"];
+        Assert.Equal((false, "workshop/workshop/costs"), Ingester.ReadChoice("workshop/costs", below, "workshop/workshop"));
+        Assert.Equal((false, "workshop/workshop/costs"), Ingester.ReadChoice("workshop/workshop/costs", below, "workshop/workshop"));
+        Assert.Equal((false, "workshop/workshop/tools"), Ingester.ReadChoice("tools", below, "workshop/workshop"));
+        Assert.Equal((true, null), Ingester.ReadChoice("workshop", below, "workshop/workshop"));
+        Assert.Equal((false, null), Ingester.ReadChoice("garden/costs", below, "workshop/workshop"));
+    }
+
+    [Fact]
     public void A_folder_path_with_more_after_it_names_the_deepest_folder_listed_at_its_start()
     {
         string[] shown = ["projects", "projects/garden", "reading"];
