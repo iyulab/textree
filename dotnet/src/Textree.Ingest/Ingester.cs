@@ -474,8 +474,7 @@ public sealed partial class Ingester(Folder folder, IChatClient chat, ISummaryCa
             prompt.AppendLine($"{new string(' ', 3 * depthOf(f))}- {Show(relative)}/ — {Summary(h, f)}");
         }
         var here = h.DocumentsIn(at);
-        var hereTitles = here.Select(d => Clip(Show(d.Title), 50)).Take(8).ToList();
-        var hereList = hereTitles.Count > 0 ? ": " + string.Join("; ", hereTitles) + (here.Count > hereTitles.Count ? "; …" : "") : "";
+        var hereList = here.Count > 0 ? ": " + Kinds(here, HereEntries) : "";
         prompt.AppendLine($"- {Stay} — this folder itself: {here.Count} document{(here.Count == 1 ? "" : "s")} directly in it{hereList}");
         prompt.AppendLine();
         // Naming the subject before choosing steadies a model that samples: on a small test folder it cut wrong top-folder
@@ -946,24 +945,83 @@ public sealed partial class Ingester(Folder folder, IChatClient chat, ISummaryCa
         }
         var docs = h.DocumentsUnder(folder).ToList();
         var own = h.FolderDocument(folder);
-        var titles = docs.Select(d => Show(d.Title)).Distinct().Take(6).ToList();
         var sb = new StringBuilder();
         if (own is not null && Lead(own) is { Length: > 0 } lead)
         {
             sb.Append(Clip(Show(lead), 140)).Append(" ");
         }
         sb.Append($"{docs.Count} document{(docs.Count == 1 ? "" : "s")}");
-        if (titles.Count > 0)
+        if (docs.Count > 0)
         {
-            sb.Append(": ").Append(string.Join("; ", titles.Select(t => Clip(t, 50))));
-            if (docs.Count > titles.Count)
-            {
-                sb.Append("; …");
-            }
+            // The same reading as the line for the folder itself: kinds with their counts, not the first few by path.
+            sb.Append(": ").Append(Kinds(docs.Where(d => d.Path != own?.Path).ToList() is { Count: > 0 } rest ? rest : docs, FolderEntries));
         }
         var summary = sb.ToString();
         _summaries.Set(folder, version, summary);
         return summary;
+    }
+
+    /// <summary>How many entries the line for the folder itself gives.</summary>
+    private const int HereEntries = 10;
+
+    /// <summary>How many entries a folder's line in the list of folders gives.</summary>
+    private const int FolderEntries = 6;
+
+    /// <summary>
+    /// What the documents directly in a folder are, in a few entries. Documents whose file names start
+    /// with the same word are one entry with their count (a folder that keeps its reports loose shows
+    /// <c>4 named trip-report-…</c>), the biggest kinds first, then single titles. The first few by path
+    /// would hide whatever sorts late, and a kind of document the folder keeps many of is what tells a
+    /// new one of that kind to stay.
+    /// </summary>
+    internal static string Kinds(IReadOnlyList<Doc> docs, int entries)
+    {
+        var groups = docs
+            .GroupBy(d => FirstWord(d.Name), StringComparer.OrdinalIgnoreCase)
+            .Select(g => g.OrderBy(d => d.Path, StringComparer.Ordinal).ToList())
+            .OrderByDescending(g => g.Count)
+            .ThenBy(g => g[0].Path, StringComparer.Ordinal)
+            .ToList();
+        var parts = new List<string>();
+        foreach (var g in groups.Take(entries))
+        {
+            parts.Add(g.Count == 1
+                ? Clip(Show(g[0].Title), 50)
+                : $"{g.Count} named {Show(CommonStem(g))}… (\"{Clip(Show(g[0].Title), 50)}\", \"{Clip(Show(g[^1].Title), 50)}\")");
+        }
+        return string.Join("; ", parts) + (groups.Count > entries ? "; …" : "");
+    }
+
+    private static readonly char[] NameSeparators = ['-', '_', ' ', '.'];
+
+    private static string Stem(string name) => name.EndsWith(".md", StringComparison.OrdinalIgnoreCase) ? name[..^3] : name;
+
+    /// <summary>A file name's first word: up to the first separator, or the whole name without <c>.md</c>.</summary>
+    private static string FirstWord(string name)
+    {
+        var stem = Stem(name);
+        var cut = stem.IndexOfAny(NameSeparators);
+        return cut > 0 ? stem[..cut] : stem;
+    }
+
+    /// <summary>What the file names of a group share, cut back to a word boundary and ending in a separator.</summary>
+    private static string CommonStem(IReadOnlyList<Doc> group)
+    {
+        var first = Stem(group[0].Name);
+        var length = first.Length;
+        foreach (var d in group.Skip(1))
+        {
+            var other = Stem(d.Name);
+            var i = 0;
+            while (i < length && i < other.Length && char.ToLowerInvariant(first[i]) == char.ToLowerInvariant(other[i]))
+            {
+                i++;
+            }
+            length = i;
+        }
+        var shared = first[..length];
+        var boundary = shared.LastIndexOfAny(NameSeparators);
+        return boundary > 0 ? shared[..(boundary + 1)] : FirstWord(group[0].Name) + "-";
     }
 
     private static string Clip(string s, int max) => s.Length <= max ? s : s[..max] + "…";

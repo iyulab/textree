@@ -1,0 +1,21 @@
+{
+  "ingest": "texts/13-loose-at-top.md",
+  "tree": "tree-loose",
+  "placement": {
+    "any_of": [
+      {
+        "add_under": ""
+      }
+    ],
+    "untouched": [
+      "trips/",
+      "work/",
+      "garden/",
+      "recipes/"
+    ]
+  },
+  "keeps": [
+    "Douro valley",
+    "quieter than the Ribeira"
+  ]
+}

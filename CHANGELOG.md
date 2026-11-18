@@ -42,7 +42,9 @@ Entries describe changes in Textree's own terms — never in terms of a particul
   shown with its first line, and a new section named like one the document already has continues
   that section instead of repeating its heading. A folder is chosen after the model names the text's
   subject, and by its path as listed rather than by a number (a path with a document title after it
-  names that folder), and a title of four or more words found word for word in the text is asked again. Folder summaries and proposals go through ports (`ISummaryCache`, `IProposalLog`);
+  names that folder), and a title of four or more words found word for word in the text is asked again. The documents in a folder are
+  shown by kind — grouped by the first word of their file names, the biggest groups first, each group with its count and its
+  first and last titles — rather than as the first few by path, so a kind a folder keeps many of is seen however its names sort. Folder summaries and proposals go through ports (`ISummaryCache`, `IProposalLog`);
   nothing is written into the knowledge folder. No sampling values are sent unless `Sampling` sets
   them (`--llm-temperature` on the MCP server); temperature 0 makes the same question get the same
   answer.

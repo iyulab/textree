@@ -1,0 +1,1 @@
+Four days in Porto, September 2026. The riverside was lovely in the evening but crowded at lunch, so we ate up the hill instead. The train to the Douro valley was the best day of the trip; the port cellar tour felt rushed. Next time: book the valley train earlier and stay somewhere quieter than the Ribeira.

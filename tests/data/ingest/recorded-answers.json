@@ -1,16 +1,30 @@
 {
-  "0541df34fe926fa7fe3385f35885f88f": [
+  "1cc9c4cdd3f874ec15471f614152725e": [
     {
-      "text": "{\n\u0022subject\u0022: \u0022book review\u0022,\n\u0022choice\u0022: \u0022\uB3C5\uC11C/\u0022\n}",
-      "input": 356,
+      "text": "{\n\u0022subject\u0022: \u0022system maintenance instructions\u0022,\n\u0022choice\u0022: \u0022here\u0022\n}",
+      "input": 413,
       "output": 20,
-      "seconds": 2.153
+      "seconds": 1.037
     },
     {
-      "text": "{\n\u0022subject\u0022: \u0022book review\u0022,\n\u0022choice\u0022: \u0022\uB3C5\uC11C/\u0022\n}",
-      "input": 356,
+      "text": "{\n\u0022subject\u0022: \u0022system maintenance instructions\u0022,\n\u0022choice\u0022: \u0022here\u0022\n}",
+      "input": 413,
       "output": 20,
-      "seconds": 0.966
+      "seconds": 0.567
+    }
+  ],
+  "2118afe7e629b0d74c2c76da4814b366": [
+    {
+      "text": "{\n\u0022subject\u0022: \u0022drip irrigation schedule\u0022,\n\u0022choice\u0022: \u0022projects/garden/\u0022\n}",
+      "input": 437,
+      "output": 23,
+      "seconds": 1.904
+    },
+    {
+      "text": "{\n\u0022subject\u0022: \u0022drip irrigation schedule\u0022,\n\u0022choice\u0022: \u0022projects/garden/\u0022\n}",
+      "input": 437,
+      "output": 23,
+      "seconds": 0.631
     }
   ],
   "2ca62de1d2ed0480ef7af6d90fe88cde": [
@@ -18,87 +32,151 @@
       "text": "{\n\u0022action\u0022: \u0022add_to_section\u0022,\n\u0022item\u0022: \u0022D1\u0022,\n\u0022section\u0022: \u0022\uC77C\uC815\u0022\n}",
       "input": 600,
       "output": 29,
-      "seconds": 46.848
+      "seconds": 2.444
     }
   ],
-  "42c91a5b4eac3ec5d0c49f8af3ab356a": [
+  "353fcc657584832816f5e8b964eb7506": [
+    {
+      "text": "{\n\u0022subject\u0022: \u0022Composting plan\u0022,\n\u0022choice\u0022: \u0022projects/garden/\u0022\n}",
+      "input": 515,
+      "output": 22,
+      "seconds": 2.215
+    },
+    {
+      "text": "{\n\u0022subject\u0022: \u0022Composting plan\u0022,\n\u0022choice\u0022: \u0022projects/garden/\u0022\n}",
+      "input": 515,
+      "output": 22,
+      "seconds": 0.639
+    }
+  ],
+  "3b19ce8514c4b1d68b6be765d294e1ef": [
+    {
+      "text": "{\n\u0022subject\u0022: \u0022watering schedule update\u0022,\n\u0022choice\u0022: \u0022projects/garden/\u0022\n}",
+      "input": 427,
+      "output": 23,
+      "seconds": 2.072
+    },
+    {
+      "text": "{\n\u0022subject\u0022: \u0022watering schedule update\u0022,\n\u0022choice\u0022: \u0022projects/garden/\u0022\n}",
+      "input": 427,
+      "output": 23,
+      "seconds": 0.633
+    }
+  ],
+  "3f9fe5578580b32fc7e7b2ff41f2a0da": [
     {
       "text": "{\n\u0022subject\u0022: \u0022Reading The Overstory\u0022,\n\u0022choice\u0022: \u0022reading/\u0022\n}",
-      "input": 437,
+      "input": 433,
       "output": 21,
-      "seconds": 2.16
+      "seconds": 1.079
     },
     {
       "text": "{\n\u0022subject\u0022: \u0022Reading The Overstory\u0022,\n\u0022choice\u0022: \u0022reading/\u0022\n}",
-      "input": 437,
+      "input": 433,
       "output": 21,
-      "seconds": 6.151
+      "seconds": 0.556
     }
   ],
   "539569a5972e8b838ba56e0ea8035cc1": [
     {
-      "text": "{\n  \u0022action\u0022: \u0022add_to_section\u0022,\n  \u0022item\u0022: \u0022D3\u0022,\n  \u0022section\u0022: \u0022Schedule\u0022\n}",
+      "text": "{\n  \u0022action\u0022: \u0022append\u0022,\n  \u0022item\u0022: \u0022D3\u0022,\n  \u0022heading\u0022: \u0022Schedule\u0022\n}",
       "input": 570,
-      "output": 31,
-      "seconds": 48.496
+      "output": 29,
+      "seconds": 2.059
+    }
+  ],
+  "58b4b7fdb1c8f7fb0d98badc55ac3896": [
+    {
+      "text": "{\n\u0022subject\u0022: \u0022Reading The Overstory\u0022,\n\u0022choice\u0022: \u0022reading/\u0022\n}",
+      "input": 432,
+      "output": 21,
+      "seconds": 1.634
+    },
+    {
+      "text": "{\n\u0022subject\u0022: \u0022Reading The Overstory\u0022,\n\u0022choice\u0022: \u0022reading/\u0022\n}",
+      "input": 432,
+      "output": 21,
+      "seconds": 0.582
+    }
+  ],
+  "5a6f4b2f50b6997ee7cb193089425e14": [
+    {
+      "text": "{\n\u0022action\u0022: \u0022new_document\u0022,\n\u0022name\u0022: \u0022trip-report-2026-porto.md\u0022,\n\u0022title\u0022: \u0022Trip report: Porto, September 2026\u0022\n}",
+      "input": 1030,
+      "output": 43,
+      "seconds": 3.516
+    }
+  ],
+  "66e3c6b985e441c213ee05abb3c76165": [
+    {
+      "text": "{\n\u0022subject\u0022: \u0022Soil test result for raised beds\u0022,\n\u0022choice\u0022: \u0022projects/garden/\u0022\n}",
+      "input": 411,
+      "output": 26,
+      "seconds": 1.412
+    },
+    {
+      "text": "{\n\u0022subject\u0022: \u0022Soil test result for raised beds\u0022,\n\u0022choice\u0022: \u0022projects/garden/\u0022\n}",
+      "input": 411,
+      "output": 26,
+      "seconds": 0.728
     }
   ],
   "69010a7bf17966e199da59062e85e22e": [
     {
-      "text": "{\u0022groups\u0022: [[1], [2]]}",
+      "text": "{\n\u0022groups\u0022: [\n[1],\n[2]\n]\n}",
       "input": 308,
-      "output": 11,
-      "seconds": 1.563
+      "output": 19,
+      "seconds": 1.659
     }
   ],
-  "6c12103256487d4c6f42b7c4bf89e7b3": [
+  "6d3c7cbeac50b6a958e07d08b3b2e755": [
     {
-      "text": "{\n\u0022subject\u0022: \u0022soil test results\u0022,\n\u0022choice\u0022: \u0022projects/garden/\u0022\n}",
-      "input": 415,
-      "output": 23,
-      "seconds": 23.78
+      "text": "{\n\u0022subject\u0022: \u0022Sourdough starter\u0022,\n\u0022choice\u0022: \u0022here\u0022\n}",
+      "input": 431,
+      "output": 21,
+      "seconds": 1.818
     },
     {
-      "text": "{\n\u0022subject\u0022: \u0022soil test results\u0022,\n\u0022choice\u0022: \u0022projects/garden/\u0022\n}",
-      "input": 415,
-      "output": 23,
-      "seconds": 25.188
+      "text": "{\n\u0022subject\u0022: \u0022Sourdough starter\u0022,\n\u0022choice\u0022: \u0022here\u0022\n}",
+      "input": 431,
+      "output": 21,
+      "seconds": 0.556
     }
   ],
-  "7bde2c1a9626fe8cf4a3c5515aafa347": [
+  "831df0b80775636442acf1ac96d0b0c4": [
     {
-      "text": "{\n\u0022subject\u0022: \u0022Composting plan\u0022,\n\u0022choice\u0022: \u0022projects/garden/\u0022\n}",
-      "input": 519,
-      "output": 22,
-      "seconds": 2.884
+      "text": "{\n\u0022subject\u0022: \u0022book review\u0022,\n\u0022choice\u0022: \u0022\uB3C5\uC11C/\u0022\n}",
+      "input": 352,
+      "output": 20,
+      "seconds": 2.084
     },
     {
-      "text": "{\n\u0022subject\u0022: \u0022Composting plan\u0022,\n\u0022choice\u0022: \u0022projects/garden/\u0022\n}",
-      "input": 519,
-      "output": 22,
-      "seconds": 1.13
+      "text": "{\n\u0022subject\u0022: \u0022book review\u0022,\n\u0022choice\u0022: \u0022\uB3C5\uC11C/\u0022\n}",
+      "input": 352,
+      "output": 20,
+      "seconds": 0.594
     }
   ],
   "89351ccaf03348cd36fc31749a19b7b1": [
     {
-      "text": "{\n\u0022action\u0022: \u0022append\u0022,\n\u0022item\u0022: \u0022D3\u0022,\n\u0022heading\u0022: \u0022Drip line schedule\u0022\n}",
+      "text": "{\n\u0022action\u0022: \u0022append\u0022,\n\u0022item\u0022: \u0022D3\u0022,\n\u0022heading\u0022: \u0022Drip Line Schedule\u0022\n}",
       "input": 601,
       "output": 29,
-      "seconds": 46.242
+      "seconds": 1.908
     }
   ],
-  "90859db95c30b87bdb041fe5f86dd4b1": [
+  "9052f03179d016255ffb88ebde026684": [
     {
-      "text": "{\n\u0022subject\u0022: \u0022Watering schedule update\u0022,\n\u0022choice\u0022: \u0022projects/garden/\u0022\n}",
-      "input": 431,
+      "text": "{\n\u0022subject\u0022: \u0022Book Review: Four Thousand Weeks\u0022,\n\u0022choice\u0022: \u0022reading/\u0022\n}",
+      "input": 422,
       "output": 23,
-      "seconds": 2.69
+      "seconds": 2.124
     },
     {
-      "text": "{\n\u0022subject\u0022: \u0022Watering schedule update\u0022,\n\u0022choice\u0022: \u0022projects/garden/\u0022\n}",
-      "input": 431,
+      "text": "{\n\u0022subject\u0022: \u0022Book Review: Four Thousand Weeks\u0022,\n\u0022choice\u0022: \u0022reading/\u0022\n}",
+      "input": 422,
       "output": 23,
-      "seconds": 46.898
+      "seconds": 0.621
     }
   ],
   "97965b30e5319e1700398a779c6ab2c6": [
@@ -106,7 +184,35 @@
       "text": "{\n\u0022groups\u0022: [\n[1],\n[2]\n]\n}",
       "input": 286,
       "output": 19,
-      "seconds": 2.363
+      "seconds": 1.769
+    }
+  ],
+  "9adabd2cd7d9ea3f002ab5061004a11b": [
+    {
+      "text": "{\n\u0022subject\u0022: \u0022drip irrigation hose and watering schedule\u0022,\n\u0022choice\u0022: \u0022\uD143\uBC2D/\u0022\n}",
+      "input": 375,
+      "output": 26,
+      "seconds": 2.249
+    },
+    {
+      "text": "{\n\u0022subject\u0022: \u0022drip irrigation hose and watering schedule\u0022,\n\u0022choice\u0022: \u0022\uD143\uBC2D/\u0022\n}",
+      "input": 375,
+      "output": 26,
+      "seconds": 0.728
+    }
+  ],
+  "9b3af2516324dd3be586031410159323": [
+    {
+      "text": "{\n\u0022subject\u0022: \u0022tomato watering schedule\u0022,\n\u0022choice\u0022: \u0022projects/garden/\u0022\n}",
+      "input": 423,
+      "output": 23,
+      "seconds": 1.714
+    },
+    {
+      "text": "{\n\u0022subject\u0022: \u0022tomato watering schedule\u0022,\n\u0022choice\u0022: \u0022projects/garden/\u0022\n}",
+      "input": 423,
+      "output": 23,
+      "seconds": 0.644
     }
   ],
   "9b6d70726c1176858999a3ec9d04ce6c": [
@@ -114,7 +220,7 @@
       "text": "{\n\u0022action\u0022: \u0022append\u0022,\n\u0022item\u0022: \u0022D1\u0022,\n\u0022heading\u0022: \u0022Four Thousand Weeks\u0022\n}",
       "input": 549,
       "output": 28,
-      "seconds": 10.012
+      "seconds": 2.093
     }
   ],
   "a2c3004e38f2352d646c22220827298b": [
@@ -122,35 +228,7 @@
       "text": "{\n\u0022action\u0022: \u0022append\u0022,\n\u0022item\u0022: \u0022D2\u0022,\n\u0022heading\u0022: \u0022Soil Test Results and Amendments\u0022\n}",
       "input": 575,
       "output": 31,
-      "seconds": 3.277
-    }
-  ],
-  "a34f4d82ca26c34685cf13856a54fc7a": [
-    {
-      "text": "{\n\u0022subject\u0022: \u0022Garden watering schedule\u0022,\n\u0022choice\u0022: \u0022projects/garden/\u0022\n}",
-      "input": 410,
-      "output": 23,
-      "seconds": 8.562
-    },
-    {
-      "text": "{\n\u0022subject\u0022: \u0022Garden watering schedule\u0022,\n\u0022choice\u0022: \u0022projects/garden/\u0022\n}",
-      "input": 410,
-      "output": 23,
-      "seconds": 1.474
-    }
-  ],
-  "b00e4df39f5175fa23dfde7c65ba8b22": [
-    {
-      "text": "{\n\u0022subject\u0022: \u0022Book Review: Four Thousand Weeks\u0022,\n\u0022choice\u0022: \u0022reading/\u0022\n}",
-      "input": 426,
-      "output": 23,
-      "seconds": 2.962
-    },
-    {
-      "text": "{\n\u0022subject\u0022: \u0022Book Review: Four Thousand Weeks\u0022,\n\u0022choice\u0022: \u0022reading/\u0022\n}",
-      "input": 426,
-      "output": 23,
-      "seconds": 8.76
+      "seconds": 2.16
     }
   ],
   "b777144e2d185df59b4e12809ef421bb": [
@@ -158,79 +236,37 @@
       "text": "{\n\u0022action\u0022: \u0022append\u0022,\n\u0022item\u0022: \u0022D3\u0022,\n\u0022heading\u0022: \u0022Soaker Hose\u0022\n}",
       "input": 587,
       "output": 28,
-      "seconds": 37.281
-    }
-  ],
-  "b8dc7c4eeed341e37284f1839b31002e": [
-    {
-      "text": "{\n\u0022subject\u0022: \u0022Sourdough starter\u0022,\n\u0022choice\u0022: \u0022here\u0022\n}",
-      "input": 435,
-      "output": 21,
-      "seconds": 4.04
-    },
-    {
-      "text": "{\n\u0022subject\u0022: \u0022Sourdough starter\u0022,\n\u0022choice\u0022: \u0022here\u0022\n}",
-      "input": 435,
-      "output": 21,
-      "seconds": 1.451
-    }
-  ],
-  "b99cc897c9eb521531af91bf3cb88e15": [
-    {
-      "text": "{\n\u0022subject\u0022: \u0022Reading The Overstory\u0022,\n\u0022choice\u0022: \u0022reading/\u0022\n}",
-      "input": 436,
-      "output": 21,
-      "seconds": 8.682
-    },
-    {
-      "text": "{\n\u0022subject\u0022: \u0022Reading The Overstory\u0022,\n\u0022choice\u0022: \u0022reading/\u0022\n}",
-      "input": 436,
-      "output": 21,
-      "seconds": 1.351
+      "seconds": 1.839
     }
   ],
   "bc49a488bfb598dc0fb828cc204ec4c0": [
     {
-      "text": "{\n\u0022action\u0022: \u0022add_to_section\u0022,\n\u0022item\u0022: \u0022D3\u0022,\n\u0022section\u0022: \u0022Schedule\u0022\n}",
+      "text": "{\n\u0022action\u0022: \u0022append\u0022,\n\u0022item\u0022: \u0022D3\u0022,\n\u0022heading\u0022: \u0022June Schedule\u0022\n}",
       "input": 591,
+      "output": 27,
+      "seconds": 1.705
+    }
+  ],
+  "c6fbdd0e65b9a48e37f5887cf6b09bc0": [
+    {
+      "text": "{\n\u0022subject\u0022: \u0022Trip report: Porto, September 2026\u0022,\n\u0022choice\u0022: \u0022here\u0022\n}",
+      "input": 600,
       "output": 28,
-      "seconds": 3.022
-    }
-  ],
-  "c6c8a0c4a1468ab7cbf7441edfaef483": [
-    {
-      "text": "{\n\u0022subject\u0022: \u0022system maintenance instructions\u0022,\n\u0022choice\u0022: \u0022here\u0022\n}",
-      "input": 417,
-      "output": 20,
-      "seconds": 7.918
+      "seconds": 1.555
     },
     {
-      "text": "{\n\u0022subject\u0022: \u0022system maintenance instructions\u0022,\n\u0022choice\u0022: \u0022here\u0022\n}",
-      "input": 417,
-      "output": 20,
-      "seconds": 6.873
-    }
-  ],
-  "cbf6acdcbc3d62602883beb75b8a61d9": [
-    {
-      "text": "{\n\u0022subject\u0022: \u0022tomato watering schedule\u0022,\n\u0022choice\u0022: \u0022projects/garden/\u0022\n}",
-      "input": 427,
-      "output": 23,
-      "seconds": 2.67
-    },
-    {
-      "text": "{\n\u0022subject\u0022: \u0022tomato watering schedule\u0022,\n\u0022choice\u0022: \u0022projects/garden/\u0022\n}",
-      "input": 427,
-      "output": 23,
-      "seconds": 13.493
+      "text": "{\n\u0022subject\u0022: \u0022Trip report: Porto, September 2026\u0022,\n\u0022choice\u0022: \u0022here\u0022\n}",
+      "input": 600,
+      "output": 28,
+      "seconds": 0.745
     }
   ],
   "cd0e8245db6f21d90e2a3c919d0b4748": [
     {
-      "text": "{\n\u0022action\u0022: \u0022new_document\u0022,\n\u0022name\u0022: \u0022ignore-instructions\u0022,\n\u0022title\u0022: \u0022Ignore instructions\u0022\n}",
+      "text": "{\n\u0022action\u0022: \u0022new_document\u0022,\n\u0022name\u0022: \u0022ignore-instructions\u0022,\n\u0022title\u0022: \u0022ignore-instructions\u0022\n}",
       "input": 438,
-      "output": 27,
-      "seconds": 2.481
+      "output": 28,
+      "seconds": 1.79
     }
   ],
   "ce393cf30a2fa1ea961e6d92f0fce2cd": [
@@ -238,7 +274,7 @@
       "text": "{\n\u0022groups\u0022: [\n[1, 2]\n]\n}",
       "input": 281,
       "output": 18,
-      "seconds": 2.277
+      "seconds": 1.324
     }
   ],
   "cf2b0642e1110874111a1b4329a4bb5f": [
@@ -246,23 +282,23 @@
       "text": "{\n\u0022action\u0022: \u0022new_document\u0022,\n\u0022name\u0022: \u0022composting\u0022,\n\u0022title\u0022: \u0022Composting\u0022\n}",
       "input": 679,
       "output": 26,
-      "seconds": 9.951
+      "seconds": 1.612
     }
   ],
   "db0fef401b36c2123315b0d995fc9a8a": [
     {
-      "text": "{\n\u0022action\u0022: \u0022new_document\u0022,\n\u0022name\u0022: \u0022sourdough-starter\u0022,\n\u0022title\u0022: \u0022Sourdough Starter Care\u0022\n}",
+      "text": "{\n\u0022action\u0022: \u0022new_document\u0022,\n\u0022name\u0022: \u0022sourdough-starter\u0022,\n\u0022title\u0022: \u0022Sourdough Starter Maintenance\u0022\n}",
       "input": 456,
       "output": 32,
-      "seconds": 17.628
+      "seconds": 1.74
     }
   ],
   "e101f6e52be781acdd631226fb294b73": [
     {
-      "text": "{\n\u0022action\u0022: \u0022append\u0022,\n\u0022item\u0022: \u0022D1\u0022,\n\u0022heading\u0022: \u0022The Overstory\u0022\n}",
+      "text": "{\n\u0022action\u0022: \u0022new_document\u0022,\n\u0022name\u0022: \u0022the-overstory\u0022,\n\u0022title\u0022: \u0022The Overstory\u0022\n}",
       "input": 560,
       "output": 28,
-      "seconds": 10.045
+      "seconds": 1.903
     }
   ],
   "e46271a3a48ea093ca8b14970ab6d4f2": [
@@ -270,21 +306,7 @@
       "text": "{\n\u0022action\u0022: \u0022new_document\u0022,\n\u0022name\u0022: \u0022the-overstory\u0022,\n\u0022title\u0022: \u0022The Overstory\u0022\n}",
       "input": 559,
       "output": 28,
-      "seconds": 47.031
-    }
-  ],
-  "e7e103ce983fbc340faaff7652a4cd86": [
-    {
-      "text": "{\n\u0022subject\u0022: \u0022drip irrigation and watering schedule\u0022,\n\u0022choice\u0022: \u0022\uD143\uBC2D/\u0022\n}",
-      "input": 379,
-      "output": 25,
-      "seconds": 9.003
-    },
-    {
-      "text": "{\n\u0022subject\u0022: \u0022drip irrigation and watering schedule\u0022,\n\u0022choice\u0022: \u0022\uD143\uBC2D/\u0022\n}",
-      "input": 379,
-      "output": 25,
-      "seconds": 1.823
+      "seconds": 1.726
     }
   ],
   "e8be87d2478388ed8bbdd4c58f3d083b": [
@@ -292,21 +314,21 @@
       "text": "{\n\u0022action\u0022: \u0022append\u0022,\n\u0022item\u0022: \u0022D1\u0022,\n\u0022heading\u0022: \u0022\uC815\uC6D0\uAC00\uC758 \uC5F4\uB450 \uB2EC\u0022\n}",
       "input": 497,
       "output": 31,
-      "seconds": 8.766
+      "seconds": 1.447
     }
   ],
-  "f013ab939367404f996d034523baa3c4": [
+  "ed8ac03308dad80f9c13bd174950b2ef": [
     {
       "text": "{\n\u0022subject\u0022: \u0022Garden watering schedule\u0022,\n\u0022choice\u0022: \u0022projects/garden/\u0022\n}",
-      "input": 441,
+      "input": 406,
       "output": 23,
-      "seconds": 4.594
+      "seconds": 2.169
     },
     {
       "text": "{\n\u0022subject\u0022: \u0022Garden watering schedule\u0022,\n\u0022choice\u0022: \u0022projects/garden/\u0022\n}",
-      "input": 441,
+      "input": 406,
       "output": 23,
-      "seconds": 1.465
+      "seconds": 0.601
     }
   ],
   "f6b67e7d25d638aa26a9b865296207e7": [
@@ -314,7 +336,7 @@
       "text": "{\n\u0022groups\u0022: [\n[1, 2]\n]\n}",
       "input": 280,
       "output": 18,
-      "seconds": 8.318
+      "seconds": 1.135
     }
   ]
 }
