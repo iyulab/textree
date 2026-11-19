@@ -1,0 +1,18 @@
+{
+  "ingest": "texts/15-two-jottings.md",
+  "tree": "tree-product",
+  "placement": {
+    "any_of": [
+      {
+        "in": ""
+      }
+    ],
+    "untouched": []
+  },
+  "keeps": [
+    "which device it came from",
+    "including the hidden ones"
+  ],
+  "min_pieces": 2,
+  "distinct_folders": true
+}

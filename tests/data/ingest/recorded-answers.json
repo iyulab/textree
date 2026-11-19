@@ -35,6 +35,42 @@
       "seconds": 2.444
     }
   ],
+  "3052f94c1d0a89f6137f94a3395e58b4": [
+    {
+      "text": "{\n\u0022subject\u0022: \u0022First launch behavior\u0022,\n\u0022choice\u0022: \u0022here\u0022\n}",
+      "input": 430,
+      "output": 20,
+      "seconds": 1.917
+    },
+    {
+      "text": "{\n\u0022subject\u0022: \u0022First launch behavior\u0022,\n\u0022choice\u0022: \u0022here\u0022\n}",
+      "input": 430,
+      "output": 20,
+      "seconds": 0.522
+    }
+  ],
+  "32dc491dfcd852190af3a46360968fd7": [
+    {
+      "text": "{\n\u0022subject\u0022: \u0022Photo conflict naming\u0022,\n\u0022choice\u0022: \u0022harbor/Conflicts\u0022\n}",
+      "input": 425,
+      "output": 24,
+      "seconds": 1.821
+    },
+    {
+      "text": "{\n\u0022subject\u0022: \u0022Photo conflict naming\u0022,\n\u0022choice\u0022: \u0022harbor/Conflicts\u0022\n}",
+      "input": 425,
+      "output": 24,
+      "seconds": 0.671
+    }
+  ],
+  "3506c4c00367e436eced3c68c24042c7": [
+    {
+      "text": "{\n\u0022subjects\u0022: [\n\u0022file location instruction\u0022,\n\u0022book reading note\u0022\n],\n\u0022groups\u0022: [\n[1, 2]\n]\n}",
+      "input": 346,
+      "output": 37,
+      "seconds": 1.38
+    }
+  ],
   "353fcc657584832816f5e8b964eb7506": [
     {
       "text": "{\n\u0022subject\u0022: \u0022Composting plan\u0022,\n\u0022choice\u0022: \u0022projects/garden/\u0022\n}",
@@ -107,6 +143,28 @@
       "seconds": 3.516
     }
   ],
+  "5bc51f15d1efd7b851847da165097b3d": [
+    {
+      "text": "{\n\u0022subjects\u0022: [\n\u0022instructions to delete notes and move folder\u0022,\n\u0022soil test results and gardening advice\u0022\n],\n\u0022groups\u0022: [\n[1],\n[2]\n]\n}",
+      "input": 352,
+      "output": 46,
+      "seconds": 1.656
+    }
+  ],
+  "63b05bbdaa1304ef8b4fe8e170c828a7": [
+    {
+      "text": "{\n\u0022subject\u0022: \u0022Trip report: Porto, September 2026\u0022,\n\u0022choice\u0022: \u0022here\u0022\n}",
+      "input": 618,
+      "output": 28,
+      "seconds": 2.216
+    },
+    {
+      "text": "{\n\u0022subject\u0022: \u0022Trip report: Porto, September 2026\u0022,\n\u0022choice\u0022: \u0022here\u0022\n}",
+      "input": 618,
+      "output": 28,
+      "seconds": 0.761
+    }
+  ],
   "66e3c6b985e441c213ee05abb3c76165": [
     {
       "text": "{\n\u0022subject\u0022: \u0022Soil test result for raised beds\u0022,\n\u0022choice\u0022: \u0022projects/garden/\u0022\n}",
@@ -121,12 +179,34 @@
       "seconds": 0.728
     }
   ],
+  "67f3a2941f69031b19bbd241d1064de9": [
+    {
+      "text": "{\n\u0022action\u0022: \u0022append\u0022,\n\u0022item\u0022: \u0022D2\u0022,\n\u0022heading\u0022: \u0022Roll definition\u0022\n}",
+      "input": 692,
+      "output": 27,
+      "seconds": 1.915
+    }
+  ],
   "69010a7bf17966e199da59062e85e22e": [
     {
       "text": "{\n\u0022groups\u0022: [\n[1],\n[2]\n]\n}",
       "input": 308,
       "output": 19,
       "seconds": 1.659
+    }
+  ],
+  "6c3bc2d3de6bb79e00f3e5e41d3479fe": [
+    {
+      "text": "{\n\u0022subject\u0022: \u0022Glossary definition of Roll\u0022,\n\u0022choice\u0022: \u0022here\u0022\n}",
+      "input": 402,
+      "output": 23,
+      "seconds": 1.732
+    },
+    {
+      "text": "{\n\u0022subject\u0022: \u0022Glossary definition of Roll\u0022,\n\u0022choice\u0022: \u0022here\u0022\n}",
+      "input": 402,
+      "output": 23,
+      "seconds": 0.62
     }
   ],
   "6d3c7cbeac50b6a958e07d08b3b2e755": [
@@ -143,6 +223,22 @@
       "seconds": 0.556
     }
   ],
+  "774355ab896a55f4f40472e3783d4493": [
+    {
+      "text": "{\n\u0022subjects\u0022: [\n\u0022Photo library conflict resolution\u0022,\n\u0022Glossary definition for \u0027Roll\u0027\u0022\n],\n\u0022groups\u0022: [\n[1],\n[2]\n]\n}",
+      "input": 363,
+      "output": 42,
+      "seconds": 1.74
+    }
+  ],
+  "826b03fd76a1f22b33bbe4c49438da81": [
+    {
+      "text": "{\n \u0022subjects\u0022: [\n  \u0022filing instruction\u0022,\n  \u0022book reading note\u0022\n ],\n \u0022groups\u0022: [\n  [1, 2]\n ]\n}",
+      "input": 347,
+      "output": 40,
+      "seconds": 1.462
+    }
+  ],
   "831df0b80775636442acf1ac96d0b0c4": [
     {
       "text": "{\n\u0022subject\u0022: \u0022book review\u0022,\n\u0022choice\u0022: \u0022\uB3C5\uC11C/\u0022\n}",
@@ -155,6 +251,14 @@
       "input": 352,
       "output": 20,
       "seconds": 0.594
+    }
+  ],
+  "88fb88aa287d08ced947e7a2d68b4b0c": [
+    {
+      "text": "{\n\u0022action\u0022: \u0022append\u0022,\n\u0022item\u0022: \u0022D2\u0022,\n\u0022heading\u0022: \u0022Conflict Resolution Naming\u0022\n}",
+      "input": 648,
+      "output": 28,
+      "seconds": 2.255
     }
   ],
   "89351ccaf03348cd36fc31749a19b7b1": [
@@ -231,6 +335,14 @@
       "seconds": 2.16
     }
   ],
+  "b4168e49e3e511a3d19721389680e5c4": [
+    {
+      "text": "{\n\u0022action\u0022: \u0022add_to_section\u0022,\n\u0022item\u0022: \u0022D3\u0022,\n\u0022section\u0022: \u0022Welcome screen\u0022\n}",
+      "input": 720,
+      "output": 29,
+      "seconds": 2.281
+    }
+  ],
   "b777144e2d185df59b4e12809ef421bb": [
     {
       "text": "{\n\u0022action\u0022: \u0022append\u0022,\n\u0022item\u0022: \u0022D3\u0022,\n\u0022heading\u0022: \u0022Soaker Hose\u0022\n}",
@@ -291,6 +403,14 @@
       "input": 456,
       "output": 32,
       "seconds": 1.74
+    }
+  ],
+  "dedd20df66738a6dae89612cb0889e1b": [
+    {
+      "text": "{\n\u0022subjects\u0022: [\n\u0022soaker hose watering schedule\u0022,\n\u0022book reflection on to-do lists\u0022\n],\n\u0022groups\u0022: [\n[1],\n[2]\n]\n}",
+      "input": 374,
+      "output": 43,
+      "seconds": 1.797
     }
   ],
   "e101f6e52be781acdd631226fb294b73": [

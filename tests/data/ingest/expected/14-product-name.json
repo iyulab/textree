@@ -1,0 +1,20 @@
+{
+  "ingest": "texts/14-product-name.md",
+  "tree": "tree-product",
+  "placement": {
+    "any_of": [
+      {
+        "edit": "onboarding.md"
+      },
+      {
+        "add_under": ""
+      }
+    ],
+    "untouched": [
+      "harbor/"
+    ]
+  },
+  "keeps": [
+    "no account, no sign-in screen"
+  ]
+}
