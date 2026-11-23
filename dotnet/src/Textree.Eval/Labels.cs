@@ -148,8 +148,8 @@ button{font:inherit;padding:8px 16px;border-radius:8px;border:0;background:var(-
 label{margin-right:16px}
 </style></head><body><main>
 <h1>Ingest 라벨 — 이 노트는 어느 폴더에 있었을까</h1>
-<p class="lead">각 노트를 원래 있었을 폴더로 고르세요. 링크 같은 위치 단서는 지워져 있습니다. 아래쪽에서 하네스가 새로 지은 이름이 좋은지도 판정해 주세요. 끝나면 «답 저장»으로 JSON 파일을 내려받아 주세요. 고른 값은 이 브라우저에 임시 저장됩니다.</p>
-<div id="cases"></div><h1 style="margin-top:28px">새로 지은 이름</h1><p class="lead">이 노트에 붙이기 좋은 이름(경로)인가요?</p><div id="names"></div>
+<p class="lead">각 노트를 원래 있었을 폴더로 고르세요. 링크 같은 위치 단서는 지워져 있습니다. 폴더를 모두 고르면 아래에 하네스가 새로 지은 이름이 열립니다 — 이름은 하네스가 고른 자리를 드러내므로 그 전에는 숨깁니다. 끝나면 «답 저장»으로 JSON 파일을 내려받아 주세요. 고른 값은 이 브라우저에 임시 저장됩니다.</p>
+<div id="cases"></div><div id="names-part" hidden><h1 style="margin-top:28px">새로 지은 이름</h1><p class="lead">이 노트에 붙이기 좋은 이름(경로)인가요? 노트 앞부분을 함께 보여 줍니다.</p><div id="names"></div></div>
 </main><div class="bar"><span id="count"></span><button id="save">답 저장</button></div>
 <script>
 const DATA = __DATA__;
@@ -157,7 +157,8 @@ const KEY = "ingest-labels";
 let state = {placement:{}, names:{}};
 try { state = JSON.parse(localStorage.getItem(KEY)) || state; } catch (e) {}
 const keep = () => { try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) {} count(); };
-const count = () => { document.getElementById("count").textContent = `폴더 ${Object.keys(state.placement).length}/${DATA.cases.length} · 이름 ${Object.keys(state.names).length}/${DATA.names.length}`; };
+const reveal = () => { if (Object.keys(state.placement).length === DATA.cases.length) document.getElementById("names-part").hidden = false; };
+const count = () => { reveal(); document.getElementById("count").textContent = `폴더 ${Object.keys(state.placement).length}/${DATA.cases.length} · 이름 ${Object.keys(state.names).length}/${DATA.names.length}`; };
 const cases = document.getElementById("cases");
 DATA.cases.forEach((c, i) => {
   const box = document.createElement("section"); box.className = "case";
@@ -174,8 +175,10 @@ DATA.cases.forEach((c, i) => {
 const names = document.getElementById("names");
 DATA.names.forEach(n => {
   const box = document.createElement("section"); box.className = "case";
-  const h = document.createElement("h2"); h.textContent = n.case; box.append(h);
-  const p = document.createElement("pre"); p.textContent = n.name; box.append(p);
+  const no = DATA.cases.findIndex(c => c.id === n.case);
+  const h = document.createElement("h2"); h.textContent = `${no + 1}. ${n.case}`; box.append(h);
+  const ex = document.createElement("pre"); ex.textContent = no < 0 ? "" : DATA.cases[no].text.slice(0, 600); box.append(ex);
+  const p = document.createElement("pre"); p.style.fontWeight = "600"; p.textContent = "→ " + n.name; box.append(p);
   ["good", "bad"].forEach(v => {
     const l = document.createElement("label"); const r = document.createElement("input");
     r.type = "radio"; r.name = "n-" + n.case; r.value = v; r.checked = state.names[n.case] === v;
