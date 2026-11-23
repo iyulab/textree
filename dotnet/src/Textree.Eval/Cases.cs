@@ -214,6 +214,8 @@ public static class Cases
         {
             row["section_edits"] = edits;
             row["section_edits_kept"] = kept;
+            row["edited"] = SectionEdits.Texts(result.Plan, before, after);
+            row["input"] = input;
         }
         return row;
     }

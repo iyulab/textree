@@ -22,6 +22,19 @@ public static class SectionEdits
         return (edited.Count, kept);
     }
 
+    /// <summary>Each document the plan edits a section of, as it read before and after — what a person or the judge reads to say which claims survived.</summary>
+    public static JsonArray Texts(JsonNode? plan, SortedDictionary<string, byte[]> before, SortedDictionary<string, byte[]> after)
+    {
+        var edited = plan?["ops"]?.AsArray().Where(o => o!["op"]!.GetValue<string>() == "edit_section")
+            .Select(o => o!["path"]!.GetValue<string>()).Distinct(StringComparer.Ordinal) ?? [];
+        return new JsonArray(edited.Select(path => (JsonNode)new JsonObject
+        {
+            ["path"] = path.Normalize(NormalizationForm.FormC),
+            ["before"] = before.TryGetValue(path, out var was) ? Encoding.UTF8.GetString(was) : null,
+            ["after"] = after.TryGetValue(path, out var now) ? Encoding.UTF8.GetString(now) : null,
+        }).ToArray());
+    }
+
     /// <summary>The report entry over rows carrying <c>section_edits</c> and <c>section_edits_kept</c>.</summary>
     public static JsonObject Summarize(IEnumerable<JsonNode?> rows, string whenNone)
     {

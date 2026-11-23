@@ -137,7 +137,8 @@ public static class Cli
                 if (args[0] == "labels-export")
                 {
                     var harness = opts.Get("harness-report") is { } hr ? System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(hr))!.AsObject() : null;
-                    Labels.Export(opts.Require("root"), settings, harness, opts.Require("html"));
+                    var cases = opts.Get("cases-report") is { } cr ? System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(cr))!.AsObject() : null;
+                    Labels.Export(opts.Require("root"), settings, harness, cases, opts.Require("html"));
                     return 0;
                 }
                 var report = Labels.Score(opts.Require("root"), settings, opts.Require("answers"), opts.Get("labeller") ?? "owner");
