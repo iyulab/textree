@@ -134,27 +134,7 @@ public static partial class LeaveOneOut
         {
             summary[arm] = Summarize(rows);
         }
-        // Each comparison twice: whether the intervals are apart, and the difference on the same
-        // documents (paired, the document as the unit) with its interval.
-        var comparisons = new JsonObject();
-        if (arms.TryGetValue("harness", out var harnessRows))
-        {
-            foreach (var other in new[] { "b0", "b1", "b2", "gil" })
-            {
-                if (arms.TryGetValue(other, out var otherRows))
-                {
-                    var h = Interval(summary, "harness");
-                    var o = Interval(summary, other);
-                    comparisons[$"harness_above_{other}"] = new JsonObject
-                    {
-                        ["hit_at_1"] = h.HitLow > o.HitHigh,
-                        ["partial"] = h.PartialLow > o.PartialHigh,
-                        ["paired_hit_difference"] = Json.Of(Paired(harnessRows, otherRows, "hit")),
-                        ["paired_partial_difference"] = Json.Of(Paired(harnessRows, otherRows, "partial")),
-                    };
-                }
-            }
-        }
+        var comparisons = Comparisons(summary, arms);
         return new JsonObject
         {
             ["kind"] = "leave_one_out",
@@ -174,6 +154,45 @@ public static partial class LeaveOneOut
             ["arms"] = new JsonObject(arms.OrderBy(a => a.Key, StringComparer.Ordinal)
                 .Select(a => KeyValuePair.Create(a.Key, (JsonNode?)new JsonArray(a.Value.Select(r => (JsonNode)r).ToArray())))),
         };
+    }
+
+    /// <summary>
+    /// The harness against each baseline arm. <c>harness_above_&lt;arm&gt;</c> is the verdict: the
+    /// difference harness − baseline on the same documents (paired, the document as the unit, its
+    /// runs averaged) has a 95% interval whose low end is above zero. <c>intervals_apart_&lt;arm&gt;</c>
+    /// is the unpaired reading kept beside it: the harness interval lies wholly above the baseline's.
+    /// </summary>
+    public static JsonObject Comparisons(JsonObject summary, IReadOnlyDictionary<string, List<JsonObject>> arms)
+    {
+        var comparisons = new JsonObject();
+        if (!arms.TryGetValue("harness", out var harnessRows))
+        {
+            return comparisons;
+        }
+        foreach (var other in new[] { "b0", "b1", "b2", "gil" })
+        {
+            if (!arms.TryGetValue(other, out var otherRows))
+            {
+                continue;
+            }
+            var hit = Paired(harnessRows, otherRows, "hit");
+            var partial = Paired(harnessRows, otherRows, "partial");
+            comparisons[$"harness_above_{other}"] = new JsonObject
+            {
+                ["hit_at_1"] = hit.N > 0 && hit.Low > 0,
+                ["partial"] = partial.N > 0 && partial.Low > 0,
+                ["paired_hit_difference"] = Json.Of(hit),
+                ["paired_partial_difference"] = Json.Of(partial),
+            };
+            var h = Interval(summary, "harness");
+            var o = Interval(summary, other);
+            comparisons[$"intervals_apart_{other}"] = new JsonObject
+            {
+                ["hit_at_1"] = h.HitLow > o.HitHigh,
+                ["partial"] = h.PartialLow > o.PartialHigh,
+            };
+        }
+        return comparisons;
     }
 
     /// <summary>A sampled document as a labeller sees it: an opaque id, and its text with location hints removed.</summary>
